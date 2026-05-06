@@ -1,0 +1,47 @@
+<!-- components/action-sheet/action-sheet.wxml -->
+<view class="overlay {{show ? 'show' : ''}}" bindtap="onClose"></view>
+<view class="sheet {{show ? 'show' : ''}}">
+  <text class="sheet-title">{{kidName}} · 当前 {{kidPoints}}分</text>
+  <view class="sheet-close" bindtap="onClose">✕</view>
+
+  <scroll-view class="sheet-scroll" scroll-y enhanced show-scrollbar="{{false}}">
+
+    <!-- 加分规则 -->
+    <block wx:if="{{rewardRules && rewardRules.length > 0}}">
+      <text class="cat-title" style="color: var(--green);">📈 加分</text>
+      <block wx:for="{{rewardRules}}" wx:key="category" wx:for-item="cat">
+        <text class="cat-subtitle">{{cat.category}}</text>
+        <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item"
+          class="rule-item reward"
+          bindtap="onSelectRule" data-item="{{item}}">
+          <text class="ri-label">{{item.label}}</text>
+          <text class="ri-hint">{{item.unit}} · 默认 +{{item.default}} 分</text>
+        </view>
+      </block>
+    </block>
+
+    <!-- 扣分规则 -->
+    <block wx:if="{{punishRules && punishRules.length > 0}}">
+      <text class="cat-title" style="color: var(--red); margin-top: 24rpx;">📉 扣分</text>
+      <block wx:for="{{punishRules}}" wx:key="category" wx:for-item="cat">
+        <text class="cat-subtitle">{{cat.category}}</text>
+        <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item"
+          class="rule-item punish"
+          bindtap="onSelectRule" data-item="{{item}}">
+          <text class="ri-label">{{item.label}}</text>
+          <text class="ri-hint">{{item.unit}} · 默认 {{item.default}} 分</text>
+        </view>
+      </block>
+    </block>
+
+    <!-- 手动输入 -->
+    <text class="cat-title" style="margin-top: 24rpx;">✏️ 手动输入</text>
+    <view class="manual-row">
+      <input class="manual-amt" type="number" placeholder="分数" value="{{manualAmt}}" bindinput="onAmtInput" />
+      <input class="manual-reason" type="text" placeholder="事由（选填）" value="{{manualReason}}" bindinput="onReasonInput" />
+      <button class="btn btn-primary btn-xs" bindtap="onManualConfirm">确定</button>
+    </view>
+
+    <view style="height: 40rpx;"></view>
+  </scroll-view>
+</view>

@@ -1,0 +1,125 @@
+<!-- pages/admin/admin.wxml -->
+<view class="page-container">
+
+  <!-- Tab 切换 -->
+  <view class="admin-tabs">
+    <view class="admin-tab {{adminTab === 'users' ? 'active' : ''}}" bindtap="switchTab" data-tab="users">用户管理</view>
+    <view class="admin-tab {{adminTab === 'rules' ? 'active' : ''}}" bindtap="switchTab" data-tab="rules">积分规则</view>
+  </view>
+
+  <!-- ========== 用户管理 ========== -->
+  <view wx:if="{{adminTab === 'users'}}">
+    <view wx:for="{{userList}}" wx:key="id" class="user-edit-card">
+      <text class="ue-index">用户 #{{index + 1}}</text>
+      <view class="ue-row">
+        <input class="ue-input" placeholder="名字" value="{{item.editName}}" bindinput="onUserName" data-index="{{index}}" />
+        <picker range="{{roleOptions}}" value="{{item.roleIdx}}" bindchange="onUserRole" data-index="{{index}}">
+          <view class="ue-picker">{{item.roleName}}</view>
+        </picker>
+      </view>
+      <view class="ue-row">
+        <text class="ue-label">密码</text>
+        <input class="ue-input ue-pwd" type="password" placeholder="留空不改" value="{{item.editPwd}}" bindinput="onUserPwd" data-index="{{index}}" />
+        <button class="btn btn-primary btn-xs" bindtap="saveUser" data-index="{{index}}">保存</button>
+        <button class="btn btn-xs btn-del" bindtap="deleteUser" data-index="{{index}}">✕</button>
+      </view>
+    </view>
+
+    <!-- 添加新用户 -->
+    <view class="add-section">
+      <text class="add-title">添加新用户</text>
+      <view class="add-row">
+        <input class="add-input" placeholder="ID(拼音)" value="{{newUid}}" bindinput="onNewUid" />
+        <input class="add-input" placeholder="显示名" value="{{newName}}" bindinput="onNewName" />
+        <input class="add-input" placeholder="密码" value="{{newPwd}}" bindinput="onNewPwd" />
+        <picker range="{{roleOptions}}" value="{{newRoleIdx}}" bindchange="onNewRole">
+          <view class="ue-picker add-picker">{{newRoleName}}</view>
+        </picker>
+      </view>
+      <button class="btn btn-primary btn-sm add-btn" bindtap="addUser">添加</button>
+    </view>
+  </view>
+
+  <!-- ========== 积分规则 ========== -->
+  <view wx:if="{{adminTab === 'rules'}}">
+    <!-- 加分规则 -->
+    <view class="rule-section">
+      <text class="rule-sec-title" style="color: #388E3C;">📈 加分规则</text>
+      <view wx:for="{{editRules.reward}}" wx:key="cid" wx:for-item="cat" wx:for-index="ci" class="rule-cat-edit">
+        <view class="rce-header">
+          <text class="rce-label">大类</text>
+          <input class="rce-input" value="{{cat.category}}" placeholder="大类名称" bindinput="onRCatName" data-ci="{{ci}}" />
+          <button class="btn btn-xs btn-small-green" bindtap="addRItem" data-type="reward" data-ci="{{ci}}">+小类</button>
+          <button class="btn btn-xs btn-small-red" bindtap="delRCategory" data-type="reward" data-ci="{{ci}}">删</button>
+        </view>
+        <view wx:for="{{cat.items}}" wx:key="iid" wx:for-item="item" wx:for-index="ii" class="rce-item">
+          <view class="rce-item-row">
+            <input class="rce-si-input" value="{{item.editLabel}}" bindinput="onRLabel" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" placeholder="项目" />
+            <text class="rce-hint">最少</text>
+            <input class="rce-si-num" type="number" value="{{item.editMin}}" bindinput="onRMin" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" />
+            <text class="rce-hint">最多</text>
+            <input class="rce-si-num" type="number" value="{{item.editMax}}" bindinput="onRMax" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" />
+            <text class="rce-hint">默认</text>
+            <input class="rce-si-num" type="number" value="{{item.editDefault}}" bindinput="onRDefault" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" />
+            <button class="btn btn-xs btn-small" bindtap="delRItem" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}">✕</button>
+          </view>
+          <input class="rce-unit" value="{{item.editUnit}}" bindinput="onRUnit" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" placeholder="备注" />
+        </view>
+      </view>
+      <view class="add-cat-row">
+        <input class="add-input" placeholder="新大类名" value="{{newRCatName}}" bindinput="onNewRCat" />
+        <button class="btn btn-primary btn-xs" bindtap="addRCategory" data-type="reward">+加分大类</button>
+      </view>
+    </view>
+
+    <!-- 扣分规则 -->
+    <view class="rule-section">
+      <text class="rule-sec-title" style="color: #D32F2F;">📉 扣分规则</text>
+      <view wx:for="{{editRules.punish}}" wx:key="cid" wx:for-item="cat" wx:for-index="ci" class="rule-cat-edit punish-edit">
+        <view class="rce-header">
+          <text class="rce-label">大类</text>
+          <input class="rce-input" value="{{cat.category}}" placeholder="大类名称" bindinput="onPCatName" data-ci="{{ci}}" />
+          <button class="btn btn-xs btn-small-green" bindtap="addRItem" data-type="punish" data-ci="{{ci}}">+小类</button>
+          <button class="btn btn-xs btn-small-red" bindtap="delRCategory" data-type="punish" data-ci="{{ci}}">删</button>
+        </view>
+        <view wx:for="{{cat.items}}" wx:key="iid" wx:for-item="item" wx:for-index="ii" class="rce-item">
+          <view class="rce-item-row">
+            <input class="rce-si-input" value="{{item.editLabel}}" bindinput="onRLabel" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" placeholder="项目" />
+            <text class="rce-hint">最少</text>
+            <input class="rce-si-num" type="number" value="{{item.editMin}}" bindinput="onRMin" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" />
+            <text class="rce-hint">最多</text>
+            <input class="rce-si-num" type="number" value="{{item.editMax}}" bindinput="onRMax" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" />
+            <text class="rce-hint">默认</text>
+            <input class="rce-si-num" type="number" value="{{item.editDefault}}" bindinput="onRDefault" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" />
+            <button class="btn btn-xs btn-small" bindtap="delRItem" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}">✕</button>
+          </view>
+          <input class="rce-unit" value="{{item.editUnit}}" bindinput="onRUnit" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" placeholder="备注" />
+        </view>
+      </view>
+      <view class="add-cat-row">
+        <input class="add-input" placeholder="新大类名" value="{{newPCatName}}" bindinput="onNewPCat" />
+        <button class="btn btn-primary btn-xs" bindtap="addRCategory" data-type="punish">+扣分大类</button>
+      </view>
+    </view>
+
+    <!-- 特别规则 -->
+    <view class="rule-section">
+      <text class="rule-sec-title" style="color: var(--amber);">⚠️ 特别规则</text>
+      <view wx:for="{{editRules.special}}" wx:key="*this" wx:for-index="si" class="special-edit-row">
+        <input class="special-input" value="{{item}}" bindinput="onSpecial" data-si="{{si}}" placeholder="特别规则描述" />
+        <button class="btn btn-xs btn-small-red" bindtap="delSpecial" data-si="{{si}}">删</button>
+      </view>
+      <button class="btn btn-xs btn-add-special" bindtap="addSpecial">+ 特别规则</button>
+    </view>
+
+    <!-- 保存按钮 -->
+    <view class="save-bar">
+      <button class="btn btn-primary save-main" bindtap="saveRules">保存规则</button>
+      <button class="btn btn-outline" bindtap="goBack">取消</button>
+    </view>
+  </view>
+
+</view>
+
+<!-- Toast -->
+<toast-msg message="{{toastMessage}}" show="{{toastVisible}}" />

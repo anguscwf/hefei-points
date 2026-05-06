@@ -1,0 +1,7 @@
+{
+  "usingComponents": {
+    "detail-popup": "/components/detail-popup/detail-popup",
+    "toast-msg": "/components/toast/toast"
+  },
+  "navigationBarTitleText": "积分记录"
+}

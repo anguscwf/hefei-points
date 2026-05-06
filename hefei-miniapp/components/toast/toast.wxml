@@ -1,0 +1,2 @@
+<!-- components/toast/toast.wxml -->
+<view class="toast {{show ? 'show' : ''}}">{{message}}</view>

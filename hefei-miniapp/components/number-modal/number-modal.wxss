@@ -1,0 +1,118 @@
+/* components/number-modal/number-modal.wxss */
+.num-modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.num-modal.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+.num-bg {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+}
+.num-box {
+  position: relative;
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  padding: 40rpx 48rpx;
+  text-align: center;
+  width: 560rpx;
+  transform: scale(0.9);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.num-modal.show .num-box {
+  transform: scale(1);
+}
+.num-close {
+  position: absolute;
+  right: 28rpx;
+  top: 28rpx;
+  background: none;
+  border: none;
+  font-size: 40rpx;
+  color: var(--muted);
+  padding: 0;
+  line-height: 1;
+}
+.num-title {
+  font-size: 36rpx;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 4rpx;
+}
+.num-desc {
+  font-size: 26rpx;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 28rpx;
+}
+.num-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32rpx;
+  margin-bottom: 28rpx;
+}
+.num-btn {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 50%;
+  border: 4rpx solid var(--border);
+  background: var(--card);
+  font-size: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+.num-btn:active {
+  background: #f0f0f0;
+}
+.num-val {
+  font-size: 72rpx;
+  font-weight: 700;
+  min-width: 140rpx;
+}
+.num-val.positive { color: var(--green); }
+.num-val.negative { color: var(--red); }
+.num-note {
+  margin-bottom: 28rpx;
+}
+.num-note input {
+  width: 100%;
+  padding: 20rpx;
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 28rpx;
+  text-align: center;
+  box-sizing: border-box;
+}
+.num-btns {
+  display: flex;
+  gap: 16rpx;
+}
+.num-cancel, .num-ok {
+  flex: 1;
+  padding: 20rpx;
+  border-radius: var(--radius-sm);
+  border: none;
+  font-size: 30rpx;
+}
+.num-cancel {
+  background: #f5f5f5;
+  color: var(--muted);
+}
+.num-ok {
+  background: var(--amber);
+  color: #fff;
+}

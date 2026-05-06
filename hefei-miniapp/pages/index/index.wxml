@@ -1,0 +1,142 @@
+<!-- pages/index/index.wxml - 首页 -->
+<view class="page-container">
+
+  <!-- 头部 -->
+  <view class="header">
+    <text class="header-title">赫菲积分管理</text>
+    <text class="header-status">{{loginStatusText}}</text>
+    <view class="refresh-btn" bindtap="onRefresh">↻</view>
+  </view>
+
+  <!-- 登录栏 -->
+  <view class="login-bar" wx:if="{{!isLoggedIn}}">
+    <picker class="user-picker" range="{{userOptions}}" range-key="name" value="{{selectedUserIdx}}" bindchange="onSelectUser">
+      <view class="picker-display">{{selectedUserName || '选择用户'}}</view>
+    </picker>
+    <input class="pwd-input" type="password" placeholder="密码" value="{{password}}" bindinput="onPwdInput" />
+    <button class="btn btn-primary btn-sm" bindtap="onLogin">登录</button>
+  </view>
+
+  <!-- 已登录栏 -->
+  <view class="login-bar logout-bar" wx:if="{{isLoggedIn}}">
+    <text class="logged-user">👤 {{currentUserName}}</text>
+    <button class="btn btn-outline btn-sm" wx:if="{{isAdmin}}" bindtap="goAdmin">⚙️</button>
+    <button class="btn btn-outline btn-sm" bindtap="onLogout">退出</button>
+  </view>
+
+  <!-- 权限提示 -->
+  <view class="perm-hint" wx:if="{{!isLoggedIn}}">登录后可查看积分</view>
+
+  <!-- 积分卡片 -->
+  <view class="score-grid" wx:if="{{isLoggedIn && childCards.length > 0}}">
+    <view class="score-card" wx:for="{{childCards}}" wx:key="id"
+      style="border-color: {{item.borderColor}};"
+      bindtap="onCardTap" data-kid="{{item.id}}" data-name="{{item.name}}">
+      <view class="card-header">
+        <view class="card-avatar" style="background: {{item.borderColor}};">{{item.emoji}}</view>
+        <text class="card-name">{{item.name}}</text>
+      </view>
+      <view class="score-wrap" style="color: {{item.borderColor}};">
+        <text class="score-sign">{{item.sign}}</text>
+        <text class="score-num">{{item.absScore}}</text>
+      </view>
+      <text class="card-hint">点击卡片加减分</text>
+    </view>
+  </view>
+
+  <!-- Tab 切换 -->
+  <view class="tabs" wx:if="{{isLoggedIn}}">
+    <view class="tab {{activeTab === 'history' ? 'active' : ''}}" bindtap="switchTab" data-tab="history">积分记录</view>
+    <view class="tab {{activeTab === 'rules' ? 'active' : ''}}" bindtap="switchTab" data-tab="rules">规则</view>
+    <view class="tab {{activeTab === 'report' ? 'active' : ''}}" bindtap="switchTab" data-tab="report">报表</view>
+  </view>
+
+  <!-- Tab 内容 -->
+  <view class="tab-content" wx:if="{{isLoggedIn}}">
+
+    <!-- 积分记录 -->
+    <view wx:if="{{activeTab === 'history'}}">
+      <view wx:if="{{historyList.length === 0}}" class="empty">暂无记录</view>
+      <view wx:else>
+        <view class="history-item" wx:for="{{historyList}}" wx:key="id"
+          style="border-left-color: {{item.kidColor}};"
+          bindtap="onRecordTap" data-index="{{index}}">
+          <view class="hi-left">
+            <text class="hi-kid" style="color: {{item.kidColor}};">{{item.kidName}}</text>
+            <text class="hi-amount {{item.isPlus ? 'plus' : 'minus'}}">{{item.amountText}}</text>
+            <text class="hi-reason">{{item.reason}}</text>
+            <text class="hi-note" wx:if="{{item.note}}">{{item.note}}</text>
+          </view>
+          <view class="hi-right">
+            <text class="hi-op">{{item.operator}}</text>
+            <text class="hi-time">{{item.time}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 规则 -->
+    <view wx:if="{{activeTab === 'rules'}}">
+      <view wx:if="{{!rulesData}}" class="empty">加载中...</view>
+      <block wx:else>
+        <!-- 加分规则 -->
+        <view wx:for="{{rulesData.reward}}" wx:key="category" wx:for-item="cat" class="rule-cat-card">
+          <text class="rule-cat-title" style="color: #639922;">📈 {{cat.category}}</text>
+          <view wx:for="{{cat.items}}" wx:key="label" wx:for-item="item" class="rule-item-row">
+            <text class="rule-item-label">{{item.label}}</text>
+            <text class="rule-item-range" style="color: #639922;">+{{item.min}}~+{{item.max}} {{item.unit}}</text>
+          </view>
+        </view>
+        <!-- 扣分规则 -->
+        <view wx:for="{{rulesData.punish}}" wx:key="category" wx:for-item="cat" class="rule-cat-card punish-card">
+          <text class="rule-cat-title" style="color: #E24B4A;">📉 {{cat.category}}</text>
+          <view wx:for="{{cat.items}}" wx:key="label" wx:for-item="item" class="rule-item-row">
+            <text class="rule-item-label">{{item.label}}</text>
+            <text class="rule-item-range" style="color: #E24B4A;">{{item.min}}~{{item.max}} {{item.unit}}</text>
+          </view>
+        </view>
+        <!-- 特别规则 -->
+        <view wx:if="{{rulesData.special && rulesData.special.length > 0}}" class="special-rules-card">
+          <text class="rule-cat-title" style="color: var(--amber);">⚠️ 特别规则</text>
+          <text wx:for="{{rulesData.special}}" wx:key="*this" class="special-item">· {{item}}</text>
+        </view>
+      </block>
+    </view>
+
+    <!-- 报表 -->
+    <view wx:if="{{activeTab === 'report'}}">
+      <text class="section-hint">请切换到「报表」Tab查看完整报表</text>
+    </view>
+  </view>
+
+</view>
+
+<!-- 底部操作弹窗 -->
+<action-sheet
+  show="{{sheetVisible}}"
+  kidName="{{sheetKidName}}"
+  kidPoints="{{sheetKidPoints}}"
+  rewardRules="{{rulesData.reward}}"
+  punishRules="{{rulesData.punish}}"
+  bind:close="onSheetClose"
+  bind:select="onRuleSelect"
+  bind:manual="onManualInput"
+/>
+
+<!-- 数字调节弹窗 -->
+<number-modal
+  show="{{numModalVisible}}"
+  title="{{numTitle}}"
+  desc="{{numDesc}}"
+  value="{{numValue}}"
+  bind:close="onNumModalClose"
+  bind:confirm="onNumConfirm"
+  bind:change="onNumChange"
+/>
+
+<!-- Toast -->
+<toast-msg message="{{toastMessage}}" show="{{toastVisible}}" />
+
+<view class="footer">
+  <text>赫菲积分管理 · v1.0 · 爸爸为恩赫恩菲制作</text>
+</view>

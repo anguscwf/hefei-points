@@ -1,0 +1,8 @@
+{
+  "usingComponents": {
+    "action-sheet": "/components/action-sheet/action-sheet",
+    "number-modal": "/components/number-modal/number-modal",
+    "toast-msg": "/components/toast/toast"
+  },
+  "navigationBarTitleText": "赫菲积分管理"
+}

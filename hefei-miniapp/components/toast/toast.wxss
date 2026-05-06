@@ -1,0 +1,20 @@
+/* components/toast/toast.wxss */
+.toast {
+  position: fixed;
+  bottom: 160rpx;
+  left: 50%;
+  transform: translate(-50%, 0);
+  background: rgba(0,0,0,0.78);
+  color: #fff;
+  padding: 20rpx 48rpx;
+  border-radius: 40rpx;
+  font-size: 28rpx;
+  z-index: 999;
+  opacity: 0;
+  transition: opacity 0.25s, transform 0.25s;
+  pointer-events: none;
+}
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, -16rpx);
+}

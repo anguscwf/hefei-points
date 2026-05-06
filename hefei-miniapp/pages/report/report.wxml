@@ -1,0 +1,104 @@
+<!-- pages/report/report.wxml -->
+<view class="page-container">
+
+  <!-- 筛选卡片 -->
+  <view class="card">
+    <!-- 时间 -->
+    <view class="filter-row">
+      <text class="filter-label">时间</text>
+      <view class="filter-btns">
+        <text class="filter-btn {{reportRange === 'week' ? 'active' : ''}}" bindtap="onRange" data-range="week">本周</text>
+        <text class="filter-btn {{reportRange === 'month' ? 'active' : ''}}" bindtap="onRange" data-range="month">30天</text>
+        <text class="filter-btn {{reportRange === 'all' ? 'active' : ''}}" bindtap="onRange" data-range="all">全部</text>
+        <text class="filter-btn {{reportRange === 'custom' ? 'active' : ''}}" bindtap="onRange" data-range="custom">自定义</text>
+      </view>
+    </view>
+    <!-- 自定义日期 -->
+    <view class="filter-row" wx:if="{{reportRange === 'custom'}}">
+      <text class="filter-label"></text>
+      <view class="custom-date-row">
+        <picker mode="date" value="{{dateFrom}}" bindchange="onDateFrom"><text class="date-pick">{{dateFrom || '开始'}}</text></picker>
+        <text class="date-sep">至</text>
+        <picker mode="date" value="{{dateTo}}" bindchange="onDateTo"><text class="date-pick">{{dateTo || '结束'}}</text></picker>
+        <button class="btn btn-primary btn-xs" bindtap="onCustomQuery">查询</button>
+      </view>
+    </view>
+    <!-- 孩子 -->
+    <view class="filter-row">
+      <text class="filter-label">孩子</text>
+      <view class="filter-btns">
+        <text class="filter-btn {{reportKid === 'all' ? 'active' : ''}}" bindtap="onKid" data-kid="all">全部</text>
+        <text wx:for="{{kidOptions}}" wx:key="id"
+          class="filter-btn {{reportKid === item.id ? 'active' : ''}}"
+          style="{{reportKid === item.id ? 'background:' + item.color + ';border-color:' + item.color + ';' : ''}}"
+          bindtap="onKid" data-kid="{{item.id}}">{{item.name}}</text>
+      </view>
+    </view>
+    <!-- 类别 -->
+    <view class="filter-row">
+      <text class="filter-label">类别</text>
+      <view class="filter-btns">
+        <text class="filter-btn {{reportCat === 'all' ? 'active' : ''}}" bindtap="onCat" data-cat="all">全部</text>
+        <text wx:for="{{catOptions}}" wx:key="name"
+          class="filter-btn {{reportCat === item.name ? 'active' : ''}}"
+          style="{{reportCat === item.name ? 'background:' + (item.type === 'reward' ? 'var(--green)' : 'var(--red)') + ';border-color:' + (item.type === 'reward' ? 'var(--green)' : 'var(--red)') + ';' : ''}}"
+          bindtap="onCat" data-cat="{{item.name}}">{{item.name}}</text>
+      </view>
+    </view>
+    <!-- 模式 -->
+    <view class="filter-row">
+      <text class="filter-label">模式</text>
+      <view class="filter-btns">
+        <text class="filter-btn {{reportMode === 'score' ? 'active' : ''}}" bindtap="onMode" data-mode="score">积分</text>
+        <text class="filter-btn {{reportMode === 'count' ? 'active' : ''}}" bindtap="onMode" data-mode="count">次数</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 空 -->
+  <view wx:if="{{filteredData.length === 0}}" class="empty">所选范围内暂无记录</view>
+
+  <block wx:else>
+    <!-- 积分总结 -->
+    <view class="card">
+      <text class="section-title">积分总结</text>
+      <view class="summary-table">
+        <view class="summary-header">
+          <text class="st-cell">对象</text>
+          <text class="st-cell" style="color: var(--green);">加分</text>
+          <text class="st-cell" style="color: var(--red);">扣分</text>
+          <text class="st-cell">净变动</text>
+        </view>
+        <view wx:for="{{summaryData}}" wx:key="kid" class="summary-row">
+          <text class="st-cell">{{item.kidName}}</text>
+          <text class="st-cell" style="color: var(--green);">+{{item.add}}</text>
+          <text class="st-cell" style="color: var(--red);">-{{item.sub}}</text>
+          <text class="st-cell" style="font-weight: 600; color: {{item.net >= 0 ? 'var(--green)' : 'var(--red)'}};">{{item.net >= 0 ? '+' : ''}}{{item.net}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 每日趋势图 -->
+    <view class="card">
+      <text class="section-title">每日趋势 · {{reportMode === 'count' ? '操作次数' : '积分变动'}}</text>
+      <canvas type="2d" id="trendCanvas" class="chart-canvas"></canvas>
+    </view>
+
+    <!-- 类别分布饼图 -->
+    <view class="card">
+      <text class="section-title">类别分布 · {{reportMode === 'count' ? '操作次数' : '积分占比'}}</text>
+      <canvas type="2d" id="pieCanvas" class="chart-canvas pie-canvas"></canvas>
+    </view>
+
+    <!-- Top 10 -->
+    <view class="card">
+      <text class="section-title">🔥 操作排行 Top 10</text>
+      <view wx:for="{{top10List}}" wx:key="index" class="top-item">
+        <text class="top-amount" style="color: {{item.amount >= 0 ? 'var(--green)' : 'var(--red)'}};">{{item.amount >= 0 ? '+' : ''}}{{item.amount}}</text>
+        <text class="top-reason">{{item.reason}}</text>
+        <text class="top-meta">{{item.kidName}} · {{item.operator}}</text>
+      </view>
+    </view>
+  </block>
+
+</view>

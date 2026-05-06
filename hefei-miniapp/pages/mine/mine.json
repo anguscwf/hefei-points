@@ -1,0 +1,6 @@
+{
+  "usingComponents": {
+    "toast-msg": "/components/toast/toast"
+  },
+  "navigationBarTitleText": "我的"
+}

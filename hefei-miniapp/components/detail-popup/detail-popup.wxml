@@ -1,0 +1,36 @@
+<!-- components/detail-popup/detail-popup.wxml -->
+<view class="detail-popup {{show ? 'show' : ''}}">
+  <view class="dp-bg" bindtap="onClose"></view>
+  <view class="dp-box">
+    <view class="dp-close" bindtap="onClose">✕</view>
+    <text class="dp-title">积分记录详情</text>
+    <view class="dp-row">
+      <text class="dp-label">对象</text>
+      <text class="dp-val">{{record.kidName}}</text>
+    </view>
+    <view class="dp-row">
+      <text class="dp-label">事由</text>
+      <text class="dp-val">{{record.reason}}</text>
+    </view>
+    <view class="dp-row">
+      <text class="dp-label">分数</text>
+      <text class="dp-val" style="color: {{record.amount >= 0 ? 'var(--green)' : 'var(--red)'}};">{{record.amountText}} 分</text>
+    </view>
+    <view class="dp-row">
+      <text class="dp-label">操作人</text>
+      <text class="dp-val">{{record.operator}}</text>
+    </view>
+    <view class="dp-row">
+      <text class="dp-label">时间</text>
+      <text class="dp-val">{{record.time}}</text>
+    </view>
+    <view class="dp-note-section">
+      <text class="dp-note-label">备注</text>
+      <view class="dp-note-current {{noteDisplayClass}}">{{noteDisplay}}</view>
+      <view class="dp-note-input" wx:if="{{canEdit}}">
+        <input type="text" placeholder="输入备注" value="{{editNote}}" bindinput="onNoteInput" />
+        <button bindtap="onSaveNote">保存</button>
+      </view>
+    </view>
+  </view>
+</view>

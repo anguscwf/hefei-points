@@ -1,0 +1,21 @@
+<!-- components/number-modal/number-modal.wxml -->
+<view class="num-modal {{show ? 'show' : ''}}">
+  <view class="num-bg" bindtap="onClose"></view>
+  <view class="num-box">
+    <view class="num-close" bindtap="onClose">✕</view>
+    <text class="num-title">{{title}}</text>
+    <text class="num-desc">{{desc}}</text>
+    <view class="num-row">
+      <button class="num-btn" bindtap="onMinus">−</button>
+      <text class="num-val {{value >= 0 ? 'positive' : 'negative'}}">{{valueText}}</text>
+      <button class="num-btn" bindtap="onPlus">+</button>
+    </view>
+    <view class="num-note">
+      <input type="text" placeholder="备注（选填）" value="{{note}}" bindinput="onNoteInput" />
+    </view>
+    <view class="num-btns">
+      <button class="num-cancel" bindtap="onClose">取消</button>
+      <button class="num-ok" bindtap="onConfirm">确定</button>
+    </view>
+  </view>
+</view>

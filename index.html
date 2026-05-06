@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>赫菲积分管理</title>
+<style>
+:root {
+  --blue: #4A90D9; --blue-light: #E8F2FC; --blue-dark: #2E6EB5;
+  --pink: #E87DA8; --pink-light: #FDE8F0; --pink-dark: #C55078;
+  --amber: #B86932; --amber-light: #FFF5EC;
+  --bg: #F9F6F1; --card: #fff; --text: #2C2C2A; --muted: #999;
+  --border: #EBE5DD; --green: #5C9919; --red: #E24B4A;
+  --radius-sm: 8px; --radius: 12px; --radius-lg: 16px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow: 0 2px 8px rgba(0,0,0,0.08);
+  --shadow-lg: 0 4px 24px rgba(0,0,0,0.12);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; -webkit-tap-highlight-color: transparent; }
+.container { max-width: 500px; margin:0 auto; padding: 12px 14px; }
+
+/* === Header === */
+.header { background: var(--amber); color:#fff; padding:14px 16px; border-radius:var(--radius-lg); margin-bottom:12px; text-align:center; position:relative; box-shadow:0 2px 12px rgba(184,105,50,0.2); }
+.header h1 { font-size:19px; font-weight:600; letter-spacing:0.5px; }
+.header p { font-size:13px; opacity:0.85; margin-top:2px; }
+.user-badge { display:inline-block; background:rgba(255,255,255,0.2); padding:2px 10px; border-radius:8px; font-size:12px; margin-left:4px; }
+.refresh-btn { position:absolute; right:12px; top:50%; transform:translateY(-50%); background:rgba(255,255,255,0.15); border:none; color:#fff; width:36px; height:36px; border-radius:50%; font-size:16px; cursor:pointer; transition:transform 0.3s; }
+.refresh-btn:active { transform:translateY(-50%) rotate(180deg); }
+
+/* === Login === */
+.login-bar { display:flex; align-items:center; gap:6px; margin-bottom:10px; }
+.login-bar select { width:72px; padding:10px 6px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:14px; outline:none; background:var(--card); transition:border-color 0.2s; }
+.login-bar input { flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:15px; outline:none; transition:border-color 0.2s; }
+.login-bar input:focus, .login-bar select:focus { border-color:var(--amber); box-shadow:0 0 0 3px rgba(184,105,50,0.1); }
+
+/* === Buttons === */
+.btn { padding:10px 16px; border-radius:var(--radius-sm); border:none; font-size:14px; font-weight:500; cursor:pointer; transition:transform 0.1s, opacity 0.15s, box-shadow 0.15s; }
+.btn:active { transform:scale(0.96); }
+.btn-primary { background:var(--amber); color:#fff; }
+.btn-primary:hover { box-shadow:0 2px 8px rgba(184,105,50,0.3); }
+.btn-outline { background:var(--card); color:var(--amber); border:1.5px solid var(--amber); }
+.btn-sm { padding:7px 12px; font-size:13px; }
+.btn-xs { padding:5px 9px; font-size:12px; }
+.btn-blue { background:var(--blue); color:#fff; }
+.btn-pink { background:var(--pink); color:#fff; }
+
+/* === Permission hint === */
+.perm-hint { background:var(--card); border-radius:var(--radius); padding:12px; text-align:center; color:var(--muted); font-size:13px; margin-bottom:10px; border:1px solid var(--border); }
+
+/* === Score cards === */
+.score-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; }
+.score-card { background:var(--card); border-radius:var(--radius-lg); padding:12px 10px 10px; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; box-shadow:var(--shadow-sm); border:4px solid transparent; display:flex; flex-direction:column; min-height:180px; overflow:hidden; }
+.score-card:hover { box-shadow:var(--shadow); }
+.score-card:active { transform:scale(0.97); box-shadow:var(--shadow-sm); }
+.score-card .card-header { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.score-card .card-header .avatar { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:16px; color:#fff; flex-shrink:0; }
+.score-card .card-header .name { font-size:14px; font-weight:600; color:var(--text); }
+.score-card .score-wrap { display:flex; align-items:baseline; justify-content:center; flex:1; margin:-4px 0; min-width:0; }
+.score-card .score-wrap .score-sign { font-size:42px; font-weight:800; margin-right:2px; }
+.score-card .score-wrap .score-num { font-size:80px; font-weight:900; line-height:0.9; letter-spacing:-3px; }
+@media (min-width:380px) { .score-card .score-wrap .score-sign { font-size:48px; } .score-card .score-wrap .score-num { font-size:90px; } }
+@media (min-width:440px) { .score-card .score-wrap .score-sign { font-size:56px; } .score-card .score-wrap .score-num { font-size:110px; } }
+@media (min-width:500px) { .score-card .score-wrap .score-num { font-size:120px; } }
+.score-card .hint { font-size:12px; color:var(--muted); text-align:center; margin-top:-2px; }
+
+/* === Tabs === */
+.tabs { display:flex; gap:6px; margin-bottom:10px; }
+.tab { flex:1; padding:11px 8px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--card); font-size:14px; font-weight:500; cursor:pointer; text-align:center; transition:all 0.2s; }
+.tab:hover { border-color:var(--amber); }
+.tab.active { background:var(--amber); color:#fff; border-color:var(--amber); box-shadow:0 2px 8px rgba(184,105,50,0.25); }
+
+/* === Tab content transitions === */
+#tabContent > * { animation: fadeIn 0.25s ease-out; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+
+/* === History items === */
+.history-item { background:var(--card); border-radius:6px; padding:7px 10px; margin-bottom:3px; display:flex; align-items:center; gap:0; cursor:pointer; transition:transform 0.1s, box-shadow 0.15s; box-shadow:0 1px 2px rgba(0,0,0,0.04); border-left:3px solid; }
+.history-item:active { transform:scale(0.99); background:#fafafa; }
+.hi-left { display:flex; align-items:center; gap:6px; flex:1; min-width:0; overflow:hidden; }
+.hi-right { display:flex; align-items:center; gap:4px; flex-shrink:0; margin-left:8px; color:var(--muted); font-size:11px; }
+.hi-kid { font-weight:600; font-size:13px; white-space:nowrap; }
+.hi-amount { font-weight:700; font-size:14px; white-space:nowrap; }
+.hi-amount.plus { color:var(--green); }
+.hi-amount.minus { color:var(--red); }
+.hi-reason { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hi-note { font-size:12px; color:var(--amber); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100px; flex-shrink:1; }
+.hi-op { white-space:nowrap; }
+.hi-time { white-space:nowrap; }
+.empty { text-align:center; padding:32px; color:#ccc; font-size:14px; }
+
+/* === Action sheet (bottom drawer) === */
+.overlay { position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:99; opacity:0; pointer-events:none; transition:opacity 0.25s; }
+.overlay.show { opacity:1; pointer-events:auto; }
+.sheet { position:fixed; bottom:0; left:0; right:0; background:var(--card); border-radius:18px 18px 0 0; padding:16px; box-shadow:0 -4px 24px rgba(0,0,0,0.12); z-index:100; max-height:70vh; overflow-y:auto; transform:translateY(100%); transition:transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+.sheet.show { transform:translateY(0); }
+.sheet h3 { font-size:17px; font-weight:600; margin-bottom:10px; text-align:center; }
+.sheet .sheet-close { position:absolute; right:16px; top:14px; background:none; border:none; font-size:20px; cursor:pointer; color:var(--muted); }
+.sheet .cat-title { font-size:14px; font-weight:500; color:var(--muted); margin:10px 0 6px; padding-left:4px; }
+.sheet .rule-item { display:block; width:100%; padding:14px; text-align:left; border:none; border-radius:var(--radius-sm); font-size:15px; margin-bottom:6px; cursor:pointer; background:#f8f8f8; transition:background 0.15s, transform 0.1s; }
+.sheet .rule-item:active { background:#eee; transform:scale(0.98); }
+.sheet .rule-item .ri-label { font-weight:500; }
+.sheet .rule-item .ri-hint { font-size:12px; color:var(--muted); margin-top:2px; }
+.sheet .rule-item.reward { border-left:3px solid var(--green); }
+.sheet .rule-item.punish { border-left:3px solid var(--red); }
+
+/* === Number modal === */
+.num-modal { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity 0.2s; }
+.num-modal.show { opacity:1; pointer-events:auto; }
+.num-modal .num-bg { position:absolute; inset:0; background:rgba(0,0,0,0.5); }
+.num-modal .num-box { position:relative; background:var(--card); border-radius:var(--radius-lg); padding:20px 24px; text-align:center; width:280px; transform:scale(0.9); transition:transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.num-modal.show .num-box { transform:scale(1); }
+.num-modal .num-close { position:absolute; right:14px; top:14px; background:none; border:none; font-size:20px; cursor:pointer; color:var(--muted); }
+.num-modal .num-title { font-size:18px; font-weight:600; margin-bottom:2px; }
+.num-modal .num-desc { font-size:13px; color:var(--muted); margin-bottom:14px; }
+.num-modal .num-row { display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:14px; }
+.num-modal .num-btn { width:48px; height:48px; border-radius:50%; border:2px solid var(--border); background:var(--card); font-size:22px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.1s; }
+.num-modal .num-btn:active { background:#f0f0f0; }
+.num-modal .num-val { font-size:36px; font-weight:700; min-width:70px; }
+.num-modal .num-val.positive { color:var(--green); }
+.num-modal .num-val.negative { color:var(--red); }
+.num-modal .num-note { margin-bottom:14px; }
+.num-modal .num-note input { width:100%; padding:10px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:14px; outline:none; text-align:center; transition:border-color 0.2s; }
+.num-modal .num-note input:focus { border-color:var(--amber); }
+.num-modal .num-note input::placeholder { color:#ccc; }
+.num-modal .num-btns { display:flex; gap:8px; }
+.num-modal .num-btns button { flex:1; padding:10px; border-radius:var(--radius-sm); border:none; font-size:15px; cursor:pointer; }
+.num-modal .num-cancel { background:#f5f5f5; color:var(--muted); }
+.num-modal .num-ok { background:var(--amber); color:#fff; }
+
+/* === Detail popup === */
+.detail-popup { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity 0.2s; }
+.detail-popup.show { opacity:1; pointer-events:auto; }
+.detail-popup .dp-bg { position:absolute; inset:0; background:rgba(0,0,0,0.5); }
+.detail-popup .dp-box { position:relative; background:var(--card); border-radius:var(--radius-lg); padding:20px 24px; width:320px; max-width:90vw; transform:scale(0.9); transition:transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.detail-popup.show .dp-box { transform:scale(1); }
+.detail-popup .dp-close { position:absolute; right:14px; top:14px; background:none; border:none; font-size:20px; cursor:pointer; color:var(--muted); }
+.detail-popup .dp-title { font-size:17px; font-weight:600; margin-bottom:12px; text-align:center; }
+.detail-popup .dp-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f5f5f5; font-size:14px; }
+.detail-popup .dp-row .dp-label { color:var(--muted); }
+.detail-popup .dp-row .dp-val { font-weight:500; }
+.detail-popup .dp-note-section { margin-top:14px; }
+.detail-popup .dp-note-section .dp-note-label { font-size:13px; color:var(--muted); margin-bottom:6px; }
+.detail-popup .dp-note-section .dp-note-current { font-size:14px; padding:10px; background:var(--amber-light); border-radius:var(--radius-sm); color:var(--amber); margin-bottom:8px; min-height:20px; word-break:break-all; }
+.detail-popup .dp-note-section .dp-note-current.empty { color:var(--muted); font-style:italic; background:#f5f5f5; }
+.detail-popup .dp-note-input { display:flex; gap:8px; }
+.detail-popup .dp-note-input input { flex:1; padding:10px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:14px; outline:none; transition:border-color 0.2s; }
+.detail-popup .dp-note-input input:focus { border-color:var(--amber); }
+.detail-popup .dp-note-input button { padding:10px 16px; border-radius:var(--radius-sm); border:none; background:var(--amber); color:#fff; font-size:14px; cursor:pointer; }
+
+/* === Rules tab (inline) === */
+
+/* === Manual input === */
+.manual-row { display:flex; gap:6px; align-items:center; padding:8px 4px; }
+.manual-row input { padding:10px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:14px; outline:none; transition:border-color 0.2s; }
+.manual-row input:focus { border-color:var(--amber); }
+.manual-row input[type="number"] { width:80px; }
+.manual-row input[type="text"] { flex:1; }
+
+/* === Admin popup === */
+.admin-popup { position:fixed; inset:0; z-index:150; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity 0.2s; }
+.admin-popup.show { opacity:1; pointer-events:auto; }
+.admin-popup .ap-bg { position:absolute; inset:0; background:rgba(0,0,0,0.5); }
+.admin-popup .ap-box { position:relative; background:var(--card); border-radius:var(--radius-lg); padding:20px 24px; width:420px; max-width:95vw; max-height:85vh; overflow-y:auto; transform:scale(0.92); transition:transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.admin-popup.show .ap-box { transform:scale(1); }
+.admin-popup .ap-close { position:absolute; right:14px; top:14px; background:none; border:none; font-size:20px; cursor:pointer; color:var(--muted); }
+.admin-popup h3 { font-size:17px; font-weight:600; margin-bottom:12px; text-align:center; }
+.ap-tabs { display:flex; gap:6px; margin-bottom:12px; }
+.ap-tab { flex:1; padding:9px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--card); font-size:13px; cursor:pointer; text-align:center; transition:all 0.15s; }
+.ap-tab.active { background:var(--amber); color:#fff; border-color:var(--amber); }
+.ap-section-title { font-size:14px; font-weight:600; margin:10px 0 8px; padding:4px 0; border-bottom:1px solid #f0f0f0; }
+.ap-user-row { display:flex; gap:4px; align-items:center; margin-bottom:4px; }
+.ap-user-row input, .ap-user-row select { padding:6px; border:1px solid var(--border); border-radius:6px; font-size:12px; outline:none; }
+.ap-r-input { padding:5px 6px; border:1px solid var(--border); border-radius:5px; font-size:12px; outline:none; text-align:center; transition:border-color 0.15s; }
+.ap-r-input:focus { border-color:var(--amber); }
+.ap-add-row { display:flex; gap:4px; align-items:center; margin-top:4px; }
+.ap-add-row input, .ap-add-row select { padding:6px; border:1px solid var(--border); border-radius:6px; font-size:12px; outline:none; width:60px; }
+.ap-add-row select { width:56px; }
+.ap-save-bar { display:flex; gap:8px; margin-top:14px; }
+.ap-save-main { flex:1; padding:10px; border-radius:var(--radius-sm); border:none; background:var(--amber); color:#fff; font-size:14px; font-weight:600; cursor:pointer; }
+.ap-save-cancel { flex:1; padding:10px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--card); font-size:14px; cursor:pointer; }
+
+/* === Toast === */
+.toast { position:fixed; bottom:80px; left:50%; transform:translate(-50%,0); background:rgba(0,0,0,0.78); color:#fff; padding:10px 24px; border-radius:20px; font-size:14px; z-index:999; opacity:0; transition:opacity 0.25s, transform 0.25s; pointer-events:none; }
+.toast.show { opacity:1; transform:translate(-50%,-8px); }
+
+/* === Footer === */
+.footer { text-align:center; padding:16px 12px 20px; font-size:11px; color:var(--muted); }
+
+/* === Voice FAB === */
+.voice-fab { position:fixed; bottom:24px; right:20px; width:52px; height:52px; border-radius:50%; background:var(--amber); color:#fff; border:none; font-size:22px; cursor:pointer; box-shadow:0 4px 16px rgba(184,105,50,0.35); z-index:50; transition:transform 0.2s, box-shadow 0.2s; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent; }
+.voice-fab:active { transform:scale(0.9); }
+.voice-fab.listening { background:#E24B4A; animation: voicePulse 1.5s ease-in-out infinite; }
+@keyframes voicePulse { 0%,100% { box-shadow:0 0 0 0 rgba(226,75,74,0.4); } 50% { box-shadow:0 0 0 18px rgba(226,75,74,0); } }
+.voice-fab.thinking { background:var(--blue); }
+.voice-fab .fab-ripple { position:absolute; inset:-4px; border-radius:50%; border:2px solid rgba(255,255,255,0.4); animation: fabRipple 1.2s ease-out infinite; display:none; }
+.voice-fab.listening .fab-ripple { display:block; }
+@keyframes fabRipple { 0% { transform:scale(0.8); opacity:0.8; } 100% { transform:scale(1.4); opacity:0; } }
+.voice-label { position:fixed; bottom:82px; right:28px; font-size:11px; color:var(--muted); background:rgba(0,0,0,0.7); color:#fff; padding:4px 10px; border-radius:10px; pointer-events:none; opacity:0; transition:opacity 0.2s; z-index:49; }
+.voice-label.show { opacity:1; }
+
+/* === Voice confirmation modal === */
+.voice-modal { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity 0.25s; }
+.voice-modal.show { opacity:1; pointer-events:auto; }
+.voice-modal .vm-bg { position:absolute; inset:0; background:rgba(0,0,0,0.55); }
+.voice-modal .vm-box { position:relative; background:var(--card); border-radius:var(--radius-lg); padding:20px 24px; width:320px; max-width:92vw; transform:scale(0.9); transition:transform 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+.voice-modal.show .vm-box { transform:scale(1); }
+.voice-modal .vm-close { position:absolute; right:14px; top:14px; background:none; border:none; font-size:20px; cursor:pointer; color:var(--muted); }
+.voice-modal .vm-title { font-size:17px; font-weight:600; margin-bottom:4px; text-align:center; }
+.voice-modal .vm-subtitle { font-size:12px; color:var(--muted); text-align:center; margin-bottom:14px; word-break:break-all; }
+.voice-modal .vm-row { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.voice-modal .vm-row label { font-size:13px; color:var(--muted); min-width:40px; text-align:right; }
+.voice-modal .vm-row select, .voice-modal .vm-row input { flex:1; padding:10px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:15px; outline:none; transition:border-color 0.2s; background:var(--card); }
+.voice-modal .vm-row select:focus, .voice-modal .vm-row input:focus { border-color:var(--amber); box-shadow:0 0 0 3px rgba(184,105,50,0.1); }
+.voice-modal .vm-amount { font-size:28px; font-weight:700; text-align:center; }
+.voice-modal .vm-amount.plus { color:var(--green); }
+.voice-modal .vm-amount.minus { color:var(--red); }
+.voice-modal .vm-btns { display:flex; gap:8px; margin-top:16px; }
+.voice-modal .vm-btns button { flex:1; padding:12px; border-radius:var(--radius-sm); border:none; font-size:15px; font-weight:500; cursor:pointer; }
+.voice-modal .vm-retry { background:#f5f5f5; color:var(--text); }
+.voice-modal .vm-confirm { background:var(--amber); color:#fff; }
+
+/* === Status check indicators === */
+.voice-status { position:fixed; bottom:90px; left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:49; pointer-events:none; }
+.voice-status .vs-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); transition:all 0.2s; }
+.voice-status .vs-dot.active { background:var(--amber); transform:scale(1.5); }
+.voice-status .vs-dot.done { background:var(--green); }
+.voice-status .vs-dot.error { background:var(--red); }
+
+/* === Dark mode enhancements — use OS preference === */
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#1a1a1a; --card:#252525; --text:#e0e0e0; --muted:#888; --border:#333; --shadow-sm:0 1px 3px rgba(0,0,0,0.3); --shadow:0 2px 8px rgba(0,0,0,0.4); --amber-light:#3a2a1a; }
+  .score-card { background:#2a2a2a; }
+  .sheet { background:#252525; }
+  .sheet .rule-item { background:#333; }
+  .sheet .rule-item:active { background:#3a3a3a; }
+  .history-item { background:#2a2a2a; }
+  .num-modal .num-box, .detail-popup .dp-box, .voice-modal .vm-box { background:#252525; }
+  .detail-popup .dp-row { border-bottom-color:#333; }
+  .detail-popup .dp-note-section .dp-note-current { background:#3a2a1a; }
+  .detail-popup .dp-note-section .dp-note-current.empty { background:#333; }
+  .num-modal .num-cancel, .voice-modal .vm-retry { background:#333; }
+  input, select { background:#333!important; color:#e0e0e0!important; border-color:#444!important; }
+  .admin-popup .ap-box { background:#252525; }
+  .ap-section-title { border-bottom-color:#333; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <h1>赫菲积分管理</h1>
+  <p id="loginStatus">未登录</p>
+  <button class="refresh-btn" onclick="loadData()">↻</button>
+</div>
+
+<div class="login-bar" id="loginBar">
+  <select id="selUser"></select>
+  <input type="password" id="pwd" placeholder="密码" onkeydown="if(event.key==='Enter') login()">
+  <button class="btn btn-primary btn-sm" onclick="login()">登录</button>
+</div>
+
+<div class="login-bar" id="logoutBar" style="display:none;">
+  <span style="font-size:14px;color:var(--muted);flex:1;">已登录</span>
+  <button class="btn btn-outline btn-sm" onclick="openAdmin()" id="adminBtn" style="display:none;">⚙️</button>
+  <button class="btn btn-outline btn-sm" onclick="logout()">退出</button>
+</div>
+
+<div class="perm-hint" id="permHint">登录后可查看积分</div>
+
+<div class="score-grid" id="scoreGrid"></div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('recent')">积分记录</div>
+  <div class="tab" onclick="switchTab('rules')">规则</div>
+  <div class="tab" onclick="switchTab('report')">报表</div>
+</div>
+
+<div id="tabContent"></div>
+
+<!-- Voice FAB (桌面Chrome语音增强) -->
+<button class="voice-fab" id="voiceFab" onclick="toggleVoice()" title="语音加减分">🎤</button>
+<div class="voice-label" id="voiceLabel">语音加减分</div>
+
+<!-- Voice confirmation modal -->
+<div class="voice-modal" id="voiceModal">
+  <div class="vm-bg" onclick="closeVoiceModal()"></div>
+  <div class="vm-box">
+    <button class="vm-close" onclick="closeVoiceModal()">✕</button>
+    <div class="vm-title">🎤 语音识别结果</div>
+    <div class="vm-subtitle" id="voiceRaw">...</div>
+    <div class="vm-row">
+      <label>对象</label>
+      <select id="voiceKid"></select>
+    </div>
+    <div class="vm-row">
+      <label>事由</label>
+      <input id="voiceReason" placeholder="做了什么">
+    </div>
+    <div class="vm-row">
+      <label>分数</label>
+      <input id="voiceAmount" type="number" placeholder="5">
+    </div>
+    <div class="vm-row" style="margin-top:6px;">
+      <label>备注</label>
+      <input id="voiceNote" placeholder="补充说明（可选）">
+    </div>
+    <div class="vm-btns">
+      <button class="vm-retry" onclick="retryVoice()">🔄 重听</button>
+      <button class="vm-confirm" onclick="submitVoice()">✅ 确认提交</button>
+    </div>
+  </div>
+</div>
+
+<div class="footer">赫菲积分管理 · <span id="verText">v4.1</span> · 爸爸为恩赫恩菲制作 · 💬快捷</div>
+</div>
+
+<!-- Overlay + Sheet -->
+<div class="overlay" id="overlay" onclick="closeSheet()"></div>
+<div class="sheet" id="sheet"></div>
+
+<!-- Number modal -->
+<div class="num-modal" id="numModal">
+  <div class="num-bg" onclick="closeNumModal()"></div>
+  <div class="num-box">
+    <div class="num-close" onclick="closeNumModal()">✕</div>
+    <div class="num-title" id="numTitle"></div>
+    <div class="num-desc" id="numDesc"></div>
+    <div class="num-row">
+      <button class="num-btn" onmousedown="startLongPress(-1,event)" onmouseup="stopLongPress()" onmouseleave="stopLongPress()" ontouchstart="startLongPress(-1,event)" ontouchend="stopLongPress()" ontouchcancel="stopLongPress()">−</button>
+      <span class="num-val" id="numVal">+3</span>
+      <button class="num-btn" onmousedown="startLongPress(1,event)" onmouseup="stopLongPress()" onmouseleave="stopLongPress()" ontouchstart="startLongPress(1,event)" ontouchend="stopLongPress()" ontouchcancel="stopLongPress()">+</button>
+    </div>
+    <div class="num-note"><input type="text" id="numNote" placeholder="备注（选填）"></div>
+    <div class="num-btns">
+      <button class="num-cancel" onclick="closeNumModal()">取消</button>
+      <button class="num-ok" onclick="confirmNum()">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detail popup -->
+<div class="detail-popup" id="detailPopup">
+  <div class="dp-bg" onclick="closeDetailPopup()"></div>
+  <div class="dp-box">
+    <div class="dp-close" onclick="closeDetailPopup()">✕</div>
+    <div class="dp-title">积分记录详情</div>
+    <div class="dp-row"><span class="dp-label">对象</span><span class="dp-val" id="dpKid"></span></div>
+    <div class="dp-row"><span class="dp-label">事由</span><span class="dp-val" id="dpReason"></span></div>
+    <div class="dp-row"><span class="dp-label">分数</span><span class="dp-val" id="dpAmount"></span></div>
+    <div class="dp-row"><span class="dp-label">操作人</span><span class="dp-val" id="dpOperator"></span></div>
+    <div class="dp-row"><span class="dp-label">时间</span><span class="dp-val" id="dpTime"></span></div>
+    <div class="dp-note-section">
+      <div class="dp-note-label">备注</div>
+      <div class="dp-note-current" id="dpNoteDisplay"></div>
+      <div class="dp-note-input" id="dpNoteEdit">
+        <input type="text" id="dpNoteInput" placeholder="输入备注">
+        <button onclick="saveNote()">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Admin popup -->
+<div class="admin-popup" id="adminPopup">
+  <div class="ap-bg" onclick="closeAdmin()"></div>
+  <div class="ap-box" id="apBox"></div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+var VERSION = 'v4.2';
+var API = '';
+var state = { token:'', user:null, points:null, rules:null, allUsers:null, tab:'recent', sheetKid:'', numItem:null, numVal:0, detailRecord:null };
+
+var kidColors = [
+  { name:'enhe', bg:'#E8F2FC', border:'#4A90D9', color:'#2E6EB5' },
+  { name:'enfei', bg:'#FDE8F0', border:'#E87DA8', color:'#C55078' }
+];
+
+function getKidColor(kid) {
+  var kids = (state.allUsers||[]).filter(function(u){return u.role==='child';});
+  var idx = kids.findIndex(function(u){return u.id===kid;});
+  return (idx >= 0 ? kidColors[idx % kidColors.length] : kidColors[0]) || kidColors[0];
+}
+
+function getKidEmoji(kid) {
+  var kids = (state.allUsers||[]).filter(function(u){return u.role==='child';});
+  var idx = kids.findIndex(function(u){return u.id===kid;});
+  return idx === 0 ? '👦' : (idx === 1 ? '👧' : '👶');
+}
+
+async function fetchAPI(url, opts) {
+  try { var res = await fetch(url, opts); return await res.json(); }
+  catch(e) { return { success:false, message:'网络错误' }; }
+}
+
+// === Auth ===
+async function login() {
+  var uid = document.getElementById('selUser').value;
+  var pwd = document.getElementById('pwd').value;
+  if (!uid || !pwd) return toast('请选择用户并输入密码');
+  var res = await fetchAPI(API+'/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({userId:uid, password:pwd}) });
+  if (res.success) {
+    state.token = res.token; state.user = res.user;
+    localStorage.setItem('hefei_token', res.token);
+    localStorage.setItem('hefei_user', JSON.stringify(res.user));
+    updateUI(); loadData();
+    toast('欢迎，' + res.user.name);
+  } else { toast(res.message || '登录失败'); }
+}
+
+function logout() {
+  state.token = ''; state.user = null; state.points = null;
+  localStorage.removeItem('hefei_token'); localStorage.removeItem('hefei_user');
+  document.getElementById('pwd').value = '';
+  updateUI(); loadData();
+  toast('已退出');
+}
+
+// === Sheet ===
+function openSheet(kid) {
+  if (!canOperate()) return toast('无操作权限');
+  state.sheetKid = kid;
+  var rules = state.rules;
+  var user = (state.allUsers || []).find(function(u) { return u.id === kid; });
+  var kidName = user ? user.name : kid;
+  var points = state.points ? (state.points[kid] || 0) : 0;
+  var html = '<h3>'+kidName+' · 当前 '+points+'分</h3>';
+  html += '<button class="sheet-close" onclick="closeSheet()">✕</button>';
+  if (rules.reward) {
+    html += '<div class="cat-title" style="color:var(--green)">📈 加分</div>';
+    rules.reward.forEach(function(cat) {
+      html += '<div class="cat-title" style="font-size:11px;color:var(--muted);margin:4px 0 2px 8px;">'+cat.category+'</div>';
+      cat.items.forEach(function(item) {
+        html += '<button class="rule-item reward" onclick="openNumModal(\''+item.id+'\',\''+item.label+'\','+item.default+','+item.min+','+item.max+',\''+(item.unit||'')+'\')">'
+          + '<div class="ri-label">'+item.label+'</div>'
+          + '<div class="ri-hint">'+item.unit+' · 默认 +'+item.default+' 分</div></button>';
+      });
+    });
+  }
+  if (rules.punish) {
+    html += '<div class="cat-title" style="color:var(--red);margin-top:12px;">📉 扣分</div>';
+    rules.punish.forEach(function(cat) {
+      html += '<div class="cat-title" style="font-size:11px;color:var(--muted);margin:4px 0 2px 8px;">'+cat.category+'</div>';
+      cat.items.forEach(function(item) {
+        html += '<button class="rule-item punish" onclick="openNumModal(\''+item.id+'\',\''+item.label+'\','+item.default+','+item.min+','+item.max+',\''+(item.unit||'')+'\')">'
+          + '<div class="ri-label">'+item.label+'</div>'
+          + '<div class="ri-hint">'+item.unit+' · 默认 ' + item.default + ' 分</div></button>';
+      });
+    });
+  }
+  html += '<div class="cat-title" style="margin-top:12px;">✏️ 手动输入</div>';
+  html += '<div class="manual-row">'
+    + '<input type="number" id="manualAmt" placeholder="分数" style="width:80px;">'
+    + '<input type="text" id="manualReason" placeholder="事由（选填）">'
+    + '<button class="btn btn-primary btn-xs" onclick="manualSubmit()">确定</button></div>';
+  document.getElementById('sheet').innerHTML = html;
+  document.getElementById('sheet').classList.add('show');
+  document.getElementById('overlay').classList.add('show');
+}
+
+function closeSheet() {
+  document.getElementById('sheet').classList.remove('show');
+  document.getElementById('overlay').classList.remove('show');
+}
+
+// === Number modal ===
+var longPressTimer = null;
+var longPressDir = 0;
+var longPressFast = false;
+
+function startLongPress(dir, e) {
+  e.preventDefault();
+  adjustNum(dir);
+  longPressDir = dir;
+  longPressFast = false;
+  longPressTimer = setTimeout(function() {
+    longPressFast = true;
+    longPressTimer = setInterval(function() { if (longPressFast) adjustNum(longPressDir * 10); }, 100);
+  }, 500);
+}
+
+function stopLongPress() {
+  if (longPressTimer) { clearTimeout(longPressTimer); clearInterval(longPressTimer); longPressTimer = null; }
+  longPressFast = false;
+}
+
+function openNumModal(id, label, defVal, min, max, hint) {
+  state.numItem = { id:id, label:label, min:min, max:max };
+  state.numVal = defVal;
+  document.getElementById('numTitle').textContent = label;
+  var rangeText = (min >= 0 ? '+'+min : min) + ' ~ ' + (max >= 0 ? '+'+max : max) + ' 分';
+  document.getElementById('numDesc').textContent = '范围：' + rangeText + (hint ? ' · ' + hint : '');
+  document.getElementById('numNote').value = '';
+  updateNumDisplay();
+  document.getElementById('numModal').classList.add('show');
+}
+
+function adjustNum(delta) {
+  state.numVal += delta;
+  if (state.numVal > state.numItem.max) state.numVal = state.numItem.max;
+  if (state.numVal < state.numItem.min) state.numVal = state.numItem.min;
+  updateNumDisplay();
+}
+
+function updateNumDisplay() {
+  var el = document.getElementById('numVal');
+  el.textContent = state.numVal > 0 ? '+' + state.numVal : state.numVal;
+  el.className = 'num-val ' + (state.numVal >= 0 ? 'positive' : 'negative');
+}
+
+function closeNumModal() { document.getElementById('numModal').classList.remove('show'); }
+
+async function confirmNum() {
+  var note = document.getElementById('numNote').value.trim();
+  closeNumModal(); closeSheet();
+  await doChange(state.sheetKid, state.numVal, state.numItem.label, note);
+}
+
+async function manualSubmit() {
+  var amt = parseInt(document.getElementById('manualAmt').value);
+  var reason = document.getElementById('manualReason').value || '手动';
+  if (isNaN(amt) || amt===0) return toast('请输入有效分数');
+  closeSheet();
+  await doChange(state.sheetKid, amt, reason);
+}
+
+async function doChange(kid, amount, reason, note) {
+  try {
+    var body = {token:state.token, kid:kid, amount:amount, reason:reason};
+    if (note) body.note = note;
+    var res = await fetchAPI(API+'/api/points/change', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    if (res.success) {
+      var user = (state.allUsers || []).find(function(u) { return u.id === kid; });
+      toast((user?user.name:kid) + ' ' + (amount>0?'+':'') + amount + '分');
+      // 直接使用响应中的最新分数，跳过 loadData（省 2 次 API 调用）
+      state.points = res.points;
+      updateUI(true);  // skipTabRefresh = true
+      // 积分记录 tab：把新记录插到列表最前面，不用重新请求服务器
+      if (state.tab === 'recent' && res.record) {
+        prependHistoryRecord(res.record);
+      }
+    } else {
+      if (res.message && res.message.indexOf('权限') !== -1) {
+        forceRelogin('登录已过期，请重新登录');
+      } else {
+        toast(res.message || '操作失败');
+      }
+    }
+  } catch(e) { toast('操作失败'); }
+}
+
+// 把新记录插入历史列表最前面（不请求服务器）
+function prependHistoryRecord(record) {
+  var el = document.getElementById('tabContent');
+  var db = state.allUsers || [];
+  var user = db.find(function(u) { return u.id === record.kid; });
+  var kidColor = user ? (getKidColor(record.kid)||{}) : {};
+  var bc = kidColor.border || '#ccc';
+  var html = '<div class="history-item" style="border-left-color:'+bc+';" onclick="openDetailPopup(' + JSON.stringify(record).replace(/"/g, '&quot;') + ')">';
+  html += '<div class="hi-left">';
+  html += '<span class="hi-kid" style="color:'+bc+';">'+(user?user.name:record.kid)+'</span>';
+  html += '<span class="hi-amount '+(record.amount>=0?'plus':'minus')+'">'+(record.amount>=0?'+':'')+record.amount+'</span>';
+  html += '<span class="hi-reason">'+record.reason+'</span>';
+  if (record.note) html += '<span class="hi-note">'+record.note+'</span>';
+  html += '</div>';
+  html += '<div class="hi-right"><span class="hi-op">'+record.operator+'</span><span class="hi-time">'+record.time+'</span></div>';
+  html += '</div>';
+  var first = el.firstElementChild;
+  if (first && first.classList.contains('empty')) {
+    el.innerHTML = html;
+  } else {
+    el.insertAdjacentHTML('afterbegin', html);
+  }
+}
+
+function forceRelogin(msg) {
+  state.token = ''; state.user = null; state.points = null;
+  localStorage.removeItem('hefei_token');
+  localStorage.removeItem('hefei_user');
+  updateUI(); loadData();
+  alert(msg || '登录已过期，请重新登录');
+}
+
+// === Tabs ===
+function switchTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll('.tab').forEach(function(t,i) {
+    t.classList.toggle('active', (i===0&&tab==='recent')||(i===1&&tab==='rules')||(i===2&&tab==='report'));
+  });
+  var el = document.getElementById('tabContent');
+  el.innerHTML = '';
+  if (tab==='recent') loadHistory();
+  if (tab==='rules') renderRulesTab();
+  if (tab==='report') renderReport();
+}
+
+function renderRulesTab() {
+  if (!state.rules) return;
+  var rules = state.rules;
+  var el = document.getElementById('tabContent');
+  var html = '';
+  if (rules.reward) {
+    rules.reward.forEach(function(cat) {
+      html += '<div style="background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:8px;box-shadow:var(--shadow-sm);">';
+      html += '<div style="font-size:15px;font-weight:600;margin-bottom:8px;color:#639922;">📈 ' + cat.category + '</div>';
+      cat.items.forEach(function(item) {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-bottom:4px;background:#F9FBF7;border-radius:var(--radius-sm);font-size:13px;">';
+        html += '<span style="font-weight:500;">' + item.label + '</span>';
+        html += '<span><span style="font-weight:600;color:#639922;">+' + item.min + '~+' + item.max + '</span>';
+        html += '<span style="color:var(--muted);font-size:12px;margin-left:4px;">' + (item.unit||'') + '</span></span></div>';
+      });
+      html += '</div>';
+    });
+  }
+  if (rules.punish) {
+    rules.punish.forEach(function(cat) {
+      html += '<div style="background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:8px;box-shadow:var(--shadow-sm);">';
+      html += '<div style="font-size:15px;font-weight:600;margin-bottom:8px;color:#E24B4A;">📉 ' + cat.category + '</div>';
+      cat.items.forEach(function(item) {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-bottom:4px;background:#FFF5F5;border-radius:var(--radius-sm);font-size:13px;">';
+        html += '<span style="font-weight:500;">' + item.label + '</span>';
+        html += '<span><span style="font-weight:600;color:#E24B4A;">' + item.min + '~' + item.max + '</span>';
+        html += '<span style="color:var(--muted);font-size:12px;margin-left:4px;">' + (item.unit||'') + '</span></span></div>';
+      });
+      html += '</div>';
+    });
+  }
+  if (rules.special && rules.special.length > 0) {
+    html += '<div style="background:var(--card);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow-sm);border-left:3px solid var(--amber);">';
+    html += '<div style="font-size:15px;font-weight:600;margin-bottom:6px;color:var(--amber);">⚠️ 特别规则</div>';
+    rules.special.forEach(function(s) { html += '<div style="font-size:13px;padding:3px 0;">· ' + s + '</div>'; });
+    html += '</div>';
+  }
+  if (!html) html = '<div class="empty">暂无规则</div>';
+  el.innerHTML = html;
+}
+
+// === Detail popup ===
+function openDetailPopup(record) {
+  state.detailRecord = record;
+  document.getElementById('dpKid').textContent = record.kidName || record.kid;
+  document.getElementById('dpReason').textContent = record.reason;
+  var amt = record.amount;
+  document.getElementById('dpAmount').textContent = (amt>0?'+':'')+amt+' 分';
+  document.getElementById('dpAmount').style.color = amt>=0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('dpOperator').textContent = record.operator;
+  document.getElementById('dpTime').textContent = record.time;
+  var nd = document.getElementById('dpNoteDisplay');
+  if (record.note) { nd.textContent = record.note; nd.className = 'dp-note-current'; }
+  else { nd.textContent = '暂无备注'; nd.className = 'dp-note-current empty'; }
+  document.getElementById('dpNoteInput').value = record.note || '';
+  document.getElementById('dpNoteEdit').style.display = canOperate() ? '' : 'none';
+  document.getElementById('detailPopup').classList.add('show');
+}
+
+function closeDetailPopup() {
+  document.getElementById('detailPopup').classList.remove('show');
+  state.detailRecord = null;
+}
+
+async function saveNote() {
+  if (!state.detailRecord) return;
+  var note = document.getElementById('dpNoteInput').value.trim();
+  try {
+    var res = await fetchAPI(API+'/api/history/note', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:state.token, recordId:state.detailRecord.id, note:note}) });
+    if (res.success) {
+      toast('备注已保存');
+      state.detailRecord.note = note;
+      document.getElementById('dpNoteDisplay').textContent = note || '暂无备注';
+      document.getElementById('dpNoteDisplay').className = note ? 'dp-note-current' : 'dp-note-current empty';
+      document.getElementById('dpNoteInput').value = note;
+      loadHistory();
+    } else { toast(res.message || '保存失败'); }
+  } catch(e) { toast('保存失败'); }
+}
+
+// === Report ===
+var reportRange = 'week', reportKid = 'all', reportCat = 'all', reportDateFrom = '', reportDateTo = '', reportMode = 'score';
+
+function renderReport() {
+  var kids = (state.allUsers || []).filter(function(u) { return u.role === 'child'; });
+  if (kids.length === 0) kids = [{id:'enhe',name:'恩赫'},{id:'enfei',name:'恩菲'}];
+  var el = document.getElementById('tabContent');
+  var now = new Date();
+  var rangeStart, rangeEnd;
+  if (reportRange === 'custom' && reportDateFrom) {
+    rangeStart = new Date(reportDateFrom + 'T00:00:00');
+    rangeEnd = new Date((reportDateTo || reportDateFrom) + 'T23:59:59');
+  } else if (reportRange === 'week') { rangeStart = new Date(now - 7*24*3600*1000); rangeEnd = now; }
+  else if (reportRange === 'month') { rangeStart = new Date(now - 30*24*3600*1000); rangeEnd = now; }
+  else { rangeStart = new Date(0); rangeEnd = now; }
+
+  var allCats = [];
+  if (state.rules && state.rules.reward) state.rules.reward.forEach(function(c) { allCats.push({name:c.category, type:'reward', items:c.items}); });
+  if (state.rules && state.rules.punish) state.rules.punish.forEach(function(c) { allCats.push({name:c.category, type:'punish', items:c.items}); });
+
+  fetchAPI(API+'/api/history').then(function(data) {
+    if (!data.history) data.history = [];
+    var filtered = data.history.filter(function(r) {
+      var d = new Date(r.time.replace(/\//g,'-'));
+      if (d < rangeStart) return false;
+      if (reportRange !== 'all' && d > rangeEnd) return false;
+      if (reportKid !== 'all' && r.kid !== reportKid) return false;
+      if (reportCat !== 'all') {
+        var cat = allCats.find(function(c) { return c.name === reportCat; });
+        if (!cat) return false;
+        if (!cat.items.some(function(item) { return r.reason === item.label; })) return false;
+      }
+      return true;
+    });
+
+    var html = '';
+    // === Filter card ===
+    html += '<div style="background:var(--card);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px;box-shadow:var(--shadow-sm);">';
+    // Row 1: time
+    html += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px;flex-wrap:wrap;">';
+    html += '<span style="font-size:11px;color:#666;font-weight:600;min-width:32px;">时间</span>';
+    ['week','month','all','custom'].forEach(function(rng) {
+      var labels = {week:'本周',month:'30天',all:'全部',custom:'自定义'};
+      var act = reportRange===rng;
+      html += '<button style="font-size:11px;padding:3px 10px;border-radius:12px;border:none;cursor:pointer;'+(act?'background:var(--amber);color:#fff;font-weight:600;':'background:#f0f0f0;color:#666;')+'" onclick="changeReportRange(\''+rng+'\')">'+labels[rng]+'</button>';
+    });
+    html += '</div>';
+    // Row 1b: custom date (conditional, same row indent)
+    if (reportRange === 'custom') {
+      html += '<div style="display:flex;gap:4px;margin-bottom:6px;align-items:center;margin-left:36px;flex-wrap:wrap;">';
+      html += '<input type="date" id="rpDateFrom" value="'+reportDateFrom+'" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:11px;width:120px;">';
+      html += '<span style="font-size:11px;color:var(--muted);">至</span>';
+      html += '<input type="date" id="rpDateTo" value="'+reportDateTo+'" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-size:11px;width:120px;">';
+      html += '<button class="btn btn-primary btn-xs" onclick="applyCustomDate()">查询</button></div>';
+    }
+    // Row 2: kid
+    html += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px;flex-wrap:wrap;">';
+    html += '<span style="font-size:11px;color:#666;font-weight:600;min-width:32px;">孩子</span>';
+    html += '<button style="font-size:11px;padding:3px 10px;border-radius:12px;border:none;cursor:pointer;'+(reportKid==='all'?'background:var(--amber);color:#fff;font-weight:600;':'background:#f0f0f0;color:#666;')+'" onclick="changeReportKid(\'all\')">全部</button>';
+    kids.forEach(function(k) {
+      var ki = kids.indexOf(k), c = kidColors[ki % kidColors.length];
+      var act = reportKid===k.id;
+      html += '<button style="font-size:11px;padding:3px 10px;border-radius:12px;border:none;cursor:pointer;'+(act?'background:'+c.border+';color:#fff;font-weight:600;':'background:#f0f0f0;color:#666;')+'" onclick="changeReportKid(\''+k.id+'\')">'+k.name+'</button>';
+    });
+    html += '</div>';
+    // Row 3: category
+    html += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:6px;flex-wrap:wrap;">';
+    html += '<span style="font-size:11px;color:#666;font-weight:600;min-width:32px;">类别</span>';
+    html += '<button style="font-size:11px;padding:3px 10px;border-radius:12px;border:none;cursor:pointer;'+(reportCat==='all'?'background:var(--amber);color:#fff;font-weight:600;':'background:#f0f0f0;color:#666;')+'" onclick="changeReportCat(\'all\')">全部</button>';
+    allCats.forEach(function(cat) {
+      var act = reportCat===cat.name;
+      html += '<button style="font-size:11px;padding:3px 10px;border-radius:12px;border:none;cursor:pointer;'+(act?'background:'+(cat.type==='reward'?'var(--green)':'var(--red)')+';color:#fff;font-weight:600;':'background:#f0f0f0;color:#666;')+'" onclick="changeReportCat(\''+cat.name+'\')">'+cat.name+'</button>';
+    });
+    html += '</div>';
+    // Row 4: mode
+    html += '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">';
+    html += '<span style="font-size:11px;color:#666;font-weight:600;min-width:32px;">模式</span>';
+    html += '<button style="font-size:11px;padding:3px 10px;border-radius:12px;border:none;cursor:pointer;'+(reportMode==='score'?'background:var(--amber);color:#fff;font-weight:600;':'background:#f0f0f0;color:#666;')+'" onclick="changeReportMode(\'score\')">积分</button>';
+    html += '<button style="font-size:11px;padding:3px 10px;border-radius:12px;border:none;cursor:pointer;'+(reportMode==='count'?'background:var(--amber);color:#fff;font-weight:600;':'background:#f0f0f0;color:#666;')+'" onclick="changeReportMode(\'count\')">次数</button>';
+    html += '</div></div>';
+    // === end filter card ===
+
+    if (filtered.length === 0) { html += '<div class="empty">所选范围内暂无记录</div>'; el.innerHTML = html; return; }
+
+    // Summary
+    var targetKids = reportKid === 'all' ? kids : kids.filter(function(k) { return k.id === reportKid; });
+    html += '<div style="background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:8px;box-shadow:var(--shadow-sm);">';
+    html += '<div style="font-size:14px;font-weight:600;margin-bottom:10px;text-align:center;">积分总结</div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;text-align:center;">';
+    html += '<div style="font-size:11px;color:var(--muted);">对象</div><div style="font-size:11px;color:#639922;">加分</div><div style="font-size:11px;color:#E24B4A;">扣分</div><div style="font-size:11px;color:var(--muted);">净变动</div>';
+    targetKids.forEach(function(k) {
+      var kData = filtered.filter(function(r) { return r.kid === k.id; });
+      var add = kData.filter(function(r) { return r.amount > 0; }).reduce(function(s,r) { return s+r.amount; }, 0);
+      var sub = kData.filter(function(r) { return r.amount < 0; }).reduce(function(s,r) { return s-r.amount; }, 0);
+      var net = add - sub;
+      html += '<div style="font-size:14px;font-weight:500;">'+k.name+'</div>';
+      html += '<div style="font-size:14px;color:#639922;font-weight:500;">+'+add+'</div>';
+      html += '<div style="font-size:14px;color:#E24B4A;font-weight:500;">-'+sub+'</div>';
+      html += '<div style="font-size:14px;font-weight:600;color:'+(net>=0?'#639922':'#E24B4A')+';">'+(net>0?'+':'')+net+'</div>';
+    });
+    html += '</div></div>';
+
+    // Daily trend chart
+    var dailyMap = {};
+    filtered.forEach(function(r) {
+      var day = r.time.split(' ')[0].slice(5);
+      if (!dailyMap[day]) dailyMap[day] = {};
+      if (!dailyMap[day][r.kid]) dailyMap[day][r.kid] = 0;
+      dailyMap[day][r.kid] += reportMode === 'count' ? 1 : r.amount;
+    });
+    var days = Object.keys(dailyMap).sort();
+    if (days.length > 0) {
+      var cW=460, cH=210, pL=45, pR=20, pT=25, pB=30;
+      var allVals = []; days.forEach(function(d) { targetKids.forEach(function(k) { allVals.push(dailyMap[d][k.id]||0); }); });
+      var maxAbs = Math.max.apply(null, allVals.map(Math.abs)) || 1;
+      var aH = cH - pT - pB, zY = pT + aH/2;
+      html += '<div style="background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:8px;box-shadow:var(--shadow-sm);">';
+      html += '<div style="font-size:14px;font-weight:600;margin-bottom:8px;text-align:center;">每日趋势 · '+(reportMode==='count'?'操作次数':'积分变动')+'</div>';
+      html += '<svg viewBox="0 0 '+cW+' '+cH+'" style="width:100%;max-width:460px;">';
+      html += '<line x1="'+pL+'" y1="'+zY+'" x2="'+(cW-pR)+'" y2="'+zY+'" stroke="#ddd" stroke-dasharray="4,2"/>';
+      html += '<text x="'+(pL-4)+'" y="'+(zY+4)+'" text-anchor="end" font-size="9" fill="#999">0</text>';
+      var bG = (cW - pL - pR) / days.length, bW = Math.min(16, bG * 0.6);
+      days.forEach(function(d, di) {
+        var bx = pL + bG * di + (bG - bW * targetKids.length - (targetKids.length-1)*2) / 2;
+        targetKids.forEach(function(k, ki) {
+          var val = dailyMap[d][k.id] || 0;
+          var bh = Math.abs(val) / maxAbs * (aH/2 - 4);
+          if (bh < 2 && val !== 0) bh = 2;
+          var kiO = kids.indexOf(k), c = kidColors[kiO >= 0 ? kiO % kidColors.length : 0];
+          var by = val >= 0 ? (zY - bh) : zY;
+          var bX = bx + ki * (bW + 2);
+          html += '<rect x="'+bX+'" y="'+by+'" width="'+bW+'" height="'+bh+'" rx="2" fill="'+c.border+'" opacity="0.85"/>';
+          if (Math.abs(val) > 0) {
+            var lY = val >= 0 ? (by - 7) : (by + bh + 13);
+            var label = reportMode === 'count' ? val : (val>=0?'+':'')+val;
+            html += '<text x="'+(bX+bW/2)+'" y="'+lY+'" text-anchor="middle" font-size="9" font-weight="600" fill="'+c.border+'">'+label+'</text>';
+          }
+        });
+        if (di % Math.max(1, Math.ceil(days.length/8)) === 0) {
+          var mX = bx + (bW * targetKids.length + (targetKids.length-1)*2) / 2;
+          html += '<text x="'+mX+'" y="'+(cH-8)+'" text-anchor="middle" font-size="9" fill="#999">'+d+'</text>';
+        }
+      });
+      var lgX = cW - pR - targetKids.length * 45;
+      targetKids.forEach(function(k, ki) {
+        var kiO = kids.indexOf(k), c = kidColors[kiO >= 0 ? kiO % kidColors.length : 0];
+        html += '<rect x="'+(lgX+ki*45)+'" y="'+(pT-16)+'" width="10" height="10" rx="2" fill="'+c.border+'"/>';
+        html += '<text x="'+(lgX+ki*45+12)+'" y="'+(pT-6)+'" font-size="10" fill="#666">'+k.name+'</text>';
+      });
+      html += '</svg></div>';
+    }
+
+    // Pie chart - category distribution
+    var catTotals = {};
+    filtered.forEach(function(r) {
+      var cat = allCats.find(function(c) { return c.items.some(function(item) { return r.reason === item.label; }); });
+      var catName = cat ? cat.name : '其他';
+      if (!catTotals[catName]) catTotals[catName] = { total: 0, count: 0, type: cat ? cat.type : 'reward' };
+      catTotals[catName].total += Math.abs(r.amount);
+      catTotals[catName].count += 1;
+    });
+    var catEntries = Object.entries(catTotals);
+    var grandTotal = catEntries.reduce(function(s,e){return s + (reportMode==='count' ? e[1].count : e[1].total);}, 0);
+    var pieColors = ['#4A90D9','#E87DA8','#5C9919','#E24B4A','#B86932','#8B5CF6','#F59E0B','#06B6D4'];
+    if (catEntries.length > 0) {
+      var pCX=230, pCY=115, pR=80;
+      var angle = -Math.PI/2;
+      html += '<div style="background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:8px;box-shadow:var(--shadow-sm);">';
+      html += '<div style="font-size:14px;font-weight:600;margin-bottom:8px;text-align:center;">类别分布 · '+(reportMode==='count'?'操作次数':'积分占比')+'</div>';
+      html += '<svg viewBox="0 0 460 210" style="width:100%;max-width:460px;">';
+      catEntries.forEach(function(entry, ei) {
+        var val = reportMode === 'count' ? entry[1].count : entry[1].total;
+        var sliceAngle = val / grandTotal * 2 * Math.PI;
+        var endAngle = angle + sliceAngle;
+        var x1 = pCX + pR * Math.cos(angle), y1 = pCY + pR * Math.sin(angle);
+        var x2 = pCX + pR * Math.cos(endAngle), y2 = pCY + pR * Math.sin(endAngle);
+        var largeArc = sliceAngle > Math.PI ? 1 : 0;
+        var d = 'M '+pCX+' '+pCY+' L '+x1+' '+y1+' A '+pR+' '+pR+' 0 '+largeArc+' 1 '+x2+' '+y2+' Z';
+        html += '<path d="'+d+'" fill="'+pieColors[ei%pieColors.length]+'" opacity="0.85" stroke="#fff" stroke-width="1.5"/>';
+        var midAngle = angle + sliceAngle/2, lr = pR * 0.6;
+        var lx = pCX + lr * Math.cos(midAngle), ly = pCY + lr * Math.sin(midAngle);
+        var pct = (val/grandTotal*100).toFixed(0);
+        if (pct >= 5) html += '<text x="'+lx+'" y="'+ly+'" text-anchor="middle" font-size="11" font-weight="600" fill="#fff" dominant-baseline="central">'+pct+'%</text>';
+        angle = endAngle;
+      });
+      html += '</svg>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:center;margin-top:2px;">';
+      catEntries.forEach(function(entry, ei) {
+        var val = reportMode === 'count' ? entry[1].count : entry[1].total;
+        html += '<span style="font-size:11px;color:#555;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:'+pieColors[ei%pieColors.length]+';margin-right:3px;vertical-align:middle;"></span>'+entry[0]+' '+val+'</span>';
+      });
+      html += '</div></div>';
+    }
+
+    // Top 10
+    html += '<div style="background:var(--card);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow-sm);">';
+    html += '<div style="font-size:14px;font-weight:600;margin-bottom:8px;text-align:center;">🔥 操作排行 Top 10</div>';
+    var sorted = filtered.slice().sort(function(a,b) { return Math.abs(b.amount) - Math.abs(a.amount); }).slice(0, 10);
+    sorted.forEach(function(r) {
+      var u = (state.allUsers||[]).find(function(x){return x.id===r.kid;});
+      html += '<div style="display:flex;align-items:center;padding:6px 0;border-bottom:1px solid #f5f5f5;font-size:13px;">';
+      html += '<span style="font-weight:500;min-width:36px;color:'+(r.amount>=0?'#639922':'#E24B4A')+';">'+(r.amount>=0?'+':'')+r.amount+'</span>';
+      html += '<span style="flex:1;">'+r.reason+'</span>';
+      html += '<span style="font-size:11px;color:var(--muted);">'+(u?u.name:r.kid)+' · '+r.operator+'</span></div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  }).catch(function() { el.innerHTML = '<div class="empty">加载报表失败</div>'; });
+}
+
+function changeReportRange(r) { reportRange = r; if (r !== 'custom') { reportDateFrom = ''; reportDateTo = ''; } renderReport(); }
+function changeReportKid(k) { reportKid = k; renderReport(); }
+function changeReportCat(c) { reportCat = c; renderReport(); }
+function changeReportMode(m) { reportMode = m; renderReport(); }
+function applyCustomDate() { reportRange = 'custom'; reportDateFrom = document.getElementById('rpDateFrom').value; reportDateTo = document.getElementById('rpDateTo').value; renderReport(); }
+
+// === Admin panel ===
+var adminTab = 'users';
+
+function openAdmin() { adminTab = 'users'; renderAdmin(); document.getElementById('adminPopup').classList.add('show'); }
+function closeAdmin() { document.getElementById('adminPopup').classList.remove('show'); }
+function switchAdminTab(t) { adminTab = t; renderAdmin(); }
+
+function renderAdmin() {
+  var html = '<h3>管理后台</h3><button class="ap-close" onclick="closeAdmin()">✕</button>';
+  html += '<div class="ap-tabs"><div class="ap-tab'+(adminTab==='users'?' active':'')+'" onclick="switchAdminTab(\'users\')">用户管理</div><div class="ap-tab'+(adminTab==='rules'?' active':'')+'" onclick="switchAdminTab(\'rules\')">积分规则</div></div>';
+  html += (adminTab === 'users' ? renderAdminUsers() : renderAdminRules());
+  document.getElementById('apBox').innerHTML = html;
+}
+
+function renderAdminUsers() {
+  if (!state.allUsers) return '加载中...';
+  var html = '';
+  state.allUsers.forEach(function(u, i) {
+    html += '<div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:6px;background:#fafafa;">';
+    html += '<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">用户 #'+(i+1)+'</div>';
+    html += '<div style="display:flex;gap:4px;align-items:center;"><input class="ap-r-input" style="width:60px;text-align:left;" value="'+u.name+'" id="uname_'+i+'" placeholder="名字">';
+    html += '<select class="ap-r-input" style="width:64px;text-align:left;" id="urole_'+i+'">';
+    html += '<option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option>';
+    html += '<option value="parent"'+(u.role==='parent'?' selected':'')+'>家长</option>';
+    html += '<option value="child"'+(u.role==='child'?' selected':'')+'>孩子</option></select></div>';
+    html += '<div style="display:flex;gap:4px;align-items:center;margin-top:4px;">';
+    html += '<span style="font-size:12px;color:var(--muted);min-width:30px;">密码</span>';
+    html += '<input class="ap-r-input" type="password" style="flex:1;text-align:left;" id="upwd_'+i+'" placeholder="留空则不改">';
+    html += '<button class="btn btn-primary btn-xs" style="padding:5px 12px;" onclick="saveOneUser('+i+')">保存</button>';
+    html += '<button class="btn btn-xs" style="background:#E24B4A;color:#fff;padding:5px 8px;min-width:28px;" onclick="deleteUser('+i+')">✕</button></div></div>';
+  });
+  html += '<div class="ap-section-title">添加新用户</div>';
+  html += '<div class="ap-add-row"><input id="newUid" placeholder="ID(拼音)"><input id="newName" placeholder="显示名"><input id="newPwd" placeholder="密码"><select id="newRole"><option value="child">孩子</option><option value="parent">家长</option><option value="admin">管理员</option></select><button class="btn btn-primary btn-sm" onclick="addUser()">添加</button></div>';
+  return html;
+}
+
+function renderAdminRules() {
+  if (!state.rules) return '加载中...';
+  var html = '';
+  // Reward
+  html += '<div class="ap-section-title" style="color:#639922;">📈 加分规则</div>';
+  if (state.rules.reward) {
+    state.rules.reward.forEach(function(cat, ci) {
+      html += '<div style="border:1px solid #C8E6C9;border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;background:#fafffa;">';
+      html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">';
+      html += '<span style="font-size:12px;color:#388E3C;">大类</span>';
+      html += '<input class="ap-r-input" style="flex:1;font-weight:600;font-size:13px;text-align:left;" id="rCatName_'+ci+'" value="'+cat.category+'" placeholder="大类名称">';
+      html += '<button class="btn btn-xs" style="background:#E8F5E9;color:#388E3C;border:1px solid #A5D6A7;" onclick="addRuleItem(\'reward\','+ci+')">+小类</button>';
+      html += '<button class="btn btn-xs" style="background:#FFEBEE;color:#D32F2F;border:1px solid #EF9A9A;" onclick="deleteRuleCategory(\'reward\','+ci+')">删</button></div>';
+      cat.items.forEach(function(item, ii) {
+        html += '<div style="border:1px solid #C8E6C9;border-radius:6px;padding:8px;margin-bottom:4px;background:#FAFFFA;">';
+        html += '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">';
+        html += '<input class="ap-r-input" style="width:64px;font-weight:500;" id="rlabel_'+ci+'_'+ii+'" value="'+item.label+'" placeholder="项目">';
+        html += '<span style="font-size:12px;color:#639922;font-weight:500;">加分</span>';
+        html += '<span style="font-size:11px;color:var(--muted);">最少</span><input class="ap-r-input" style="width:34px;" id="rmin_'+ci+'_'+ii+'" value="'+item.min+'" type="number">';
+        html += '<span style="font-size:11px;">分</span>';
+        html += '<span style="font-size:11px;color:var(--muted);">最多</span><input class="ap-r-input" style="width:34px;" id="rmax_'+ci+'_'+ii+'" value="'+item.max+'" type="number">';
+        html += '<span style="font-size:11px;">分</span>';
+        html += '<span style="font-size:11px;color:var(--muted);">默认</span><input class="ap-r-input" style="width:34px;" id="rdef_'+ci+'_'+ii+'" value="'+item.default+'" type="number">';
+        html += '<span style="font-size:11px;">分</span>';
+        html += '<button class="btn btn-xs" style="background:#f5f5f5;color:#999;margin-left:auto;" onclick="deleteRuleItem(\'reward\','+ci+','+ii+')">✕</button></div>';
+        html += '<div style="margin-top:4px;"><input class="ap-r-input" style="width:100%;text-align:left;" id="runit_'+ci+'_'+ii+'" value="'+item.unit+'" placeholder="备注（如：每科）"></div></div>';
+      });
+      html += '</div>';
+    });
+  }
+  html += '<div style="margin-bottom:4px;"><input id="newRCat" placeholder="新大类名" style="padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:100px;"> <button class="btn btn-primary btn-xs" onclick="addRuleCategory(\'reward\')">+加分大类</button></div>';
+
+  // Punish
+  html += '<div class="ap-section-title" style="color:#E24B4A;margin-top:10px;">📉 扣分规则</div>';
+  if (state.rules.punish) {
+    state.rules.punish.forEach(function(cat, ci) {
+      html += '<div style="border:1px solid #FFCDD2;border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;background:#fffafa;">';
+      html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">';
+      html += '<span style="font-size:12px;color:#D32F2F;">大类</span>';
+      html += '<input class="ap-r-input" style="flex:1;font-weight:600;font-size:13px;text-align:left;" id="pCatName_'+ci+'" value="'+cat.category+'" placeholder="大类名称">';
+      html += '<button class="btn btn-xs" style="background:#E8F5E9;color:#388E3C;border:1px solid #A5D6A7;" onclick="addRuleItem(\'punish\','+ci+')">+小类</button>';
+      html += '<button class="btn btn-xs" style="background:#FFEBEE;color:#D32F2F;border:1px solid #EF9A9A;" onclick="deleteRuleCategory(\'punish\','+ci+')">删</button></div>';
+      cat.items.forEach(function(item, ii) {
+        html += '<div style="border:1px solid #FFEBEE;border-radius:6px;padding:8px;margin-bottom:4px;background:#FFFAFA;">';
+        html += '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">';
+        html += '<input class="ap-r-input" style="width:64px;font-weight:500;" id="plabel_'+ci+'_'+ii+'" value="'+item.label+'" placeholder="项目">';
+        html += '<span style="font-size:12px;color:#E24B4A;font-weight:500;">扣分</span>';
+        html += '<span style="font-size:11px;color:var(--muted);">最少</span><input class="ap-r-input" style="width:34px;" id="pmin_'+ci+'_'+ii+'" value="'+Math.abs(item.max)+'" type="number">';
+        html += '<span style="font-size:11px;">分</span>';
+        html += '<span style="font-size:11px;color:var(--muted);">最多</span><input class="ap-r-input" style="width:34px;" id="pmax_'+ci+'_'+ii+'" value="'+Math.abs(item.min)+'" type="number">';
+        html += '<span style="font-size:11px;">分</span>';
+        html += '<span style="font-size:11px;color:var(--muted);">默认</span><input class="ap-r-input" style="width:34px;" id="pdef_'+ci+'_'+ii+'" value="'+Math.abs(item.default)+'" type="number">';
+        html += '<span style="font-size:11px;">分</span>';
+        html += '<button class="btn btn-xs" style="background:#f5f5f5;color:#999;margin-left:auto;" onclick="deleteRuleItem(\'punish\','+ci+','+ii+')">✕</button></div>';
+        html += '<div style="margin-top:4px;"><input class="ap-r-input" style="width:100%;text-align:left;" id="punit_'+ci+'_'+ii+'" value="'+item.unit+'" placeholder="备注（如：每分钟扣1分）"></div></div>';
+      });
+      html += '</div>';
+    });
+  }
+  html += '<div style="margin-bottom:4px;"><input id="newPCat" placeholder="新大类名" style="padding:6px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:100px;"> <button class="btn btn-primary btn-xs" onclick="addRuleCategory(\'punish\')">+扣分大类</button></div>';
+
+  // Special rules
+  html += '<div class="ap-section-title" style="color:var(--amber);margin-top:10px;">⚠️ 特别规则</div>';
+  html += '<div style="border:1px solid #FFE0B2;border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;background:#FFF8F2;">';
+  var specials = state.rules.special || [];
+  specials.forEach(function(s, si) {
+    html += '<div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;">';
+    html += '<input class="ap-r-input" style="flex:1;text-align:left;" id="sp_'+si+'" value="'+s+'" placeholder="特别规则描述">';
+    html += '<button class="btn btn-xs" style="background:#FFEBEE;color:#D32F2F;border:1px solid #EF9A9A;" onclick="deleteSpecial('+si+')">删</button></div>';
+  });
+  html += '<button class="btn btn-xs" style="background:#FFF3E0;color:var(--amber);border:1px solid #FFE0B2;font-weight:500;" onclick="addSpecial()">+特别规则</button></div>';
+
+  html += '<div class="ap-save-bar"><button class="ap-save-main" onclick="saveRules()">保存规则</button><button class="ap-save-cancel" onclick="closeAdmin()">取消</button></div>';
+  return html;
+}
+
+// === Rule management helpers ===
+function deleteRuleItem(type, catIdx, itemIdx) { syncAdminFormState(); state.rules[type][catIdx].items.splice(itemIdx, 1); renderAdmin(); }
+function deleteRuleCategory(type, catIdx) { syncAdminFormState(); if (!confirm('确定删除大类「'+state.rules[type][catIdx].category+'」及其所有子项吗？')) return; state.rules[type].splice(catIdx, 1); renderAdmin(); }
+function addRuleItem(type, catIdx) { syncAdminFormState(); if (!state.rules[type]) return; var isP = (type==='punish'); state.rules[type][catIdx].items.push({id:'new_'+Date.now(), label:'新项目', min:isP?-10:0, max:isP?-1:10, default:isP?-5:5, unit:'', hint:''}); renderAdmin(); }
+function addRuleCategory(type) { syncAdminFormState(); var id = type==='reward'?'newRCat':'newPCat'; var n = document.getElementById(id).value.trim(); if (!n) return toast('请输入大类名'); if (!state.rules[type]) state.rules[type] = []; state.rules[type].push({category:n, items:[]}); document.getElementById(id).value = ''; renderAdmin(); }
+function addSpecial() { syncAdminFormState(); if (!state.rules.special) state.rules.special = []; state.rules.special.push(''); renderAdmin(); }
+function deleteSpecial(si) { syncAdminFormState(); if (!state.rules.special) return; state.rules.special.splice(si, 1); renderAdmin(); }
+
+function syncAdminFormState() {
+  if (!state.rules) return;
+  if (state.rules.reward) {
+    state.rules.reward.forEach(function(cat, ci) {
+      var cn = document.getElementById('rCatName_'+ci); if (cn) cat.category = cn.value.trim() || cat.category;
+      cat.items.forEach(function(item, ii) {
+        var lbl = document.getElementById('rlabel_'+ci+'_'+ii); if (lbl) item.label = lbl.value || item.label;
+        var mn = document.getElementById('rmin_'+ci+'_'+ii); if (mn) item.min = parseInt(mn.value) || item.min;
+        var mx = document.getElementById('rmax_'+ci+'_'+ii); if (mx) item.max = parseInt(mx.value) || item.max;
+        var df = document.getElementById('rdef_'+ci+'_'+ii); if (df) item.default = parseInt(df.value) || item.default;
+        var un = document.getElementById('runit_'+ci+'_'+ii); if (un) item.unit = un.value;
+      });
+    });
+  }
+  if (state.rules.punish) {
+    state.rules.punish.forEach(function(cat, ci) {
+      var cn = document.getElementById('pCatName_'+ci); if (cn) cat.category = cn.value.trim() || cat.category;
+      cat.items.forEach(function(item, ii) {
+        var lbl = document.getElementById('plabel_'+ci+'_'+ii); if (lbl) item.label = lbl.value || item.label;
+        var pmn = document.getElementById('pmin_'+ci+'_'+ii); if (pmn) item.max = -Math.abs(parseInt(pmn.value) || Math.abs(item.max));
+        var pmx = document.getElementById('pmax_'+ci+'_'+ii); if (pmx) item.min = -Math.abs(parseInt(pmx.value) || Math.abs(item.min));
+        var df = document.getElementById('pdef_'+ci+'_'+ii); if (df) item.default = -Math.abs(parseInt(df.value) || Math.abs(item.default));
+        var un = document.getElementById('punit_'+ci+'_'+ii); if (un) item.unit = un.value;
+      });
+    });
+  }
+  // Sync special rules
+  if (state.rules.special) {
+    var specials = [];
+    var si = 0;
+    while (document.getElementById('sp_'+si)) { var v = document.getElementById('sp_'+si).value.trim(); if (v) specials.push(v); si++; }
+    state.rules.special = specials;
+  }
+}
+
+// === User management ===
+async function saveOneUser(idx) {
+  var name = document.getElementById('uname_'+idx).value, role = document.getElementById('urole_'+idx).value, pwd = document.getElementById('upwd_'+idx).value;
+  var u = state.allUsers[idx]; u.name = name; u.role = role; if (pwd) u.password = pwd;
+  try {
+    var res = await fetchAPI(API+'/api/config/users', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:state.token, users:state.allUsers}) });
+    if (res.success) {
+      var savedPwds = {};
+      state.allUsers.forEach(function(su) { if (su.password) savedPwds[su.id] = su.password; });
+      state.allUsers = res.users;
+      state.allUsers.forEach(function(ru) { if (savedPwds[ru.id]) ru.password = savedPwds[ru.id]; });
+      toast('「'+name+'」已保存'); renderAdmin();
+    } else { toast(res.message || '保存失败'); }
+  } catch(e) { toast('保存失败'); }
+}
+
+async function addUser() {
+  var uid = document.getElementById('newUid').value.trim(), name = document.getElementById('newName').value.trim(), pwd = document.getElementById('newPwd').value.trim(), role = document.getElementById('newRole').value;
+  if (!uid || !name || !pwd) return toast('请填写完整');
+  if (state.allUsers.some(function(u) { return u.id === uid; })) return toast('ID已存在');
+  state.allUsers.push({id:uid, name:name, password:pwd, role:role});
+  try {
+    var res = await fetchAPI(API+'/api/config/users', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:state.token, users:state.allUsers}) });
+    if (res.success) {
+      // Preserve passwords
+      var savedPwds = {};
+      state.allUsers.forEach(function(su) { if (su.password) savedPwds[su.id] = su.password; });
+      state.allUsers = res.users;
+      state.allUsers.forEach(function(ru) { if (savedPwds[ru.id]) ru.password = savedPwds[ru.id]; });
+      toast('已添加'); renderAdmin();
+    } else { toast(res.message || '添加失败'); }
+  } catch(e) { toast('添加失败'); }
+}
+
+async function deleteUser(idx) {
+  if (!confirm('确定删除 ' + state.allUsers[idx].name + ' 吗？')) return;
+  state.allUsers.splice(idx, 1);
+  try {
+    var res = await fetchAPI(API+'/api/config/users', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:state.token, users:state.allUsers}) });
+    if (res.success) { state.allUsers = res.users; toast('已删除'); renderAdmin(); loadData(); }
+  } catch(e) { toast('删除失败'); }
+}
+
+async function saveRules() {
+  if (!state.rules) return;
+  syncAdminFormState();
+  try {
+    var res = await fetchAPI(API+'/api/config/rules', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:state.token, rules:state.rules}) });
+    if (res.success) { state.rules = res.rules; toast('规则已保存'); closeAdmin(); }
+  } catch(e) { toast('保存失败'); }
+}
+
+// === Toast ===
+function toast(msg) {
+  var el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(function() { el.classList.remove('show'); }, 2000);
+}
+
+// === UI state ===
+function canOperate() { return state.user && (state.user.role === 'admin' || state.user.role === 'parent'); }
+
+function updateUI(skipTabRefresh) {
+  var kids = (state.allUsers || []).filter(function(u) { return u.role === 'child'; });
+  if (state.user) {
+    document.getElementById('loginBar').style.display = 'none';
+    document.getElementById('logoutBar').style.display = 'flex';
+    document.getElementById('loginStatus').innerHTML = '欢迎 <span class="user-badge">'+state.user.name+'</span>';
+    document.getElementById('permHint').style.display = 'none';
+  } else {
+    document.getElementById('loginBar').style.display = 'flex';
+    document.getElementById('logoutBar').style.display = 'none';
+    document.getElementById('loginStatus').textContent = '未登录';
+    document.getElementById('permHint').style.display = 'block';
+  }
+  var sel = document.getElementById('selUser');
+  if (sel.options.length === 0 && state.allUsers) {
+    state.allUsers.forEach(function(u) { var o = document.createElement('option'); o.value = u.id; o.textContent = u.name; sel.appendChild(o); });
+  }
+  document.getElementById('adminBtn').style.display = (state.user && state.user.role === 'admin') ? '' : 'none';
+  if (state.points && kids.length > 0) {
+    var html = '';
+    kids.forEach(function(k, i) {
+      var c = kidColors[i % kidColors.length], emoji = getKidEmoji(k.id), val = state.points[k.id] || 0;
+      html += '<div class="score-card" style="border-color:'+c.border+';" onclick="openSheet(\''+k.id+'\')">';
+      html += '<div class="card-header"><div class="avatar" style="background:'+c.border+';">'+emoji+'</div><span class="name">'+k.name+'</span></div>';
+      html += '<div class="score-wrap" style="color:'+c.border+'"><span class="score-sign">'+(val>=0?'+':'-')+'</span><span class="score-num">'+Math.abs(val)+'</span></div>';
+      html += '<div class="hint">点击卡片加减分</div></div>';
+    });
+    document.getElementById('scoreGrid').innerHTML = html;
+  }
+  if (!skipTabRefresh) {
+    if (state.tab === 'recent') loadHistory();
+    else if (state.tab === 'rules') renderRulesTab();
+    else if (state.tab === 'report') renderReport();
+  }
+}
+
+async function loadData() {
+  var res = await fetchAPI(API+'/api/points?token='+(state.token||''));
+  if (res.success) { state.points = res.points; state.rules = res.rules; }
+  var cres = await fetchAPI(API+'/api/config');
+  if (cres.success) { state.allUsers = cres.users; }
+  updateUI();
+}
+
+function loadHistory() {
+  var el = document.getElementById('tabContent');
+  if (!state.user) { el.innerHTML = '<div class="empty">登录后可查看记录</div>'; return; }
+  fetchAPI(API+'/api/history').then(function(data) {
+    if (!data.history || data.history.length === 0) { el.innerHTML = '<div class="empty">暂无记录</div>'; return; }
+    var db = state.allUsers || [], html = '';
+    data.history.forEach(function(r) {
+      var user = db.find(function(u) { return u.id === r.kid; });
+      var kidColor = user ? (getKidColor(r.kid)||{}) : {};
+      var bc = kidColor.border || '#ccc';
+      html += '<div class="history-item" style="border-left-color:'+bc+';" onclick="openDetailPopup(' + JSON.stringify(r).replace(/"/g, '&quot;') + ')">';
+      html += '<div class="hi-left">';
+      html += '<span class="hi-kid" style="color:'+bc+';">'+(user?user.name:r.kid)+'</span>';
+      html += '<span class="hi-amount '+(r.amount>=0?'plus':'minus')+'">'+(r.amount>=0?'+':'')+r.amount+'</span>';
+      html += '<span class="hi-reason">'+r.reason+'</span>';
+      if (r.note) html += '<span class="hi-note">'+r.note+'</span>';
+      html += '</div>';
+      html += '<div class="hi-right"><span class="hi-op">'+r.operator+'</span><span class="hi-time">'+r.time+'</span></div>';
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  }).catch(function() { el.innerHTML = '<div class="empty">加载失败</div>'; });
+}
+
+// ============================================================
+// 🎤 语音操作 (v4.2 — 叠加增强，不替代卡片点击)
+// ============================================================
+// 桌面Chrome+HTTPS → 语音可用，识别后跳过规则选单直接确认
+// 移动端/不支持 → 提示"请直接点击积分卡片操作"
+var voiceRecognition = null;
+var voiceListening = false;
+
+(function initVoice() {
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  voiceRecognition = new SR();
+  voiceRecognition.lang = 'zh-CN';
+  voiceRecognition.interimResults = false;
+  voiceRecognition.continuous = false;
+  voiceRecognition.maxAlternatives = 1;
+
+  voiceRecognition.onresult = function(event) {
+    voiceListening = false; updateVoiceFab();
+    processVoiceText(event.results[0][0].transcript.trim());
+  };
+  voiceRecognition.onerror = function(event) {
+    voiceListening = false; updateVoiceFab();
+    console.log('[语音] 错误:', event.error);
+    toast('语音不可用，请直接点击积分卡片操作');
+  };
+  voiceRecognition.onend = function() {
+    voiceListening = false; updateVoiceFab();
+  };
+})();
+
+function toggleVoice() {
+  if (!canOperate()) { toast('请先登录'); return; }
+  if (!voiceRecognition) { toast('语音需要桌面Chrome，请直接点击积分卡片操作'); return; }
+  voiceListening ? stopVoice() : startVoice();
+}
+
+function startVoice() {
+  try {
+    voiceListening = true; updateVoiceFab();
+    voiceRecognition.start();
+    document.getElementById('voiceLabel').textContent = '正在听...';
+    document.getElementById('voiceLabel').classList.add('show');
+  } catch(e) {
+    voiceListening = false; updateVoiceFab();
+    toast('语音启动失败，请直接点击积分卡片操作');
+  }
+}
+
+function stopVoice() {
+  try { voiceRecognition.stop(); } catch(e) {}
+  voiceListening = false; updateVoiceFab();
+  document.getElementById('voiceLabel').classList.remove('show');
+}
+
+function updateVoiceFab() {
+  var fab = document.getElementById('voiceFab');
+  fab.classList.remove('listening', 'thinking');
+  fab.textContent = voiceListening ? '🔴' : '🎤';
+  if (voiceListening) fab.classList.add('listening');
+}
+
+function processVoiceText(text) {
+  console.log('[语音]', text);
+  document.getElementById('voiceLabel').classList.remove('show');
+
+  var kids = (state.allUsers || []).filter(function(u) { return u.role === 'child'; });
+  if (kids.length === 0) { toast('没有孩子用户'); return; }
+
+  // 匹配孩子
+  var matchedKid = null;
+  for (var i = 0; i < kids.length; i++) {
+    if (text.indexOf(kids[i].name) !== -1) { matchedKid = kids[i]; break; }
+  }
+  if (!matchedKid) {
+    for (var i = 0; i < kids.length; i++) {
+      if (text.toLowerCase().indexOf(kids[i].id.toLowerCase()) !== -1) { matchedKid = kids[i]; break; }
+    }
+  }
+  if (!matchedKid && kids.length === 1) matchedKid = kids[0];
+  if (!matchedKid && kids.length >= 2) {
+    if (/老大|哥哥|姐姐/.test(text)) matchedKid = kids[0];
+    else if (/老二|弟弟|妹妹/.test(text)) matchedKid = kids[1];
+  }
+  if (!matchedKid) matchedKid = kids[0]; // fallback
+
+  // 解析分数
+  var amount = 0;
+  var addMatch = text.match(/加\s*(\d+)|奖\w*\s*(\d+)|\+?\s*(\d+)\s*分/);
+  var subMatch = text.match(/[扣减罚]\s*(\d+)|-\s*(\d+)/);
+  if (addMatch) { amount = Math.abs(parseInt(addMatch[1] || addMatch[2] || addMatch[3])); }
+  else if (subMatch) { amount = -Math.abs(parseInt(subMatch[1] || subMatch[2])); }
+  else {
+    var nm = text.match(/(\d+)\s*分/);
+    if (nm) amount = parseInt(nm[1]);
+  }
+
+  // 解析事由 + 备注
+  var reason = text;
+  if (matchedKid) reason = reason.replace(new RegExp(matchedKid.name, 'g'), '').replace(new RegExp(matchedKid.id, 'gi'), '');
+  reason = reason.replace(/[+-]?\s*\d+\s*分|加\d+|扣\d+|减\d+|奖\d+|罚\d+/g, '').replace(/[，。！？、,.!?]/g, '').trim();
+
+  var note = '';
+  var nm2 = text.match(/备注[：:]\s*(.+)/);
+  if (nm2) { note = nm2[1].trim(); reason = reason.replace(/备注[：:]\s*.+/, '').trim(); }
+
+  if (!reason || reason.length < 2) reason = '快捷操作';
+
+  // 打开确认弹窗
+  document.getElementById('voiceRaw').textContent = text;
+  var sel = document.getElementById('voiceKid');
+  sel.innerHTML = '';
+  kids.forEach(function(k) {
+    var o = document.createElement('option');
+    o.value = k.id; o.textContent = k.name;
+    if (k.id === matchedKid.id) o.selected = true;
+    sel.appendChild(o);
+  });
+  document.getElementById('voiceReason').value = reason;
+  document.getElementById('voiceAmount').value = amount || 5;
+  document.getElementById('voiceNote').value = note;
+  document.getElementById('voiceModal').classList.add('show');
+}
+
+function closeVoiceModal() { document.getElementById('voiceModal').classList.remove('show'); }
+function retryVoice() { closeVoiceModal(); setTimeout(startVoice, 300); }
+
+async function submitVoice() {
+  var kid = document.getElementById('voiceKid').value;
+  var reason = document.getElementById('voiceReason').value.trim();
+  var amount = parseInt(document.getElementById('voiceAmount').value);
+  var note = document.getElementById('voiceNote').value.trim();
+
+  if (!kid) return toast('请选择对象');
+  if (!reason) return toast('请输入事由');
+  if (isNaN(amount) || amount === 0) return toast('请输入有效分数');
+
+  closeVoiceModal();
+  try {
+    var res = await fetchAPI(API + '/api/points/change', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: state.token, kid: kid, amount: amount, reason: reason, note: note })
+    });
+    if (res.success) {
+      var kidName = ((state.allUsers || []).find(function(u) { return u.id === kid; }) || {}).name || kid;
+      toast(kidName + ' ' + (amount >= 0 ? '+' : '') + amount + '分 — ' + reason);
+      // 直接使用响应中的最新分数和记录
+      state.points = res.points;
+      updateUI(true);
+      if (state.tab === 'recent' && res.record) {
+        prependHistoryRecord(res.record);
+      }
+    } else {
+      if (res.message && res.message.indexOf('权限') !== -1) {
+        forceRelogin('登录已过期，请重新登录');
+      } else {
+        toast(res.message || '操作失败');
+      }
+    }
+  } catch(e) { toast('提交失败，请检查网络'); }
+}
+
+(function() {
+  document.getElementById('verText').textContent = VERSION;
+  var t = localStorage.getItem('hefei_token'), u = localStorage.getItem('hefei_user');
+  if (t && t.startsWith('hefei.') && u) { try { state.token = t; state.user = JSON.parse(u); } catch(e) {} }
+  updateUI(); loadData();
+})();
+</script>
+</body>
+</html>

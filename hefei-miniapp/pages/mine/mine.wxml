@@ -1,0 +1,81 @@
+<!-- pages/mine/mine.wxml -->
+<view class="page-container">
+
+  <!-- 用户卡片 -->
+  <view class="user-card card">
+    <view class="user-row">
+      <view class="user-avatar">{{userEmoji}}</view>
+      <view class="user-info">
+        <text class="user-name">{{userName}}</text>
+        <text class="user-role">{{roleText}}</text>
+      </view>
+    </view>
+    <view class="user-stats" wx:if="{{isLoggedIn}}">
+      <view class="us-item">
+        <text class="us-val">{{totalPoints}}</text>
+        <text class="us-label">家庭总分</text>
+      </view>
+      <view class="us-item">
+        <text class="us-val">{{recordCount}}</text>
+        <text class="us-label">记录总数</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 未登录 -->
+  <view wx:if="{{!isLoggedIn}}" class="perm-hint">
+    <text>请先在首页登录</text>
+    <text class="hint-link" bindtap="goIndex">→ 去登录</text>
+  </view>
+
+  <block wx:if="{{isLoggedIn}}">
+    <!-- 积分规则 -->
+    <view class="card">
+      <text class="section-title">📋 积分规则</text>
+      <block wx:if="{{rulesData.reward && rulesData.reward.length > 0}}">
+        <text class="rule-sec-title" style="color: #639922;">📈 加分</text>
+        <block wx:for="{{rulesData.reward}}" wx:key="category" wx:for-item="cat">
+          <view class="rule-cat-item">
+            <text class="rule-cat-name">{{cat.category}}</text>
+            <text class="rule-cat-count">{{cat.items.length}}项</text>
+          </view>
+          <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item" class="rule-detail">
+            <text>{{item.label}}</text>
+            <text style="color: #639922;">+{{item.min}}~+{{item.max}}分</text>
+          </view>
+        </block>
+      </block>
+      <block wx:if="{{rulesData.punish && rulesData.punish.length > 0}}">
+        <text class="rule-sec-title" style="color: #E24B4A;">📉 扣分</text>
+        <block wx:for="{{rulesData.punish}}" wx:key="category" wx:for-item="cat">
+          <view class="rule-cat-item">
+            <text class="rule-cat-name">{{cat.category}}</text>
+            <text class="rule-cat-count">{{cat.items.length}}项</text>
+          </view>
+          <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item" class="rule-detail">
+            <text>{{item.label}}</text>
+            <text style="color: #E24B4A;">{{item.min}}~{{item.max}}分</text>
+          </view>
+        </block>
+      </block>
+      <view wx:if="{{(!rulesData.reward || rulesData.reward.length === 0) && (!rulesData.punish || rulesData.punish.length === 0)}}" class="empty">暂无规则</view>
+    </view>
+
+    <!-- 管理后台入口 -->
+    <view class="card menu-card" wx:if="{{isAdmin}}" bindtap="goAdmin">
+      <view class="menu-row">
+        <text class="menu-icon">⚙️</text>
+        <text class="menu-text">管理后台</text>
+        <text class="menu-arrow">→</text>
+      </view>
+      <text class="menu-desc">用户管理 · 积分规则管理</text>
+    </view>
+
+    <!-- 版本信息 -->
+    <view class="version-text">赫菲积分管理 v1.0</view>
+  </block>
+
+</view>
+
+<!-- Toast -->
+<toast-msg message="{{toastMessage}}" show="{{toastVisible}}" />

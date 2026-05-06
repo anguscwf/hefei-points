@@ -1,0 +1,44 @@
+<!-- pages/records/records.wxml -->
+<view class="page-container">
+
+  <!-- 筛选栏 -->
+  <view class="filter-bar">
+    <view class="filter-tab {{activeFilter === 'all' ? 'active' : ''}}" bindtap="onFilter" data-filter="all">全部</view>
+    <view class="filter-tab {{activeFilter === 'add' ? 'active' : ''}}" bindtap="onFilter" data-filter="add">获得</view>
+    <view class="filter-tab {{activeFilter === 'use' ? 'active' : ''}}" bindtap="onFilter" data-filter="use">使用</view>
+  </view>
+
+  <!-- 记录列表 -->
+  <view wx:if="{{filteredList.length === 0}}" class="empty">暂无记录</view>
+  <view wx:else>
+    <view wx:for="{{groupedList}}" wx:key="month" class="month-group">
+      <text class="month-title">{{item.month}}</text>
+      <view wx:for="{{item.items}}" wx:key="recordId" wx:for-item="rec" class="history-item"
+        style="border-left-color: {{rec.kidColor}};"
+        bindtap="onRecordTap" data-id="{{rec.recordId}}">
+        <view class="hi-left">
+          <text class="hi-kid" style="color: {{rec.kidColor}};">{{rec.kidName}}</text>
+          <text class="hi-amount {{rec.isPlus ? 'plus' : 'minus'}}">{{rec.amountText}}</text>
+          <text class="hi-reason">{{rec.reason}}</text>
+          <text class="hi-note" wx:if="{{rec.note}}">{{rec.note}}</text>
+        </view>
+        <view class="hi-right">
+          <text class="hi-op">{{rec.operator}}</text>
+          <text class="hi-time">{{rec.time.split(' ')[1] || rec.time}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+</view>
+
+<!-- 详情弹窗 -->
+<detail-popup
+  show="{{detailVisible}}"
+  record="{{detailRecord}}"
+  bind:close="onDetailClose"
+  bind:saveNote="onSaveNote"
+/>
+
+<!-- Toast -->
+<toast-msg message="{{toastMessage}}" show="{{toastVisible}}" />
