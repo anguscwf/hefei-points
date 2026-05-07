@@ -5,6 +5,7 @@
   <view class="admin-tabs">
     <view class="admin-tab {{adminTab === 'users' ? 'active' : ''}}" bindtap="switchTab" data-tab="users">用户管理</view>
     <view class="admin-tab {{adminTab === 'rules' ? 'active' : ''}}" bindtap="switchTab" data-tab="rules">积分规则</view>
+    <view class="admin-tab {{adminTab === 'cleanup' ? 'active' : ''}}" bindtap="switchTab" data-tab="cleanup">数据清理</view>
   </view>
 
   <!-- ========== 用户管理 ========== -->
@@ -116,6 +117,50 @@
     <view class="save-bar">
       <button class="btn btn-primary save-main" bindtap="saveRules">保存规则</button>
       <button class="btn btn-outline" bindtap="goBack">取消</button>
+    </view>
+  </view>
+
+  <!-- ========== 数据清理 ========== -->
+  <view wx:if="{{adminTab === 'cleanup'}}" class="cleanup-section">
+    <view class="card">
+      <text class="section-title">🧹 清理历史记录</text>
+      <text class="cleanup-hint">此操作不可撤销，建议先备份</text>
+
+      <view class="cleanup-row">
+        <text class="cleanup-label">选择孩子</text>
+        <picker range="{{cleanupKidOptions}}" range-key="name" value="{{cleanupKidIdx}}" bindchange="onCleanupKid">
+          <view class="cleanup-picker">{{cleanupKidOptions[cleanupKidIdx].name}}</view>
+        </picker>
+      </view>
+
+      <view class="cleanup-row">
+        <text class="cleanup-label">截止日期</text>
+        <picker mode="date" value="{{cleanupBefore}}" bindchange="onCleanupBefore">
+          <text class="cleanup-date">{{cleanupBefore || '选择日期'}}</text>
+        </picker>
+        <text class="cleanup-hint2">清理该日期 {{cleanupBefore ? '及之前' : ''}} 的记录</text>
+      </view>
+
+      <view class="cleanup-row">
+        <text class="cleanup-label">起始日期</text>
+        <picker mode="date" value="{{cleanupAfter}}" bindchange="onCleanupAfter">
+          <text class="cleanup-date">{{cleanupAfter || '选择日期（可选）'}}</text>
+        </picker>
+        <text class="cleanup-hint2">{{cleanupAfter ? '清理该日期及之后的记录' : '不填则清理全部符合的记录'}}</text>
+      </view>
+
+      <view class="cleanup-actions">
+        <button class="btn btn-xs" bindtap="onCleanupPreview">预览匹配数</button>
+        <button class="btn btn-danger btn-xs" bindtap="onCleanupExec">确认清理</button>
+      </view>
+
+      <view wx:if="{{cleanupPreviewCount >= 0}}" class="cleanup-result">
+        <text>匹配 <text class="cr-count">{{cleanupPreviewCount}}</text> 条记录</text>
+      </view>
+    </view>
+
+    <view class="save-bar">
+      <button class="btn btn-outline" bindtap="goBack">返回</button>
     </view>
   </view>
 

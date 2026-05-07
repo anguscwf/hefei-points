@@ -3,7 +3,7 @@
 
   <!-- 头部 -->
   <view class="header">
-    <text class="header-title">赫菲积分管理</text>
+    <text class="header-title">恩霖积分</text>
     <text class="header-status">{{loginStatusText}}</text>
     <view class="refresh-btn" bindtap="onRefresh">↻</view>
   </view>
@@ -138,5 +138,5 @@
 <toast-msg message="{{toastMessage}}" show="{{toastVisible}}" />
 
 <view class="footer">
-  <text>赫菲积分管理 · v1.0 · 爸爸为恩赫恩菲制作</text>
+  <text>恩霖润物育儿积分 · v1.0 · 爸爸为恩赫恩菲制作</text>
 </view>

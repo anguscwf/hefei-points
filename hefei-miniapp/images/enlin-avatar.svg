@@ -1,0 +1,17 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <title>恩霖积分小程序头像</title>
+  <desc>恩霖EL微笑头像 - 恩霖润物育儿积分</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6C5CE7"/>
+      <stop offset="100%" stop-color="#4834D4"/>
+    </linearGradient>
+  </defs>
+  <circle cx="100" cy="100" r="98" fill="url(#bg)"/>
+  <circle cx="100" cy="100" r="98" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+  <circle cx="72" cy="58" r="6" fill="white" opacity="0.92"/>
+  <circle cx="128" cy="58" r="6" fill="white" opacity="0.92"/>
+  <circle cx="100" cy="38" r="5" fill="white" opacity="0.55"/>
+  <text x="100" y="122" font-family="Arial,Helvetica,sans-serif" font-size="56" font-weight="bold" fill="white" text-anchor="middle" letter-spacing="4">EL</text>
+  <path d="M 72 148 Q 100 172 128 148" stroke="white" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.85"/>
+</svg>

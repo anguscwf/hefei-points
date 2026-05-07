@@ -20,7 +20,14 @@ Page({
     newPCatName: '',
 
     toastMessage: '',
-    toastVisible: false
+    toastVisible: false,
+
+    // 数据清理
+    cleanupKidOptions: [{ id: 'all', name: '所有孩子' }],
+    cleanupKidIdx: 0,
+    cleanupBefore: '',
+    cleanupAfter: '',
+    cleanupPreviewCount: -1
   },
 
   onLoad: function() {
@@ -79,7 +86,10 @@ Page({
 
     this.setData({
       userList: userList,
-      editRules: editRules
+      editRules: editRules,
+      cleanupKidOptions: [{ id: 'all', name: '所有孩子' }].concat(
+        allUsers.filter(function(u) { return u.role === 'child'; }).map(function(u) { return { id: u.id, name: u.name }; })
+      )
     });
   },
 
@@ -357,6 +367,64 @@ Page({
         that.showToast('规则已保存');
       } else {
         that.showToast(res.message || '保存失败');
+      }
+    });
+  },
+
+  // ========== 数据清理 ==========
+  onCleanupKid: function(e) {
+    this.setData({ cleanupKidIdx: parseInt(e.detail.value), cleanupPreviewCount: -1 });
+  },
+  onCleanupBefore: function(e) {
+    this.setData({ cleanupBefore: e.detail.value, cleanupPreviewCount: -1 });
+  },
+  onCleanupAfter: function(e) {
+    this.setData({ cleanupAfter: e.detail.value, cleanupPreviewCount: -1 });
+  },
+
+  onCleanupPreview: function() {
+    var that = this;
+    app.fetchAPI('/api/history?token=' + (app.globalData.token || '')).then(function(data) {
+      var history = data.history || [];
+      var kid = that.data.cleanupKidOptions[that.data.cleanupKidIdx];
+      var kidId = kid && kid.id !== 'all' ? kid.id : '';
+      var before = that.data.cleanupBefore;
+      var after = that.data.cleanupAfter;
+      var count = 0;
+      history.forEach(function(r) {
+        if (kidId && r.kid !== kidId) return;
+        var rDate = r.time ? r.time.split(' ')[0].replace(/\//g, '-') : '';
+        if (before && rDate > before) return;
+        if (after && rDate < after) return;
+        count++;
+      });
+      that.setData({ cleanupPreviewCount: count });
+    });
+  },
+
+  onCleanupExec: function() {
+    var that = this;
+    var kid = this.data.cleanupKidOptions[this.data.cleanupKidIdx];
+    var kidId = kid && kid.id !== 'all' ? kid.id : '';
+    var kidName = kid ? kid.name : '所有孩子';
+
+    wx.showModal({
+      title: '⚠️ 确认清理',
+      content: '确定要清理「' + kidName + '」在指定时间范围内的 ' + (this.data.cleanupPreviewCount >= 0 ? this.data.cleanupPreviewCount + ' 条' : '') + '记录吗？此操作不可撤销！',
+      success: function(res) {
+        if (!res.confirm) return;
+        app.fetchAPI('/api/history/cleanup', {
+          method: 'POST',
+          body: JSON.stringify({
+            token: app.globalData.token,
+            kid: kidId || undefined,
+            beforeDate: that.data.cleanupBefore || undefined,
+            afterDate: that.data.cleanupAfter || undefined
+          })
+        }).then(function(result) {
+          that.showToast(result.message || '清理完成');
+          that.setData({ cleanupPreviewCount: -1 });
+        });
       }
     });
   },
