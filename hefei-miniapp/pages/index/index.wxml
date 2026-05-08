@@ -8,8 +8,21 @@
     <view class="refresh-btn" bindtap="onRefresh">↻</view>
   </view>
 
+  <!-- 加载中 -->
+  <view class="loading-bar" wx:if="{{!isLoggedIn && loadingUsers}}">
+    <view class="perm-hint">⏳ 正在加载用户列表...</view>
+  </view>
+
+  <!-- 加载失败 -->
+  <view class="loading-bar" wx:if="{{!isLoggedIn && !loadingUsers && userOptions.length === 0}}">
+    <view class="perm-hint">
+      <text>⚠️ 加载失败，请检查网络后重试</text>
+      <button class="btn btn-primary btn-sm mt-sm" bindtap="onRetryLoad">重新加载</button>
+    </view>
+  </view>
+
   <!-- 登录栏 -->
-  <view class="login-bar" wx:if="{{!isLoggedIn}}">
+  <view class="login-bar" wx:if="{{!isLoggedIn && !loadingUsers && userOptions.length > 0}}">
     <picker class="user-picker" range="{{userOptions}}" range-key="name" value="{{selectedUserIdx}}" bindchange="onSelectUser">
       <view class="picker-display">{{selectedUserName || '选择用户'}}</view>
     </picker>

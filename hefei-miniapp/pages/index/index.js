@@ -43,12 +43,19 @@ Page({
 
     // Toast
     toastMessage: '',
-    toastVisible: false
+    toastVisible: false,
+
+    // 加载状态
+    loadingUsers: true,
+    loadError: false
+  },
+
+  onLoad: function() {
+    this.refreshState();
   },
 
   onShow: function() {
     this.refreshState();
-  },
 
   onLoad: function() {
     this.refreshState();
@@ -58,6 +65,11 @@ Page({
   refreshState: function() {
     var that = this;
     var g = app.globalData;
+
+    // 未登录时显示加载状态
+    if (!(g.token && g.user)) {
+      this.setData({ loadingUsers: true, loadError: false });
+    }
 
     // 如果数据还没加载，等待 onLaunch 的 dataReady promise
     var allUsers = g.allUsers;
@@ -106,6 +118,22 @@ Page({
     });
   },
 
+  // 手动重试加载
+  onRetryLoad: function() {
+    this.setData({ loadingUsers: true, loadError: false });
+    var that = this;
+    app.fetchAPI('/api/config', { timeout: 15000 }).then(function(res) {
+      if (res && res.success) {
+        app.globalData.allUsers = res.users;
+        app.globalData.rules = res.rules;
+        that._doRefreshState();
+      } else {
+        that.setData({ loadingUsers: false, loadError: true });
+        that.showToast('加载失败，请检查网络连接');
+      }
+    });
+  },
+
   // 实际执行 setData（从 refreshState 和兜底逻辑中抽离）
   _doRefreshState: function() {
     var that = this;
@@ -149,6 +177,7 @@ Page({
       isAdmin: isAdmin,
       isChild: isChild,
       isParent: isParent,
+      loadingUsers: false,
       loginStatusText: loginStatusText,
       currentUserName: g.user ? g.user.name : '',
       userOptions: userOptions,
