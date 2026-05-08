@@ -1,2 +1,2 @@
 <!-- components/toast/toast.wxml -->
-<view class="toast {{show ? 'show' : ''}}">{{message}}</view>
+<view class="toast-msg" wx:if="{{show}}" style="opacity: {{show ? '1' : '0'}}; transform: translateX(-50%) translateY({{show ? '0' : '16rpx'}});">{{message}}</view>

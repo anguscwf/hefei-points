@@ -418,6 +418,27 @@ app.post('/api/history/note', (req, res) => {
   }
 });
 
+// ============== 删除历史记录（admin + parent） ==============
+app.post('/api/history/delete', (req, res) => {
+  const { token, recordId } = req.body;
+  const user = requireRole(token, ['admin', 'parent']);
+  if (!user) return res.status(403).json({ success: false, message: '无操作权限' });
+
+  try {
+    withLock('history_delete', () => {
+      const history = loadJSON(HISTORY_FILE, []);
+      const idx = history.findIndex(r => r.id === recordId);
+      if (idx === -1) throw new Error('记录不存在');
+      const removed = history.splice(idx, 1)[0];
+      saveJSON(HISTORY_FILE, history);
+      return removed;
+    });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(e.message === '记录不存在' ? 404 : 503).json({ success: false, message: e.message || '删除失败' });
+  }
+});
+
 // ============== 获取配置 ==============
 app.get('/api/config', (req, res) => {
   const config = loadJSON(CONFIG_FILE, { rules: {}, users: [], families: {} });
@@ -545,6 +566,116 @@ app.post('/api/family/join', (req, res) => {
   } catch (e) {
     const code = ['邀请码无效', '用户不存在', '你已在该家庭中'].includes(e.message) ? 400 : 503;
     res.status(code).json({ success: false, message: e.message || '加入失败' });
+  }
+});
+
+// ============== 离开家庭 ==============
+app.post('/api/family/leave', (req, res) => {
+  const { token } = req.body;
+  const user = verifyToken(token);
+  if (!user) return res.status(403).json({ success: false, message: '请先登录' });
+
+  const familyId = user.familyId || 'default';
+  if (familyId === 'default') {
+    return res.status(400).json({ success: false, message: '已在默认家庭，无需离开' });
+  }
+  if (user.role === 'admin') {
+    return res.status(400).json({ success: false, message: '管理员不能直接离开家庭，请先转让或删除家庭' });
+  }
+
+  try {
+    withLock('family_leave_' + familyId, () => {
+      const config = loadJSON(CONFIG_FILE, {});
+      const u = (config.users || []).find(u => u.id === user.id);
+      if (!u) throw new Error('用户不存在');
+      u.familyId = 'default';
+      saveJSON(CONFIG_FILE, config);
+    });
+    const newToken = signToken(user.id, user.role, 'default');
+    res.json({ success: true, token: newToken, message: '已回到默认家庭' });
+  } catch (e) {
+    res.status(503).json({ success: false, message: e.message || '操作失败' });
+  }
+});
+
+// ============== 删除家庭（仅 admin） ==============
+app.post('/api/family/delete', (req, res) => {
+  const { token, familyId } = req.body;
+  const admin = requireRole(token, ['admin']);
+  if (!admin) return res.status(403).json({ success: false, message: '仅管理员可删除家庭' });
+
+  const targetFid = (familyId || admin.familyId || 'default');
+  if (targetFid === 'default') {
+    return res.status(400).json({ success: false, message: '不能删除默认家庭' });
+  }
+
+  try {
+    withLock('family_delete_' + targetFid, () => {
+      const config = loadJSON(CONFIG_FILE, {});
+      if (!config.families || !config.families[targetFid]) {
+        throw new Error('家庭不存在');
+      }
+
+      // 将该家庭所有成员移回 default
+      (config.users || []).forEach(u => {
+        if (u.familyId === targetFid) u.familyId = 'default';
+      });
+
+      // 删除家庭记录和积分数据
+      delete config.families[targetFid];
+      saveJSON(CONFIG_FILE, config);
+
+      const allPoints = loadJSON(POINTS_FILE, {});
+      delete allPoints[targetFid];
+      saveJSON(POINTS_FILE, allPoints);
+    });
+
+    // 签发新 token（admin 回到 default）
+    const newToken = signToken(admin.id, admin.role, 'default');
+    res.json({ success: true, token: newToken, message: '家庭已删除，已回到默认家庭' });
+  } catch (e) {
+    res.status(e.message === '家庭不存在' ? 404 : 503).json({ success: false, message: e.message || '删除失败' });
+  }
+});
+
+// ============== 在本家庭创建孩子（admin + parent） ==============
+app.post('/api/family/child/create', (req, res) => {
+  const { token, id, name, password } = req.body;
+  const user = requireRole(token, ['admin', 'parent']);
+  if (!user) return res.status(403).json({ success: false, message: '仅家长或管理员可添加孩子' });
+
+  if (!id || !name) {
+    return res.status(400).json({ success: false, message: '请输入孩子ID和姓名' });
+  }
+  if (!/^[a-z0-9_]{2,20}$/.test(id)) {
+    return res.status(400).json({ success: false, message: '孩子ID仅限小写字母/数字/下划线，2-20字符' });
+  }
+
+  const familyId = user.familyId || 'default';
+  try {
+    withLock('child_create_' + familyId, () => {
+      const config = loadJSON(CONFIG_FILE, {});
+      if ((config.users || []).find(u => u.id === id)) {
+        throw new Error('该ID已被使用');
+      }
+      const newChild = {
+        id,
+        name: name.trim(),
+        role: 'child',
+        password: password ? hashPwd(password) : hashPwd('123456'),
+        familyId
+      };
+      config.users.push(newChild);
+      saveJSON(CONFIG_FILE, config);
+    });
+    res.json({
+      success: true,
+      user: { id, name: name.trim(), role: 'child', familyId },
+      message: `孩子「${name.trim()}」添加成功！`
+    });
+  } catch (e) {
+    const code = e.message === '该ID已被使用' ? 409 : 503;
+    res.status(code).json({ success: false, message: e.message || '创建失败' });
   }
 });
 

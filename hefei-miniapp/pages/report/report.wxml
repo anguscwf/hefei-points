@@ -27,7 +27,7 @@
     <view class="filter-row">
       <text class="filter-label">孩子</text>
       <view class="filter-btns">
-        <text class="filter-btn {{reportKid === 'all' ? 'active' : ''}}" bindtap="onKid" data-kid="all">全部</text>
+        <text class="filter-btn {{reportKid === 'all' ? 'active' : ''}}" bindtap="onKid" data-kid="all" wx:if="{{!isChild}}">全部</text>
         <text wx:for="{{kidOptions}}" wx:key="id"
           class="filter-btn {{reportKid === item.id ? 'active' : ''}}"
           style="{{reportKid === item.id ? 'background:' + item.color + ';border-color:' + item.color + ';' : ''}}"
@@ -100,5 +100,26 @@
       </view>
     </view>
   </block>
+
+  <!-- 分享按钮 -->
+  <view class="share-section" wx:if="{{filteredData.length > 0}}">
+    <button class="btn btn-outline" bindtap="onMakeShare">📤 生成分享图</button>
+  </view>
+
+  <!-- 隐藏分享Canvas -->
+  <canvas canvas-id="shareCanvas" style="position:fixed; top:-9999rpx; left:-9999rpx; width:750rpx; height:1000rpx;"></canvas>
+
+  <!-- 分享预览弹窗 -->
+  <view class="modal-overlay" wx:if="{{sharePreviewVisible}}" bindtap="onCloseSharePreview" style="animation: fadeIn 0.2s ease;">
+    <view class="modal-box" catchtap="" style="animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); text-align:center;">
+      <text class="modal-title">分享卡片预览</text>
+      <image src="{{shareImagePath}}" mode="widthFix" class="share-preview" />
+      <text class="save-tip">长按图片可转发 · 或保存到相册</text>
+      <view style="display:flex;gap:16rpx;margin-top:24rpx;">
+        <button class="btn btn-outline flex-1" bindtap="onCloseSharePreview">关闭</button>
+        <button class="btn btn-primary flex-1" bindtap="onSaveToAlbum">💾 保存到相册</button>
+      </view>
+    </view>
+  </view>
 
 </view>

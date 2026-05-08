@@ -5,6 +5,8 @@ Page({
   data: {
     isLoggedIn: false,
     isAdmin: false,
+    isChild: false,
+    isParent: false,
     loginStatusText: '未登录',
     currentUserName: '',
 
@@ -110,14 +112,19 @@ Page({
     var g = app.globalData;
     var isLoggedIn = !!(g.token && g.user);
     var isAdmin = isLoggedIn && g.user && g.user.role === 'admin';
+    var isChild = isLoggedIn && g.user && g.user.role === 'child';
+    var isParent = isLoggedIn && (g.user && (g.user.role === 'admin' || g.user.role === 'parent'));
     var loginStatusText = isLoggedIn ? ('欢迎 ' + g.user.name) : '未登录';
 
     // 用户选项（allUsers 由 onLaunch→dataReady 或 _fetchConfigFallback 保证已加载）
     var allUsers = g.allUsers || [];
     var userOptions = allUsers.map(function(u) { return { id: u.id, name: u.name }; });
 
-    // 孩子卡片
+    // 孩子卡片：child 角色只看自己的卡片
     var kids = allUsers.filter(function(u) { return u.role === 'child'; });
+    if (isChild && g.user) {
+      kids = kids.filter(function(k) { return k.id === g.user.id; });
+    }
     var childCards = kids.map(function(k, i) {
       var c = app.kidColors[i % app.kidColors.length];
       var emoji = app.getKidEmoji(k.id);
@@ -140,6 +147,8 @@ Page({
     this.setData({
       isLoggedIn: isLoggedIn,
       isAdmin: isAdmin,
+      isChild: isChild,
+      isParent: isParent,
       loginStatusText: loginStatusText,
       currentUserName: g.user ? g.user.name : '',
       userOptions: userOptions,
@@ -198,7 +207,7 @@ Page({
 
   onLogout: function() {
     app.logout();
-    this.setData({ isLoggedIn: false, isAdmin: false, loginStatusText: '未登录', childCards: [], historyList: [], password: '' });
+    this.setData({ isLoggedIn: false, isAdmin: false, isChild: false, isParent: false, loginStatusText: '未登录', childCards: [], historyList: [], password: '' });
     this.showToast('已退出');
   },
 
@@ -215,7 +224,7 @@ Page({
   // ========== 积分卡片点击 → 打开操作弹窗 ==========
   onCardTap: function(e) {
     if (!app.canOperate()) {
-      this.showToast('无操作权限');
+      this.showToast(this.data.isChild ? '请家长操作积分' : '无操作权限');
       return;
     }
     var kid = e.currentTarget.dataset.kid;
@@ -304,6 +313,7 @@ Page({
   loadHistory: function() {
     var that = this;
     var allUsers = app.globalData.allUsers || [];
+    var selfKid = (this.data.isChild && app.globalData.user) ? app.globalData.user.id : null;
     app.fetchAPI('/api/history?token=' + (app.globalData.token || '')).then(function(data) {
       if (!data || !data.history || data.history.length === 0) {
         that.setData({ historyList: [] });
@@ -326,6 +336,10 @@ Page({
           time: r.time
         };
       });
+      // 孩子角色仅显示自己的记录
+      if (selfKid) {
+        list = list.filter(function(r) { return r.kid === selfKid; });
+      }
       that.setData({ historyList: list });
     });
   },

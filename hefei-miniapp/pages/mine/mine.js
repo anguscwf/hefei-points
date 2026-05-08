@@ -5,10 +5,12 @@ Page({
   data: {
     isLoggedIn: false,
     isAdmin: false,
+    isChild: false,
     userName: '未登录',
     userEmoji: '👤',
     roleText: '',
     totalPoints: 0,
+    pointsLabel: '家庭总分',
     recordCount: 0,
     rulesData: {},
     toastMessage: '',
@@ -51,25 +53,34 @@ Page({
     var g = app.globalData;
     var isLoggedIn = !!(g.token && g.user);
     var isAdmin = isLoggedIn && g.user && g.user.role === 'admin';
+    var isChild = isLoggedIn && g.user && g.user.role === 'child';
     var userName = isLoggedIn ? g.user.name : '未登录';
     var roleMap = { admin: '管理员', parent: '家长', child: '孩子' };
     var roleText = isLoggedIn ? roleMap[g.user.role] || '' : '';
     var emojiMap = { admin: '👑', parent: '👨‍👩‍👧', child: '👶' };
     var userEmoji = isLoggedIn ? emojiMap[g.user.role] || '👤' : '👤';
 
-    // 计算总分
+    // 计算积分：孩子显示个人积分，家长显示家庭总分
     var totalPoints = 0;
+    var pointsLabel = '家庭总分';
     if (g.points) {
-      Object.values(g.points).forEach(function(v) { totalPoints += v; });
+      if (isChild && g.user) {
+        totalPoints = g.points[g.user.id] || 0;
+        pointsLabel = '我的积分';
+      } else {
+        Object.values(g.points).forEach(function(v) { totalPoints += v; });
+      }
     }
 
     this.setData({
       isLoggedIn: isLoggedIn,
       isAdmin: isAdmin,
+      isChild: isChild,
       userName: userName,
       userEmoji: userEmoji,
       roleText: roleText,
       totalPoints: totalPoints,
+      pointsLabel: pointsLabel,
       rulesData: (g.rules && Array.isArray(g.rules.reward)) ? g.rules : { reward: [], punish: [], special: [] }
     });
 

@@ -14,10 +14,16 @@ Page({
     allData: [],
     filteredData: [],
     summaryData: [],
-    top10List: []
+    top10List: [],
+    isChild: false,
+    shareImagePath: '',
+    sharePreviewVisible: false
   },
 
   onShow: function() {
+    var g = app.globalData;
+    var selfKid = (g.user && g.user.role === 'child') ? g.user.id : null;
+    this.setData({ isChild: !!selfKid, reportKid: selfKid || 'all' });
     this.prepareOptions();
     this.loadAndRender();
   },
@@ -46,9 +52,17 @@ Page({
   // ========== 加载和渲染 ==========
   loadAndRender: function() {
     var that = this;
-    app.fetchAPI('/api/history?token=' + (app.globalData.token || '')).then(function(data) {
+    var g = app.globalData;
+    var selfKid = (g.user && g.user.role === 'child') ? g.user.id : null;
+    app.fetchAPI('/api/history?token=' + (g.token || '')).then(function(data) {
       if (!data.history) data.history = [];
-      that.setData({ allData: data.history });
+      // 孩子角色：仅保留自己的记录
+      if (selfKid) {
+        data.history = data.history.filter(function(r) { return r.kid === selfKid; });
+        that.setData({ reportKid: selfKid, allData: data.history });
+      } else {
+        that.setData({ allData: data.history });
+      }
       that.applyFilters();
     });
   },
@@ -341,5 +355,143 @@ Page({
         ctx.fillText(shortName + ' ' + val, 22 + ei * 80, legendY);
       });
     });
+  },
+
+  // ========== 分享卡片 ==========
+  onMakeShare: function() {
+    var that = this;
+    wx.showLoading({ title: '生成分享图...' });
+
+    var ctx = wx.createCanvasContext('shareCanvas', this);
+    var W = 750, H = 1000;
+    var g = app.globalData;
+    var allUsers = g.allUsers || [];
+
+    // 背景
+    ctx.setFillStyle('#F9F6F1');
+    ctx.fillRect(0, 0, W, H);
+
+    // 顶部装饰条
+    ctx.setFillStyle('#B86932');
+    ctx.fillRect(0, 0, W, 8);
+
+    // 标题
+    ctx.setFillStyle('#B86932');
+    ctx.setFontSize(44);
+    ctx.setTextAlign('center');
+    ctx.fillText('恩霖积分', W / 2, 80);
+
+    // 副标题
+    ctx.setFillStyle('#999');
+    ctx.setFontSize(24);
+    ctx.fillText('恩霖润物育儿积分 · 成长每一步都值得记录', W / 2, 120);
+
+    // 白色卡片背景
+    ctx.setFillStyle('#FFFFFF');
+    ctx.setShadow(0, 4, 20, 'rgba(0,0,0,0.08)');
+    ctx.fillRect(40, 160, W - 80, 340);
+    ctx.setShadow(0, 0, 0, 'transparent');
+
+    // 孩子头像和名字
+    var kids = (g.allUsers || []).filter(function(u) { return u.role === 'child'; });
+    if (that.data.reportKid !== 'all') {
+      kids = kids.filter(function(k) { return k.id === that.data.reportKid; });
+    }
+
+    kids.forEach(function(k, i) {
+      var yBase = 200 + i * 150;
+      var c = app.kidColors[i % app.kidColors.length];
+
+      // 头像圈
+      ctx.setFillStyle(c.border);
+      ctx.beginPath();
+      ctx.arc(80, yBase + 25, 30, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // 名字
+      ctx.setFillStyle(c.border);
+      ctx.setFontSize(32);
+      ctx.setTextAlign('left');
+      ctx.fillText(k.name, 130, yBase + 35);
+
+      // 积分
+      var val = g.points && g.points[k.id] ? g.points[k.id] : 0;
+      var sign = val >= 0 ? '+' : '';
+      ctx.setFillStyle(val >= 0 ? '#5C9919' : '#E24B4A');
+      ctx.setFontSize(52);
+      ctx.fillText(sign + val + ' 分', 130, yBase + 100);
+    });
+
+    // 底部总结
+    var summaryY = 540;
+    var addTotal = that.data.summaryData.reduce(function(s, r) { return s + r.add; }, 0);
+    var subTotal = that.data.summaryData.reduce(function(s, r) { return s + r.sub; }, 0);
+
+    ctx.setFillStyle('#FFFFFF');
+    ctx.setShadow(0, 4, 20, 'rgba(0,0,0,0.08)');
+    ctx.fillRect(40, summaryY, W - 80, 180);
+    ctx.setShadow(0, 0, 0, 'transparent');
+
+    ctx.setFillStyle('#333');
+    ctx.setFontSize(28);
+    ctx.setTextAlign('center');
+    ctx.fillText('本周总结', W / 2, summaryY + 50);
+
+    ctx.setFillStyle('#5C9919');
+    ctx.setFontSize(36);
+    ctx.fillText('获得 +' + addTotal, W / 2 - 100, summaryY + 110);
+
+    ctx.setFillStyle('#E24B4A');
+    ctx.fillText('扣减 -' + subTotal, W / 2 + 100, summaryY + 110);
+
+    // 底部文字
+    ctx.setFillStyle('#999');
+    ctx.setFontSize(22);
+    ctx.setTextAlign('center');
+    ctx.fillText('恩霖润物育儿积分 · 记录成长每一步', W / 2, H - 60);
+
+    ctx.draw(false, function() {
+      setTimeout(function() {
+        wx.canvasToTempFilePath({
+          canvasId: 'shareCanvas',
+          success: function(res) {
+            wx.hideLoading();
+            that.setData({ shareImagePath: res.tempFilePath, sharePreviewVisible: true });
+          },
+          fail: function(err) {
+            wx.hideLoading();
+            wx.showToast({ title: '生成失败', icon: 'none' });
+          }
+        }, that);
+      }, 500);
+    });
+  },
+
+  onSaveToAlbum: function() {
+    var that = this;
+    if (!that.data.shareImagePath) return;
+    wx.saveImageToPhotosAlbum({
+      filePath: that.data.shareImagePath,
+      success: function() {
+        wx.showToast({ title: '已保存到相册', icon: 'success' });
+        that.setData({ sharePreviewVisible: false });
+      },
+      fail: function(err) {
+        if (err.errMsg.indexOf('auth deny') >= 0) {
+          wx.showModal({
+            title: '需要相册权限',
+            content: '请允许保存图片到相册',
+            confirmText: '去设置',
+            success: function(mr) { if (mr.confirm) wx.openSetting(); }
+          });
+        } else {
+          wx.showToast({ title: '保存失败', icon: 'none' });
+        }
+      }
+    });
+  },
+
+  onCloseSharePreview: function() {
+    this.setData({ sharePreviewVisible: false });
   }
 });

@@ -29,7 +29,7 @@
 
   <!-- 积分卡片 -->
   <view class="score-grid" wx:if="{{isLoggedIn && childCards.length > 0}}">
-    <view class="score-card" wx:for="{{childCards}}" wx:key="id"
+    <view class="score-card {{isChild ? 'score-card-child' : ''}}" wx:for="{{childCards}}" wx:key="id"
       style="border-color: {{item.borderColor}};"
       bindtap="onCardTap" data-kid="{{item.id}}" data-name="{{item.name}}">
       <view class="card-header">
@@ -40,7 +40,7 @@
         <text class="score-sign">{{item.sign}}</text>
         <text class="score-num">{{item.absScore}}</text>
       </view>
-      <text class="card-hint">点击卡片加减分</text>
+      <text class="card-hint">{{isChild ? '我的积分' : '点击卡片加减分'}}</text>
     </view>
   </view>
 
@@ -105,7 +105,8 @@
 
     <!-- 报表 -->
     <view wx:if="{{activeTab === 'report'}}">
-      <text class="section-hint">请切换到「报表」Tab查看完整报表</text>
+      <text class="section-hint" wx:if="{{!isChild}}">请切换到「报表」Tab查看完整报表</text>
+      <text class="section-hint" wx:else>请切换到「报表」Tab查看我的报表</text>
     </view>
   </view>
 

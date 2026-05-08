@@ -13,7 +13,7 @@
     <view class="user-stats" wx:if="{{isLoggedIn}}">
       <view class="us-item">
         <text class="us-val">{{totalPoints}}</text>
-        <text class="us-label">家庭总分</text>
+        <text class="us-label">{{pointsLabel}}</text>
       </view>
       <view class="us-item">
         <text class="us-val">{{recordCount}}</text>

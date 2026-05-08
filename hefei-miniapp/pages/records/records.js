@@ -9,19 +9,24 @@ Page({
     activeFilter: 'all',
     detailVisible: false,
     detailRecord: {},
+    isChild: false,
     toastMessage: '',
     toastVisible: false
   },
 
   onShow: function() {
+    var g = getApp().globalData;
+    this.setData({ isChild: !!(g.user && g.user.role === 'child') });
     this.loadRecords();
   },
 
   // ========== 加载记录 ==========
   loadRecords: function() {
     var that = this;
-    var allUsers = app.globalData.allUsers || [];
-    app.fetchAPI('/api/history?token=' + (app.globalData.token || '')).then(function(data) {
+    var g = getApp().globalData;
+    var allUsers = g.allUsers || [];
+    var selfKid = (g.user && g.user.role === 'child') ? g.user.id : null;
+    app.fetchAPI('/api/history?token=' + (g.token || '')).then(function(data) {
       if (!data.history) data.history = [];
       var records = data.history.map(function(r) {
         var user = allUsers.find(function(u) { return u.id === r.kid; });
@@ -40,6 +45,10 @@ Page({
           time: r.time
         };
       });
+      // 孩子角色仅显示自己的记录
+      if (selfKid) {
+        records = records.filter(function(r) { return r.kid === selfKid; });
+      }
       that.setData({ allRecords: records });
       that.applyFilter();
     });
@@ -94,6 +103,10 @@ Page({
 
   onSaveNote: function(e) {
     var that = this;
+    if (this.data.isChild) {
+      this.showToast('无操作权限');
+      return;
+    }
     var detail = e.detail;
     app.fetchAPI('/api/history/note', {
       method: 'POST',
