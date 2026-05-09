@@ -49,14 +49,14 @@ App({
     that._loadConfigWithRetry(3);
   },
 
-  // 带重试的配置加载（最多 maxRetries 次，指数退避 1s/2s/4s）
+  // 带重试的配置加载（最多 maxRetries 次）
   _loadConfigWithRetry: function(maxRetries) {
     var that = this;
     var attempt = 0;
     function tryLoad() {
       attempt++;
       console.log('[app] 加载 /api/config 第 ' + attempt + ' 次尝试...');
-      that.fetchAPI('/api/config', { timeout: 15000 }).then(function(res) {
+      that.fetchAPI('/api/config', { timeout: 5000 }).then(function(res) {
         if (res && res.success) {
           console.log('[app] /api/config 加载成功，用户数=' + (res.users || []).length);
           that.globalData.allUsers = res.users;
@@ -67,8 +67,7 @@ App({
         } else {
           console.warn('[app] /api/config 返回失败: ' + ((res && res.message) || '未知错误'));
           if (attempt < maxRetries) {
-            console.log('[app] ' + (1000 * attempt) + 'ms 后重试...');
-            setTimeout(tryLoad, 1000 * attempt);  // 指数退避 1s/2s/4s...
+            setTimeout(tryLoad, 500);  // 500ms 快速重试
           } else {
             console.error('[app] /api/config 重试 ' + maxRetries + ' 次后仍失败');
             if (that.globalData.dataReadyResolve) {

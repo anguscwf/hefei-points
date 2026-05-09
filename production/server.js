@@ -325,7 +325,8 @@ app.post('/api/auth', (req, res) => {
 // ============== 获取积分（所有人） ==============
 app.get('/api/points', (req, res) => {
   const user = verifyToken(req.query.token || '');
-  const familyId = user ? user.familyId : 'default';
+  if (!user) return res.status(403).json({ success: false, message: '请先登录' });
+  const familyId = user.familyId;
   const points = getFamilyPoints(familyId);
   const config = loadJSON(CONFIG_FILE, { rules: {} });
   const family = (config.families || {})[familyId] || null;
@@ -386,11 +387,12 @@ app.post('/api/points/change', (req, res) => {
 
 // ============== 历史记录 ==============
 app.get('/api/history', (req, res) => {
-  const history = loadJSON(HISTORY_FILE, []);
   const user = verifyToken(req.query.token || '');
-  const familyId = user ? user.familyId : 'default';
+  if (!user) return res.status(403).json({ success: false, message: '请先登录' });
+  const familyId = user.familyId;
   const { kid } = req.query;
 
+  const history = loadJSON(HISTORY_FILE, []);
   let filtered = history.filter(r => r.familyId === familyId);
   if (kid && getValidKids(familyId).includes(kid)) {
     filtered = filtered.filter(r => r.kid === kid);

@@ -78,7 +78,7 @@ Page({
       console.log('[index] 等待 dataReady...');
       // 额外 3 秒兜底超时，防止 dataReady 永不 resolve
       var timeout = new Promise(function(resolve) {
-        setTimeout(function() { resolve('timeout'); }, 3000);
+        setTimeout(function() { resolve('timeout'); }, 5000);
       });
       Promise.race([g.dataReady, timeout]).then(function(result) {
         that._waitingData = false;
@@ -105,7 +105,7 @@ Page({
     if (this._loadingUsers) return;
     this._loadingUsers = true;
     console.log('[index] 兜底请求 /api/config...');
-    app.fetchAPI('/api/config', { timeout: 15000 }).then(function(res) {
+    app.fetchAPI('/api/config', { timeout: 5000 }).then(function(res) {
       that._loadingUsers = false;
       if (res && res.success) {
         app.globalData.allUsers = res.users;
@@ -122,7 +122,7 @@ Page({
   onRetryLoad: function() {
     this.setData({ loadingUsers: true, loadError: false });
     var that = this;
-    app.fetchAPI('/api/config', { timeout: 15000 }).then(function(res) {
+    app.fetchAPI('/api/config', { timeout: 5000 }).then(function(res) {
       if (res && res.success) {
         app.globalData.allUsers = res.users;
         app.globalData.rules = res.rules;
@@ -193,9 +193,11 @@ Page({
 
   // ========== 登录 ==========
   onSelectUser: function(e) {
-    var idx = parseInt(e.detail.value);
+    var val = (e && e.detail) ? e.detail.value : -1;
+    var idx = parseInt(val);
+    if (isNaN(idx) || idx < 0) return;
     var opts = this.data.userOptions;
-    if (!opts || !opts[idx]) return;
+    if (!opts || !opts.length || idx >= opts.length) return;
     var name = opts[idx].name;
     this.setData({ selectedUserIdx: idx, selectedUserName: name });
   },
