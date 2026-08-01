@@ -269,7 +269,7 @@
 
 </view>
 
-<!-- 规则详情：只负责讲清规则，第一阶段不提供直接记分 -->
+<!-- 规则详情：家长可带着当前规则直接进入记分确认，孩子只阅读规则。 -->
 <view class="rule-detail-overlay {{themeClass}}" wx:if="{{ruleDetailVisible}}" catchtouchmove="stopBubble">
   <scroll-view class="rule-detail-panel" scroll-y enhanced show-scrollbar="{{false}}" catchtap="stopBubble">
     <view class="rule-detail-handle"></view>
@@ -308,7 +308,13 @@
       <text wx:if="{{ruleDetail.toneClass === 'punish'}}" class="rule-detail-remedy">先理解发生了什么，再一起想想下次怎样做得更好。</text>
     </block>
 
-    <button class="btn btn-primary rule-detail-done" bindtap="onRuleDetailClose">我明白了</button>
+    <view class="rule-detail-actions">
+      <button class="btn {{ruleDetail.canScore && isParent && !isChild ? 'btn-outline' : 'btn-primary'}} rule-detail-done" bindtap="onRuleDetailClose">
+        {{ruleDetail.canScore && isParent && !isChild ? '稍后再说' : '我明白了'}}
+      </button>
+      <button wx:if="{{ruleDetail.canScore && isParent && !isChild}}"
+        class="btn btn-primary rule-detail-score-action" bindtap="onRuleDetailScore">按这条规则记分</button>
+    </view>
   </scroll-view>
 </view>
 

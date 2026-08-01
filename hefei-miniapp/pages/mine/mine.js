@@ -32,7 +32,7 @@ Page({
     themeClass: '',
     cropVisible: false,
     cropSource: '',
-    version: '2.3.0'
+    version: '2.4.0'
   },
 
   onShow: function() {
@@ -117,7 +117,7 @@ Page({
       ruleSummaryIntro: isChild
         ? '看看怎样赚糖、怎样护住糖，有疑问就和家长一起读'
         : '用简单清楚的约定，帮助孩子理解努力与边界',
-      version: g.version || '2.3.0'
+      version: g.version || '2.4.0'
     });
 
     // 加载记录数

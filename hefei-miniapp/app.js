@@ -1,6 +1,6 @@
-// 糖罐积分 小程序 v2.3.0
+// 糖罐积分 小程序 v2.4.0
 // 全局状态 · API · 认证
-var VERSION = '2.3.0';
+var VERSION = '2.4.0';
 var API_BASE = 'https://hefeijifen.cn';
 
 App({

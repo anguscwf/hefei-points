@@ -28,9 +28,17 @@ function signedNumber(value) {
 
 function formatRuleItem(item, type, isChild) {
   var source = item && typeof item === 'object' ? item : {};
+  var aliases = Array.isArray(source.aliases) ? source.aliases.map(function(alias) {
+    return String(alias || '').trim();
+  }).filter(Boolean) : [];
   var min = finiteNumber(source.min);
   var max = finiteNumber(source.max);
   var defaultValue = finiteNumber(source.default);
+  if (type === 'punish') {
+    if (min !== null && min < -500) min = -500;
+    if (max !== null && max < -500) max = -500;
+    if (defaultValue !== null && defaultValue < -500) defaultValue = -500;
+  }
   var validRange = min !== null && max !== null && min <= max;
   var defaultText = defaultValue === null ? '分值待设置' : (isChild ? '通常 ' : '通常 ') + signedNumber(defaultValue);
   var rangeText = '范围待设置';
@@ -48,6 +56,7 @@ function formatRuleItem(item, type, isChild) {
     rangeDisplay: validRange ? '可调 ' + rangeText : rangeText,
     unit: String(source.unit || ''),
     hint: String(source.hint || ''),
+    aliases: aliases,
     type: type,
     isReward: type === 'reward',
     raw: source
@@ -77,13 +86,15 @@ function summarizeRules(rules) {
 
 function categoryMatches(category, query) {
   if (!query) return false;
-  var text = String((category && category.category) || '').toLowerCase();
-  return text.indexOf(query) >= 0;
+  var source = category && typeof category === 'object' ? category : {};
+  return [source.category].concat(Array.isArray(source.aliases) ? source.aliases : []).some(function(value) {
+    return String(value || '').toLowerCase().indexOf(query) >= 0;
+  });
 }
 
 function itemMatches(item, query) {
   if (!query) return true;
-  return [item.label, item.unit, item.hint].some(function(value) {
+  return [item.label, item.unit, item.hint].concat(item.aliases || []).some(function(value) {
     return String(value || '').toLowerCase().indexOf(query) >= 0;
   });
 }
@@ -99,6 +110,7 @@ function buildBrowserData(rules, options) {
   ['reward', 'punish'].forEach(function(type) {
     if (filter !== 'all' && filter !== type) return;
     safe[type].forEach(function(category, categoryIndex) {
+      var categoryId = String((category && category.id) || '').trim();
       var rawItems = Array.isArray(category.items) ? category.items : [];
       var categoryMatched = categoryMatches(category, query);
       var items = rawItems.map(function(item, itemIndex) {
@@ -112,7 +124,8 @@ function buildBrowserData(rules, options) {
       });
       if (query && !categoryMatched && !items.length) return;
       categories.push({
-        key: type + '-' + categoryIndex,
+        key: type + '-' + (categoryId || categoryIndex),
+        id: categoryId,
         type: type,
         isReward: type === 'reward',
         categoryIndex: categoryIndex,
@@ -184,7 +197,15 @@ function frequentRules(rules, history, limit) {
     var reason = String(record.reason || '');
     if (reason) counts[reason] = (counts[reason] || 0) + 1;
   });
-  all.forEach(function(item) { item.usageCount = counts[item.label] || 0; });
+  all.forEach(function(item) {
+    var seenNames = {};
+    item.usageCount = [item.label].concat(item.aliases || []).reduce(function(total, name) {
+      var normalized = String(name || '').trim();
+      if (!normalized || seenNames[normalized]) return total;
+      seenNames[normalized] = true;
+      return total + (counts[normalized] || 0);
+    }, 0);
+  });
   all.sort(function(a, b) {
     return b.usageCount - a.usageCount || a.categoryIndex - b.categoryIndex || a.itemIndex - b.itemIndex;
   });

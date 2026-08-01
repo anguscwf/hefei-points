@@ -44,6 +44,15 @@ function netPoints(records) {
   return records.reduce(function(sum, record) { return sum + Number(record.amount || 0); }, 0);
 }
 
+// 规则改名后，历史流水仍保存当时的 reason；用 aliases 将旧名称归回当前规则。
+function ruleReasonMatches(item, reason) {
+  if (!item || typeof item !== 'object') return false;
+  var target = String(reason || '').trim();
+  if (!target) return false;
+  var names = [item.label].concat(Array.isArray(item.aliases) ? item.aliases : []);
+  return names.some(function(name) { return String(name || '').trim() === target; });
+}
+
 function longestHabitStreak(records) {
   var dayMap = {};
   records.forEach(function(record) {
@@ -422,7 +431,7 @@ Page({
       if (reportCat !== 'all') {
         var cat = allCats.find(function(c) { return c.category === reportCat; });
         if (!cat) return false;
-        if (!cat.items.some(function(item) { return r.reason === item.label; })) return false;
+        if (!cat.items.some(function(item) { return ruleReasonMatches(item, r.reason); })) return false;
       }
       return true;
     });
@@ -497,7 +506,7 @@ Page({
         if (reportKid !== 'all' && record.kid !== reportKid) return false;
         if (reportCat !== 'all') {
           var category = allCats.find(function(cat) { return cat.category === reportCat; });
-          if (!category || !category.items.some(function(item) { return record.reason === item.label; })) return false;
+          if (!category || !category.items.some(function(item) { return ruleReasonMatches(item, record.reason); })) return false;
         }
         return true;
       });
@@ -740,7 +749,7 @@ Page({
 
       var catTotals = {};
       filtered.forEach(function(r) {
-        var cat = allCats.find(function(c) { return c.items.some(function(item) { return r.reason === item.label; }); });
+        var cat = allCats.find(function(c) { return c.items.some(function(item) { return ruleReasonMatches(item, r.reason); }); });
         var catName = cat ? cat.category : '其他';
         if (!catTotals[catName]) catTotals[catName] = { total: 0, count: 0 };
         catTotals[catName].total += Math.abs(Number(r.amount || 0));

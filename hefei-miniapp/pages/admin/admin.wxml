@@ -64,7 +64,8 @@
         <text>提醒 {{ruleStats.punish}} 条</text>
         <text>约定 {{ruleStats.special}} 条</text>
       </view>
-      <text class="rules-overview-tip">先展开分类，再点单条规则编辑；通常分值优先，上下限收在高级设置里。</text>
+      <text class="rules-overview-tip">先展开分类，再点单条规则编辑；支持模板、复制、移动与排序，所有修改会自动暂存到本机。</text>
+      <text wx:if="{{draftRestored || draftSavedAt}}" class="rules-draft-status">{{draftRestored ? '已恢复本地草稿' : '草稿已自动保存'}}{{draftSavedAt ? ' · ' + draftSavedAt : ''}}</text>
     </view>
 
     <view class="rule-type-tabs">
@@ -88,6 +89,7 @@
     <view wx:if="{{ruleValidationMessage}}" class="rule-validation-banner">
       <ui-icon name="warning" size="28" theme="{{iconTheme}}" />
       <text>{{ruleValidationMessage}}</text>
+      <button wx:if="{{ruleConflict}}" class="conflict-load-btn" bindtap="loadLatestRules">加载最新</button>
     </view>
 
     <block wx:if="{{ruleType === 'reward' || ruleType === 'punish'}}">
@@ -135,6 +137,12 @@
             <button class="category-delete-btn" bindtap="delRCategory" data-type="{{ruleType}}" data-ci="{{ci}}">删除分类</button>
           </view>
 
+          <view class="category-tools">
+            <button disabled="{{!cat._uiCanMoveUp}}" catchtap="moveCategory" data-type="{{ruleType}}" data-ci="{{ci}}" data-direction="-1">上移</button>
+            <button disabled="{{!cat._uiCanMoveDown}}" catchtap="moveCategory" data-type="{{ruleType}}" data-ci="{{ci}}" data-direction="1">下移</button>
+            <button catchtap="copyCategory" data-type="{{ruleType}}" data-ci="{{ci}}">复制分类</button>
+          </view>
+
           <view wx:if="{{cat.items.length === 0}}" class="category-items-empty">这个分类还没有规则</view>
           <view
             wx:for="{{cat.items}}"
@@ -142,17 +150,31 @@
             wx:for-item="ruleItem"
             wx:for-index="ii"
             class="rule-summary-row"
-            bindtap="openRuleEditor"
-            data-type="{{ruleType}}"
-            data-ci="{{ci}}"
-            data-ii="{{ii}}"
           >
-            <view class="rule-summary-copy">
+            <view class="rule-summary-copy" bindtap="openRuleEditor" data-type="{{ruleType}}" data-ci="{{ci}}" data-ii="{{ii}}">
               <text class="rule-summary-name">{{ruleItem.editLabel || '未命名规则'}}</text>
               <text class="rule-summary-meta">{{ruleItem.editUnit || '按每次计算'}}{{ruleItem.editHint ? ' · ' + ruleItem.editHint : ''}}</text>
             </view>
-            <text class="rule-summary-score">{{ruleItem._uiScoreText}}</text>
-            <text class="rule-summary-chevron">›</text>
+            <view class="rule-row-main" bindtap="openRuleEditor" data-type="{{ruleType}}" data-ci="{{ci}}" data-ii="{{ii}}">
+              <text class="rule-summary-score">{{ruleItem._uiScoreText}}</text>
+              <text class="rule-summary-chevron">›</text>
+            </view>
+            <view class="rule-row-tools">
+              <button disabled="{{!ruleItem._uiCanMoveUp}}" catchtap="moveRule" data-type="{{ruleType}}" data-ci="{{ci}}" data-ii="{{ii}}" data-direction="-1">↑</button>
+              <button disabled="{{!ruleItem._uiCanMoveDown}}" catchtap="moveRule" data-type="{{ruleType}}" data-ci="{{ci}}" data-ii="{{ii}}" data-direction="1">↓</button>
+              <button catchtap="copyRule" data-type="{{ruleType}}" data-ci="{{ci}}" data-ii="{{ii}}">复制</button>
+              <picker catchtap="noop" range="{{ruleType === 'reward' ? editRules.reward : editRules.punish}}" range-key="category" value="{{ci}}" bindchange="moveRuleToCategory" data-type="{{ruleType}}" data-ci="{{ci}}" data-ii="{{ii}}">
+                <view class="rule-move-picker">移动</view>
+              </picker>
+            </view>
+          </view>
+
+          <view class="rule-template-shelf">
+            <text class="template-title">从模板预填</text>
+            <view class="template-grid">
+              <button wx:for="{{ruleTemplates}}" wx:key="id" wx:for-item="template" catchtap="useRuleTemplate" data-template="{{template.id}}" data-type="{{ruleType}}" data-ci="{{ci}}">{{template.name}}</button>
+            </view>
+            <text class="template-tip">模板只预填表单，点“完成”后才加入本地草稿。</text>
           </view>
           <button class="add-rule-row" bindtap="addRItem" data-type="{{ruleType}}" data-ci="{{ci}}">＋ 添加一条{{ruleType === 'reward' ? '鼓励规则' : '护糖提醒'}}</button>
         </view>
@@ -194,7 +216,7 @@
         <text class="rules-save-dot {{ruleDirty ? 'dirty' : ''}}"></text>
         <view>
           <text class="rules-save-title">{{ruleDirty ? '有未保存修改' : '规则已是最新'}}</text>
-          <text class="rules-save-sub">{{ruleDirty ? '已修改 ' + ruleChangeCount + ' 处' : '修改后统一保存整套规则'}}</text>
+          <text class="rules-save-sub">{{ruleDirty ? '已修改 ' + ruleChangeCount + ' 处' + (draftSavedAt ? ' · 草稿 ' + draftSavedAt : '') : '修改后统一保存整套规则'}}</text>
         </view>
       </view>
       <button wx:if="{{ruleDirty}}" class="rules-discard-btn" bindtap="discardRuleChanges">放弃</button>
@@ -215,6 +237,7 @@
           <text class="editor-label">规则名称</text>
           <input class="editor-input {{ruleEditor.errors.editLabel ? 'error' : ''}}" maxlength="{{50}}" value="{{ruleEditor.editLabel}}" placeholder="孩子一看就明白的名称" bindinput="onRuleEditorInput" data-field="editLabel" />
           <text wx:if="{{ruleEditor.errors.editLabel}}" class="editor-error">{{ruleEditor.errors.editLabel}}</text>
+          <text wx:if="{{!ruleEditor.isNew}}" class="rename-safety-tip">改名时会再次确认，并把旧名称保留为兼容别名。</text>
         </view>
 
         <view class="editor-score-card">
@@ -226,7 +249,7 @@
           </view>
           <text wx:if="{{ruleEditor.errors.editDefault}}" class="editor-error center">{{ruleEditor.errors.editDefault}}</text>
           <view class="editor-quick-scores">
-            <button wx:for="{{[1, 3, 5, 10, 20]}}" wx:key="*this" class="quick-score" bindtap="onRuleScoreQuick" data-value="{{item}}">{{ruleEditor.type === 'punish' ? '扣' : '+'}}{{item}}</button>
+            <button wx:for="{{quickScores}}" wx:key="*this" class="quick-score" bindtap="onRuleScoreQuick" data-value="{{item}}">{{ruleEditor.type === 'punish' ? '扣' : '+'}}{{item}}</button>
           </view>
         </view>
 
@@ -272,6 +295,19 @@
           <button class="editor-cancel-btn" bindtap="closeRuleEditor">取消</button>
           <button class="editor-done-btn" bindtap="completeRuleEditor">完成</button>
         </view>
+      </view>
+    </view>
+
+    <view wx:if="{{undoVisible}}" class="rule-undo-bar">
+      <text>{{undoMessage}}</text>
+      <button bindtap="undoRuleDelete">撤销</button>
+    </view>
+
+    <view wx:if="{{rulesSaving}}" class="rules-saving-lock" catchtap="noop" catchtouchmove="noop">
+      <view class="rules-saving-lock-card">
+        <view class="rules-saving-spinner"></view>
+        <text class="rules-saving-title">正在安全保存规则</text>
+        <text class="rules-saving-copy">保存完成前暂时锁定编辑，避免新修改被覆盖。</text>
       </view>
     </view>
   </view>

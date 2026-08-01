@@ -80,7 +80,7 @@ Page({
     loadError: false,
     headerBg: '#B86932',
     pickerKey: 1,   // 登出时递增，强制重建 picker
-    version: '2.3.0'
+    version: '2.4.0'
   },
 
   onLoad: function() {
@@ -260,7 +260,7 @@ Page({
       this.data.ruleFilter,
       this.data.ruleExpandedKey
     );
-    var frequent = rulesViewModel.frequentRules(rulesData, this.data.historyList, 4);
+    var frequent = this._buildFrequentRules(rulesData, this.data.historyList);
 
     this.setData({
       isLoggedIn: isLoggedIn,
@@ -292,7 +292,7 @@ Page({
       ruleCenterTitle: ruleCopy.title,
       ruleCenterIntro: ruleCopy.intro,
       frequentRules: frequent,
-      version: g.version || '2.3.0'
+      version: g.version || '2.4.0'
     });
 
     if (isLoggedIn) {
@@ -319,6 +319,8 @@ Page({
       category.expanded = normalizedQuery ? true : category.key === activeExpandedKey;
       category.items = category.items.map(function(item) {
         item.key = category.key + '-' + item.itemIndex;
+        item.categoryId = category.id || '';
+        item.categoryKey = category.key;
         return item;
       });
       return category;
@@ -328,6 +330,20 @@ Page({
       return item;
     });
     return { browser: browser, expandedKey: activeExpandedKey };
+  },
+
+  _buildFrequentRules: function(rulesData, history) {
+    var rules = rulesData || { reward: [], punish: [] };
+    return rulesViewModel.frequentRules(rules, history, 4).map(function(item) {
+      var categories = Array.isArray(rules[item.type]) ? rules[item.type] : [];
+      var category = categories[item.categoryIndex] || categories.find(function(candidate) {
+        return candidate && candidate.category === item.category;
+      }) || {};
+      var categoryId = String(category.id || '');
+      item.categoryId = categoryId;
+      item.categoryKey = item.type + '-' + (categoryId || item.categoryIndex);
+      return item;
+    });
   },
 
   _refreshRuleBrowser: function(options) {
@@ -516,7 +532,7 @@ Page({
       sheetKidId: kid,
       sheetKidName: name,
       sheetKidPoints: points,
-      frequentRules: rulesViewModel.frequentRules(this.data.rulesData, kidHistory, 4)
+      frequentRules: this._buildFrequentRules(this.data.rulesData, kidHistory)
     });
   },
 
@@ -602,22 +618,45 @@ Page({
   },
 
   onNumChange: function(e) {
-    this.setData({ numValue: e.detail.value });
+    var value = e.detail.value;
+    var updates = { numValue: value };
+    if (this.data.numItem && this.data.numItem.source === 'rule-detail') {
+      updates.numDesc = this._buildRuleScoreDescription(this.data.numItem, value);
+    }
+    this.setData(updates);
   },
 
   onNumConfirm: function(e) {
-    var that = this;
+    if (this._scoreSubmitting) return;
     var value = e.detail && Number.isFinite(e.detail.value) ? e.detail.value : this.data.numValue;
-    var label = this.data.numItem ? this.data.numItem.label : '';
+    var item = this.data.numItem || {};
+    var label = item.label || '';
     var note = e.detail ? e.detail.note : '';
+    var kidId = item.kidId || this.data.sheetKidId;
+    var kidName = item.kidName || this.data.sheetKidName;
+    if (!Number.isInteger(value) || value === 0 || value < item.min || value > item.max) {
+      this.showToast('分值不在规则允许范围内');
+      return;
+    }
     this.setData({ numModalVisible: false, numItem: null });
-    app.doChange(this.data.sheetKidId, value, label, note).then(function(res) {
+    this._submitRuleScore(kidId, kidName, value, label, note);
+  },
+
+  _submitRuleScore: function(kidId, kidName, value, label, note) {
+    if (this._scoreSubmitting) return;
+    var that = this;
+    this._scoreSubmitting = true;
+    app.doChange(kidId, value, label, note).then(function(res) {
+      that._scoreSubmitting = false;
       if (res.success) {
-        that.showToast((that.data.sheetKidName || '') + ' ' + (value > 0 ? '+' : '') + value + '分');
+        that.showToast((kidName || '') + ' ' + (value > 0 ? '+' : '') + value + '分');
         app.loadData().then(function() { that._doRefreshState(); });
       } else {
         that.showToast(res.message || '操作失败');
       }
+    }).catch(function() {
+      that._scoreSubmitting = false;
+      that.showToast('网络异常，请重试');
     });
   },
 
@@ -689,6 +728,12 @@ Page({
     if (!item) return;
     var isReward = item.type === 'reward' || item.isReward;
     var isChild = this.data.isChild;
+    var raw = item.raw && typeof item.raw === 'object' ? item.raw : item;
+    var defaultValue = item.defaultValue === null || item.defaultValue === undefined
+      ? Number(raw.default)
+      : Number(item.defaultValue);
+    var minValue = item.min === null || item.min === undefined ? Number(raw.min) : Number(item.min);
+    var maxValue = item.max === null || item.max === undefined ? Number(raw.max) : Number(item.max);
     var fallbackHint = isReward
       ? (isChild
         ? '做到这件事，就是在给自己的成长糖罐添糖。'
@@ -717,9 +762,131 @@ Page({
         unitText: item.unit || '按每次记录',
         hintCaption: isChild ? '为什么这样做' : '给孩子这样解释',
         hintText: item.hint || fallbackHint,
-        toneClass: isReward ? 'reward' : 'punish'
+        toneClass: isReward ? 'reward' : 'punish',
+        canScore: !!this.data.isParent && !isChild,
+        scoreRule: {
+          raw: raw,
+          id: String(item.id || raw.id || ''),
+          label: String(item.label || raw.label || '未命名规则'),
+          aliases: Array.isArray(item.aliases) ? item.aliases.slice() : (Array.isArray(raw.aliases) ? raw.aliases.slice() : []),
+          type: isReward ? 'reward' : 'punish',
+          category: String(item.category || ''),
+          categoryId: String(item.categoryId || raw.categoryId || ''),
+          categoryKey: String(item.categoryKey || ''),
+          min: minValue,
+          max: maxValue,
+          default: defaultValue,
+          unit: String(item.unit || raw.unit || '')
+        }
       }
     });
+  },
+
+  onRuleDetailScore: function() {
+    if (this._detailScoreOpening || this._scoreSubmitting) return;
+    var detail = this.data.ruleDetail;
+    if (this.data.isChild || !this.data.isParent || !detail || detail.isSpecial || !detail.scoreRule) return;
+    if (!app.canOperate()) {
+      this.showToast('当前账号没有记分权限');
+      return;
+    }
+
+    var user = app.globalData.user || {};
+    var kids = (app.globalData.allUsers || []).filter(function(candidate) {
+      return candidate.role === 'child' && (!user.familyId || !candidate.familyId || candidate.familyId === user.familyId);
+    });
+    if (!kids.length) {
+      this.showToast('当前家庭还没有可记分的孩子');
+      return;
+    }
+
+    var activeKidId = this.data.activeKidView;
+    var activeKid = activeKidId && activeKidId !== 'all'
+      ? kids.find(function(kid) { return kid.id === activeKidId; })
+      : null;
+    if (activeKid) {
+      this._openRuleScoreModal(activeKid, detail.scoreRule);
+      return;
+    }
+
+    var that = this;
+    this._detailScoreOpening = true;
+    wx.showActionSheet({
+      itemList: kids.map(function(kid) { return '给 ' + kid.name + ' 记分'; }),
+      success: function(result) {
+        that._detailScoreOpening = false;
+        var kid = kids[result.tapIndex];
+        if (kid) that._openRuleScoreModal(kid, detail.scoreRule);
+      },
+      fail: function() {
+        that._detailScoreOpening = false;
+      }
+    });
+  },
+
+  _openRuleScoreModal: function(kid, rule) {
+    if (!kid || !rule || this.data.isChild || !this.data.isParent) return;
+    var type = rule.type === 'punish' ? 'punish' : 'reward';
+    var min = Number(rule.min);
+    var max = Number(rule.max);
+    var value = Number(rule.default);
+    var validRange = Number.isInteger(min) && Number.isInteger(max) && min <= max && (
+      type === 'punish'
+        ? min >= -500 && max <= -1
+        : min >= 0 && max <= 1000
+    );
+    if (!validRange) {
+      this.showToast('规则分值范围异常，请管理员先修正');
+      return;
+    }
+    var validDefault = Number.isInteger(value) && value !== 0 && value >= min && value <= max;
+    if (!validDefault) {
+      if (type === 'punish') {
+        value = max;
+      } else {
+        value = min > 0 ? min : (max >= 1 ? 1 : 0);
+      }
+      if (!Number.isInteger(value) || value === 0 || value < min || value > max) {
+        this.showToast('该规则暂无可记录的非零分值，请管理员先修正');
+        return;
+      }
+      this.showToast('默认分值异常，请调整后确认');
+    }
+
+    var points = Number((app.globalData.points && app.globalData.points[kid.id]) || 0);
+    var modalItem = {
+      source: 'rule-detail',
+      raw: rule.raw,
+      id: rule.id,
+      label: rule.label || '规则积分',
+      aliases: rule.aliases || [],
+      type: type,
+      category: rule.category || '',
+      categoryId: rule.categoryId || '',
+      min: min,
+      max: max,
+      kidId: kid.id,
+      kidName: kid.name,
+      unit: rule.unit || ''
+    };
+    this.setData({
+      ruleDetailVisible: false,
+      sheetKidId: kid.id,
+      sheetKidName: kid.name,
+      sheetKidPoints: points,
+      numModalVisible: true,
+      numTitle: kid.name + ' · ' + modalItem.label,
+      numDesc: this._buildRuleScoreDescription(modalItem, value),
+      numValue: value,
+      numItem: modalItem
+    });
+  },
+
+  _buildRuleScoreDescription: function(item, value) {
+    var signed = (value > 0 ? '+' : '') + value;
+    var minText = (item.min > 0 ? '+' : '') + item.min;
+    var maxText = (item.max > 0 ? '+' : '') + item.max;
+    return '确认 ' + item.kidName + ' 按「' + item.label + '」' + signed + ' 分 · 可调 ' + minText + '～' + maxText + ' 分' + (item.unit ? ' · ' + item.unit : '');
   },
 
   onRuleDetailClose: function() {
@@ -737,7 +904,7 @@ Page({
       if (!data || !data.history || data.history.length === 0) {
         that.setData({
           historyList: [],
-          frequentRules: rulesViewModel.frequentRules(that.data.rulesData, [], 4)
+          frequentRules: that._buildFrequentRules(that.data.rulesData, [])
         });
         return;
       }
@@ -764,7 +931,7 @@ Page({
       }
       that.setData({
         historyList: list,
-        frequentRules: rulesViewModel.frequentRules(that.data.rulesData, list, 4)
+        frequentRules: that._buildFrequentRules(that.data.rulesData, list)
       });
     });
   },

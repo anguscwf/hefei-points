@@ -928,7 +928,10 @@
 .rule-detail-remedy { display: block; margin-top: 16rpx; color: var(--muted); font-size: var(--font-xs); line-height: 1.6; }
 .rule-detail-agreement { display: flex; align-items: flex-start; gap: 18rpx; margin: 28rpx 0; color: var(--text); font-size: var(--font-md); line-height: 1.7; overflow-wrap: anywhere; }
 .rule-detail-agreement-icon { flex: 0 0 66rpx; }
-.rule-detail-done { width: 100%; margin-top: 24rpx; }
+.rule-detail-actions { display: flex; gap: 16rpx; margin-top: 24rpx; }
+.rule-detail-actions .rule-detail-done,
+.rule-detail-actions .rule-detail-score-action { flex: 1; width: auto; min-width: 0; margin: 0; font-size: var(--font-sm); }
+.rule-detail-score-action { box-shadow: 0 12rpx 28rpx rgba(45,155,122,.20); }
 
 @keyframes loadingSpin { to { transform: rotate(360deg); } }
 
