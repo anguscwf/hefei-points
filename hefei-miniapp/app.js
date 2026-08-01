@@ -1,8 +1,7 @@
-// 恩霖积分 小程序 v1.0 (从HTTP版v4.2迁移)
+// 糖罐积分 小程序 v2.2.0
 // 全局状态 · API · 认证
-
-var VERSION = '1.0.0';
-var API_BASE = 'http://159.75.102.145:3002';  // 开发环境（独立于生产3001）
+var VERSION = '2.2.0';
+var API_BASE = 'https://hefeijifen.cn';
 
 App({
   globalData: {
@@ -11,6 +10,7 @@ App({
     points: null,
     rules: null,
     allUsers: null,
+    theme: 'mint',
     version: VERSION,
     dataReady: null,      // Promise，页面可 await 等待初始数据加载完毕
     dataReadyResolve: null
@@ -32,6 +32,7 @@ App({
   onLaunch: function() {
     var that = this;
     that._initDataReady();
+    that.setTheme(wx.getStorageSync('hefei_theme') || 'mint', false);
 
     // 恢复登录态
     var token = wx.getStorageSync('hefei_token');
@@ -45,8 +46,8 @@ App({
         wx.removeStorageSync('hefei_user');
       }
     }
-    // 预加载用户列表 + 规则（带重试，解决超时问题）
-    that._loadConfigWithRetry(3);
+    // 不再在 onLaunch 预加载（网络模块未就绪会导致 timeout）
+    // 配置加载交由 index 页面 onLoad 处理
   },
 
   // 带重试的配置加载（最多 maxRetries 次）
@@ -60,7 +61,7 @@ App({
         if (res && res.success) {
           console.log('[app] /api/config 加载成功，用户数=' + (res.users || []).length);
           that.globalData.allUsers = res.users;
-          that.globalData.rules = res.rules;
+          that.globalData.rules = that.normalizeRules(res.rules);
           if (that.globalData.dataReadyResolve) {
             that.globalData.dataReadyResolve(true);
           }
@@ -84,17 +85,31 @@ App({
   fetchAPI: function(url, opts) {
     var that = this;
     return new Promise(function(resolve) {
+      var headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (that.globalData.token || '')
+      };
+      if (opts && opts.headers) {
+        Object.keys(opts.headers).forEach(function(key) { headers[key] = opts.headers[key]; });
+      }
       wx.request({
         url: API_BASE + url,
         method: (opts && opts.method) || 'GET',
         data: (opts && opts.body) ? JSON.parse(opts.body) : undefined,
-        header: (opts && opts.headers) || { 'Content-Type': 'application/json' },
+        header: headers,
         timeout: (opts && opts.timeout) || 15000,
         success: function(res) {
+          var routePath = url.split('?')[0];
+          var isLoginRequest = routePath === '/api/auth' || routePath === '/api/wx-login' || routePath === '/api/wx-bind';
+          var protectedRead = routePath === '/api/points' || routePath === '/api/history' || routePath === '/api/config';
+          var sessionExpired = res.statusCode === 401 || (res.statusCode === 403 && protectedRead);
+          if (sessionExpired && that.globalData.token && !isLoginRequest) {
+            that.logout();
+            wx.showToast({ title: '登录已失效，请重新登录', icon: 'none' });
+          }
           resolve(res.data);
         },
         fail: function(err) {
-          console.error('[fetchAPI] 请求失败:', url, err.errMsg || err);
           resolve({ success: false, message: '网络错误: ' + (err.errMsg || 'timeout') });
         }
       });
@@ -127,21 +142,57 @@ App({
   },
 
   // ========== 数据加载 ==========
+  normalizeRules: function(rules) {
+    if (!rules || typeof rules !== 'object') return rules;
+    var normalized = JSON.parse(JSON.stringify(rules));
+    (normalized.punish || []).forEach(function(category) {
+      (category.items || []).forEach(function(item) {
+        if (item.id === 'punish' || item.label === '惩罚') {
+          item.min = -500;
+          item.max = -1;
+          if (!Number.isInteger(item.default) || item.default < item.min || item.default > item.max) {
+            item.default = -10;
+          }
+        }
+      });
+    });
+    return normalized;
+  },
+
+  loadPoints: function() {
+    var that = this;
+    return that.fetchAPI('/api/points', {
+      timeout: 15000,
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
+    }).then(function(pointsRes) {
+      if (pointsRes && pointsRes.success) {
+        that.globalData.points = pointsRes.points || {};
+        that.globalData.rules = pointsRes.rules
+          ? that.normalizeRules(pointsRes.rules)
+          : that.globalData.rules;
+        if (pointsRes.user) {
+          that.globalData.user = pointsRes.user;
+          wx.setStorageSync('hefei_user', JSON.stringify(pointsRes.user));
+        }
+      }
+      return pointsRes;
+    });
+  },
+
   loadData: function() {
     var that = this;
-    var token = that.globalData.token || '';
     return Promise.all([
-      that.fetchAPI('/api/points?token=' + token),
+      that.loadPoints(),
       that.fetchAPI('/api/config')
     ]).then(function(results) {
       var pointsRes = results[0];
       var configRes = results[1];
-      if (pointsRes.success) {
-        that.globalData.points = pointsRes.points;
-        that.globalData.rules = pointsRes.rules;
-      }
-      if (configRes.success) {
-        that.globalData.allUsers = configRes.users;
+      if (configRes && configRes.success) {
+        that.globalData.allUsers = configRes.users || [];
+        if (configRes.rules) that.globalData.rules = that.normalizeRules(configRes.rules);
       }
       return { points: pointsRes, config: configRes };
     });
@@ -169,10 +220,82 @@ App({
     return (idx >= 0 ? this.kidColors[idx % this.kidColors.length] : this.kidColors[0]) || this.kidColors[0];
   },
 
-  getKidEmoji: function(kid) {
+  getKidIcon: function(kid) {
+    var kids = (this.globalData.allUsers || []).filter(function(user) { return user.role === 'child'; });
+    var index = kids.findIndex(function(user) { return user.id === kid; });
+    return index === 0 ? 'kid-a' : (index === 1 ? 'kid-b' : 'person');
+  },
+
+  // 获取用户主题色（孩子用专属色，成人用琥珀色）
+  getUserColor: function(userId) {
+    var adultColor = this.globalData.theme === 'mint' ? '#2D9B7A' : '#B86932';
+    if (!userId) return { bg: adultColor, text: '#fff', border: adultColor };
     var kids = (this.globalData.allUsers || []).filter(function(u) { return u.role === 'child'; });
-    var idx = kids.findIndex(function(u) { return u.id === kid; });
-    return idx === 0 ? '👦' : (idx === 1 ? '👧' : '👶');
+    var idx = kids.findIndex(function(u) { return u.id === userId; });
+    if (idx >= 0) {
+      var c = this.kidColors[idx % this.kidColors.length];
+      return { bg: c.border, text: '#fff', border: c.border };
+    }
+    // adult users → amber
+    return { bg: adultColor, text: '#fff', border: adultColor };
+  },
+
+  getThemePageStyle: function() {
+    if (this.globalData.theme === 'mint') {
+      return '--amber:#2D9B7A;--amber-dark:#176A53;--honey:#75CDB1;--amber-light:#E4F6F0;--bg:#F0F8F5;--card:rgba(251,255,253,.91);--border:rgba(45,155,122,.16);--accent-start:#42B491;--accent-end:#237A61;--accent-shadow:rgba(45,155,122,.24);--surface-soft:rgba(228,246,240,.78);';
+    }
+    return '--amber:#B86932;--amber-dark:#8F4924;--honey:#F3B85B;--amber-light:#FFF1DF;--bg:#FBF5EC;--card:rgba(255,253,249,.9);--border:rgba(184,105,50,.14);--accent-start:#CB7A3D;--accent-end:#A85A2B;--accent-shadow:rgba(184,105,50,.24);--surface-soft:rgba(255,241,223,.72);';
+  },
+
+  setTheme: function(theme, persist) {
+    var nextTheme = theme === 'mint' ? 'mint' : 'amber';
+    var tabIcons = ['home', 'records', 'chart', 'user'];
+    this.globalData.theme = nextTheme;
+    if (persist !== false) wx.setStorageSync('hefei_theme', nextTheme);
+    wx.setNavigationBarColor({
+      frontColor: '#ffffff',
+      backgroundColor: nextTheme === 'mint' ? '#2D9B7A' : '#B86932',
+      animation: { duration: 220, timingFunc: 'easeIn' }
+    });
+    wx.setTabBarStyle({
+      selectedColor: nextTheme === 'mint' ? '#2D9B7A' : '#B86932',
+      backgroundColor: '#FFFDFC',
+      borderStyle: 'white'
+    });
+    if (wx.setTabBarItem) {
+      tabIcons.forEach(function(icon, index) {
+        wx.setTabBarItem({
+          index: index,
+          iconPath: 'images/' + icon + '_inactive.png',
+          selectedIconPath: 'images/' + icon + (nextTheme === 'mint' ? '_active_mint.png' : '_active.png')
+        });
+      });
+    }
+    return this.getThemePageStyle();
+  },
+
+  getKidSkin: function(kidId) {
+    var skins = wx.getStorageSync('hefei_kid_skins_' + this.getPreferenceScope()) || {};
+    return skins[kidId] === 'star' ? 'star' : 'classic';
+  },
+
+  setKidSkin: function(kidId, skin) {
+    var storageKey = 'hefei_kid_skins_' + this.getPreferenceScope();
+    var skins = wx.getStorageSync(storageKey) || {};
+    skins[kidId] = skin === 'star' ? 'star' : 'classic';
+    wx.setStorageSync(storageKey, skins);
+  },
+
+  getLocalAvatar: function(userId) {
+    return userId ? (wx.getStorageSync(this.getAvatarStorageKey(userId)) || '') : '';
+  },
+
+  getPreferenceScope: function() {
+    return (this.globalData.user && this.globalData.user.familyId) || 'default';
+  },
+
+  getAvatarStorageKey: function(userId) {
+    return 'hefei_avatar_' + this.getPreferenceScope() + '_' + userId;
   },
 
   canOperate: function() {

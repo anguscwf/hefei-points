@@ -1,0 +1,35 @@
+<view class="cropper-overlay" wx:if="{{show}}" bindtap="cancel">
+  <view class="cropper-panel" catchtap="stopBubble">
+    <view class="cropper-head">
+      <view>
+        <text class="cropper-title">调整头像</text>
+        <text class="cropper-subtitle">拖动图片定位，双指或滑杆缩放</text>
+      </view>
+      <button class="cropper-close" bindtap="cancel" aria-label="关闭">×</button>
+    </view>
+
+    <view class="shape-tabs">
+      <view class="shape-tab {{shape === 'circle' ? 'active' : ''}}" data-shape="circle" bindtap="setShape">圆形头像</view>
+      <view class="shape-tab {{shape === 'square' ? 'active' : ''}}" data-shape="square" bindtap="setShape">方形头像</view>
+    </view>
+
+    <view class="crop-stage" catchtouchstart="onTouchStart" catchtouchmove="onTouchMove" catchtouchend="onTouchEnd" catchtouchcancel="onTouchEnd">
+      <image wx:if="{{ready}}" class="crop-image" src="{{src}}" mode="scaleToFill" style="width: {{imageWidth}}px; height: {{imageHeight}}px; transform: translate({{imageX}}px, {{imageY}}px);" />
+      <view class="crop-loading" wx:else>正在准备图片…</view>
+      <view class="crop-mask {{shape}}"></view>
+      <view class="crop-grid {{shape}}"><view></view><view></view><view></view><view></view></view>
+    </view>
+
+    <view class="zoom-row">
+      <text class="zoom-symbol">−</text>
+      <slider class="zoom-slider" min="100" max="400" step="1" value="{{zoomValue}}" activeColor="{{accent}}" backgroundColor="#DCE9E4" block-size="18" bindchanging="onZoom" bindchange="onZoom" />
+      <text class="zoom-symbol">＋</text>
+    </view>
+
+    <view class="cropper-actions">
+      <button class="crop-btn crop-cancel" bindtap="cancel">取消</button>
+      <button class="crop-btn crop-apply" loading="{{applying}}" disabled="{{!ready || applying}}" bindtap="apply">应用头像</button>
+    </view>
+    <canvas type="2d" id="avatarCropCanvas" class="crop-output-canvas"></canvas>
+  </view>
+</view>

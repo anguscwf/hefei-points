@@ -8,7 +8,7 @@
   color: #fff;
   padding: 20rpx 48rpx;
   border-radius: 40rpx;
-  font-size: 28rpx;
+  font-size: var(--font-md);
   z-index: 999;
   opacity: 0;
   transition: opacity 0.25s, transform 0.25s;

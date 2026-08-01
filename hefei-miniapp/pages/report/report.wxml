@@ -1,6 +1,19 @@
 <!-- pages/report/report.wxml -->
-<view class="page-container">
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view class="page-container {{themeClass}}">
 
+  <!-- 未登录提示 -->
+  <view wx:if="{{!isLoggedIn}}" class="perm-hint">
+    <text>请先在首页登录</text>
+    <text class="hint-link" bindtap="goLogin">→ 去登录</text>
+  </view>
+
+  <block wx:if="{{isLoggedIn}}">
+  <view class="report-hero">
+    <text class="report-eyebrow">FAMILY GROWTH</text>
+    <text class="report-title">成长不是比赛，是一家人的共同作品</text>
+    <text class="report-subtitle">从积分里看见坚持，也看见彼此的鼓励</text>
+  </view>
   <!-- 筛选卡片 -->
   <view class="card">
     <!-- 时间 -->
@@ -55,10 +68,91 @@
     </view>
   </view>
 
-  <!-- 空 -->
-  <view wx:if="{{filteredData.length === 0}}" class="empty">所选范围内暂无记录</view>
+  <!-- 加载与空状态 -->
+  <view wx:if="{{reportLoading}}" class="empty">正在整理成长记录...</view>
+  <view wx:elif="{{filteredData.length === 0}}" class="empty">所选范围内暂无记录</view>
 
   <block wx:else>
+    <view class="card ranking-card" wx:if="{{rankingList.length > 0}}">
+      <view class="section-title icon-heading ranking-title"><ui-icon name="trophy" size="36" theme="{{iconTheme}}" /><text>加分排行榜</text></view>
+      <view class="ranking-row rank-{{item.rank}}" wx:for="{{rankingList}}" wx:key="kid">
+        <view class="ranking-medal"><ui-icon name="medal" rank="{{item.rank}}" size="50" theme="{{iconTheme}}" /></view>
+        <text class="ranking-name">{{item.kidName}}</text>
+        <view class="ranking-score"><ui-icon name="trophy" size="24" theme="{{iconTheme}}" /><text>+{{item.add}} 分</text></view>
+      </view>
+    </view>
+
+    <view class="card month-card">
+      <view class="month-head"><text class="section-title">本月 vs 上月</text><text class="month-trend {{monthCompare.direction}}">{{monthCompare.icon}} {{monthCompare.text}}</text></view>
+      <view class="month-values">
+        <view><text class="month-value">{{monthCompare.current >= 0 ? '+' : ''}}{{monthCompare.current}}</text><text class="month-label">本月净变化</text></view>
+        <view class="month-divider"></view>
+        <view><text class="month-value muted">{{monthCompare.previous >= 0 ? '+' : ''}}{{monthCompare.previous}}</text><text class="month-label">上月净变化</text></view>
+      </view>
+    </view>
+
+    <!-- 成长数据快照 -->
+    <view class="card growth-overview-card">
+      <view class="growth-section-head">
+        <view class="section-title icon-heading growth-section-title"><ui-icon name="trend-up" size="34" theme="{{iconTheme}}" /><text>成长数据快照</text></view>
+        <text class="growth-range-chip">{{rangeDisplayText}}</text>
+      </view>
+      <view class="growth-stat-grid">
+        <view class="growth-stat-item tone-{{item.tone}}" wx:for="{{growthStats}}" wx:key="key">
+          <view class="growth-stat-number"><text>{{item.valueText}}</text><text class="growth-stat-unit">{{item.unit}}</text></view>
+          <text class="growth-stat-label">{{item.label}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 连续成长 -->
+    <view class="card streak-card">
+      <view class="growth-section-head">
+        <view class="section-title icon-heading growth-section-title"><ui-icon name="spark" size="34" theme="{{iconTheme}}" /><text>连续成长记录</text></view>
+        <text class="growth-section-note">正向记录按天计算</text>
+      </view>
+      <view class="streak-list">
+        <view class="streak-kid" wx:for="{{streakCards}}" wx:key="kid">
+          <view class="streak-kid-head"><text class="streak-kid-name">{{item.kidName}}</text><text class="streak-active">活跃 {{item.activeDays}} 天</text></view>
+          <view class="streak-values">
+            <view><text class="streak-number">{{item.current}}</text><text class="streak-unit">天</text><text class="streak-label">最近连续</text></view>
+            <view class="streak-divider"></view>
+            <view><text class="streak-number best">{{item.best}}</text><text class="streak-unit">天</text><text class="streak-label">本期最长</text></view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 好习惯亮点 -->
+    <view class="card habit-card">
+      <view class="growth-section-head">
+        <view class="section-title icon-heading growth-section-title"><ui-icon name="family-heart" size="34" theme="{{iconTheme}}" /><text>好习惯亮点</text></view>
+        <text class="growth-section-note">按正向记录次数统计</text>
+      </view>
+      <view class="habit-highlight" wx:for="{{habitHighlights}}" wx:key="kid">
+        <view class="habit-rank-dot">{{index + 1}}</view>
+        <view class="habit-main"><text class="habit-kid">{{item.kidName}}</text><text class="habit-reason">{{item.reason}}</text><text class="habit-trend">{{item.trendText}}</text></view>
+        <view class="habit-score"><text class="habit-count">{{item.count}}次</text><text class="habit-points">+{{item.points}}分</text></view>
+      </view>
+    </view>
+
+    <!-- 成长阶段徽章 -->
+    <view class="card badge-card">
+      <view class="growth-section-head">
+        <view class="section-title icon-heading growth-section-title"><ui-icon name="trophy" size="34" theme="{{iconTheme}}" /><text>累计成长阶段</text></view>
+        <text class="growth-section-note">按累计正向记录解锁</text>
+      </view>
+      <view class="stage-row" wx:for="{{growthStages}}" wx:key="kid">
+        <view class="stage-medal"><ui-icon name="medal" rank="{{item.rank}}" size="58" theme="{{iconTheme}}" /></view>
+        <view class="stage-main">
+          <view class="stage-title-row"><text class="stage-kid">{{item.kidName}}</text><text class="stage-title">{{item.title}}</text></view>
+          <view class="stage-progress"><view class="stage-progress-fill" style="width: {{item.progress}}%;"></view></view>
+          <text class="stage-next">{{item.nextText}}</text>
+          <view class="stage-badges"><text wx:for="{{item.badges}}" wx:key="*this" wx:for-item="badge" class="stage-badge-chip">{{badge}}</text></view>
+        </view>
+      </view>
+    </view>
+
     <!-- 积分总结 -->
     <view class="card">
       <text class="section-title">积分总结</text>
@@ -78,21 +172,36 @@
       </view>
     </view>
 
+    <view class="card insight-card">
+      <view class="insight-icon"><ui-icon name="spark" size="42" theme="{{iconTheme}}" /></view>
+      <view class="insight-copy"><text class="insight-title">AI 每周小结 · 本地生成</text><text class="insight-text">{{insightText}}</text><text class="insight-privacy">数据仅在本机计算，不上传、不调用外部模型</text></view>
+    </view>
+
+    <view class="card encouragement-card">
+      <view class="encouragement-spark"><ui-icon name="spark" size="46" theme="{{iconTheme}}" /></view>
+      <text class="encouragement-kicker">TODAY'S ENCOURAGEMENT</text>
+      <text class="encouragement-title">{{encouragementTitle}}</text>
+      <text class="encouragement-text">“{{encouragementText}}”</text>
+      <text class="encouragement-sign">—— 糖罐成长小助手</text>
+    </view>
+
     <!-- 每日趋势图 -->
     <view class="card">
       <text class="section-title">每日趋势 · {{reportMode === 'count' ? '操作次数' : '积分变动'}}</text>
-      <canvas type="2d" id="trendCanvas" class="chart-canvas"></canvas>
+      <canvas wx:if="{{!sharePreviewVisible}}" type="2d" id="trendCanvas" class="chart-canvas"></canvas>
+      <view wx:else class="chart-canvas chart-preview-placeholder"></view>
     </view>
 
     <!-- 类别分布饼图 -->
     <view class="card">
       <text class="section-title">类别分布 · {{reportMode === 'count' ? '操作次数' : '积分占比'}}</text>
-      <canvas type="2d" id="pieCanvas" class="chart-canvas pie-canvas"></canvas>
+      <canvas wx:if="{{!sharePreviewVisible}}" type="2d" id="pieCanvas" class="chart-canvas pie-canvas"></canvas>
+      <view wx:else class="chart-canvas pie-canvas chart-preview-placeholder"></view>
     </view>
 
     <!-- Top 10 -->
     <view class="card">
-      <text class="section-title">🔥 操作排行 Top 10</text>
+      <view class="section-title icon-heading ranking-title"><ui-icon name="trend-up" size="34" theme="{{iconTheme}}" /><text>操作排行 Top 10</text></view>
       <view wx:for="{{top10List}}" wx:key="index" class="top-item">
         <text class="top-amount" style="color: {{item.amount >= 0 ? 'var(--green)' : 'var(--red)'}};">{{item.amount >= 0 ? '+' : ''}}{{item.amount}}</text>
         <text class="top-reason">{{item.reason}}</text>
@@ -103,23 +212,25 @@
 
   <!-- 分享按钮 -->
   <view class="share-section" wx:if="{{filteredData.length > 0}}">
-    <button class="btn btn-outline" bindtap="onMakeShare">📤 生成分享图</button>
+    <button class="btn btn-outline" loading="{{shareGenerating}}" disabled="{{shareGenerating}}" bindtap="onMakeShare"><view class="icon-button-label"><ui-icon name="share" size="30" theme="{{iconTheme}}" /><text>{{shareGenerating ? '正在生成...' : '生成分享图'}}</text></view></button>
   </view>
 
   <!-- 隐藏分享Canvas -->
-  <canvas canvas-id="shareCanvas" style="position:fixed; top:-9999rpx; left:-9999rpx; width:750rpx; height:1000rpx;"></canvas>
+  <canvas wx:if="{{shareCanvasVisible}}" type="2d" id="shareCanvas" class="share-canvas-offscreen"></canvas>
 
   <!-- 分享预览弹窗 -->
-  <view class="modal-overlay" wx:if="{{sharePreviewVisible}}" bindtap="onCloseSharePreview" style="animation: fadeIn 0.2s ease;">
-    <view class="modal-box" catchtap="" style="animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); text-align:center;">
+  <view class="modal-overlay share-preview-overlay" wx:if="{{sharePreviewVisible}}" bindtap="onCloseSharePreview" catchtouchmove="noop" style="animation: fadeIn 0.2s ease;">
+    <view class="modal-box share-preview-dialog" catchtap="noop" style="animation: gentlePop 0.35s cubic-bezier(0.22, 1.4, 0.36, 1); text-align:center;">
       <text class="modal-title">分享卡片预览</text>
-      <image src="{{shareImagePath}}" mode="widthFix" class="share-preview" />
+      <view class="share-preview-frame"><image src="{{shareImagePath}}" mode="widthFix" class="share-preview" /></view>
       <text class="save-tip">长按图片可转发 · 或保存到相册</text>
       <view style="display:flex;gap:16rpx;margin-top:24rpx;">
         <button class="btn btn-outline flex-1" bindtap="onCloseSharePreview">关闭</button>
-        <button class="btn btn-primary flex-1" bindtap="onSaveToAlbum">💾 保存到相册</button>
+        <button class="btn btn-primary flex-1" bindtap="onSaveToAlbum"><view class="icon-button-label"><ui-icon name="save" size="28" theme="{{iconTheme}}" variant="white" /><text>保存到相册</text></view></button>
       </view>
     </view>
   </view>
+
+  </block>
 
 </view>

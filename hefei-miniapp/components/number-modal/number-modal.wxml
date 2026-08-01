@@ -1,14 +1,15 @@
 <!-- components/number-modal/number-modal.wxml -->
-<view class="modal-overlay" wx:if="{{show}}" bindtap="onClose" style="animation: fadeIn 0.2s ease;">
-  <view class="modal-box" catchtap="" style="animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); position: relative;">
+<view class="modal-overlay" wx:if="{{show}}" catchtap="noop" style="animation: fadeIn 0.2s ease;">
+  <view class="modal-box" catchtap="noop" style="animation: gentlePop 0.35s cubic-bezier(0.22, 1.4, 0.36, 1); position: relative;">
     <view class="modal-close" bindtap="onClose" style="position: absolute; top: 20rpx; right: 20rpx;">✕</view>
     <text class="modal-title">{{title}}</text>
     <text class="num-desc">{{desc}}</text>
     <view class="num-row">
-      <button class="num-btn" bindtouchstart="onLongMinusStart" bindtouchend="onLongEnd" bindtap="onMinus">−</button>
-      <text class="num-display {{value >= 0 ? 'positive' : 'negative'}}">{{valueText}}</text>
-      <button class="num-btn" bindtouchstart="onLongPlusStart" bindtouchend="onLongEnd" bindtap="onPlus">+</button>
+      <button class="num-btn" bindtouchstart="onLongMinusStart" bindtouchend="onLongEnd" bindtouchcancel="onLongEnd" bindtap="onMinus">−</button>
+      <text class="num-display {{currentVal >= 0 ? 'positive' : 'negative'}}">{{valueText}}</text>
+      <button class="num-btn" bindtouchstart="onLongPlusStart" bindtouchend="onLongEnd" bindtouchcancel="onLongEnd" bindtap="onPlus">+</button>
     </view>
+    <text class="num-step-hint">轻点每次 1 分 · 长按每次 10 分</text>
     <view class="dp-note-input" style="margin-top: 16rpx;">
       <input type="text" placeholder="备注（选填）" value="{{note}}" bindinput="onNoteInput" />
     </view>

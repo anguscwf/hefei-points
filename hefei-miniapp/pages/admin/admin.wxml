@@ -1,5 +1,6 @@
 <!-- pages/admin/admin.wxml -->
-<view class="page-container">
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view wx:if="{{accessAllowed}}" class="page-container {{themeClass}}">
 
   <!-- Tab 切换 -->
   <view class="admin-tabs">
@@ -18,9 +19,16 @@
           <view class="ue-picker">{{item.roleName}}</view>
         </picker>
       </view>
+      <view class="ue-row skin-row" wx:if="{{item.roleIdx === 2}}">
+        <text class="ue-label">积分卡皮肤</text>
+        <picker range="{{skinOptions}}" value="{{item.skinIdx}}" bindchange="onKidSkin" data-index="{{index}}">
+          <view class="ue-picker skin-picker">{{skinOptions[item.skinIdx]}}</view>
+        </picker>
+        <text class="skin-local-hint">仅保存在当前设备</text>
+      </view>
       <view class="ue-row">
         <text class="ue-label">密码</text>
-        <input class="ue-input ue-pwd" type="password" placeholder="留空不改" value="{{item.editPwd}}" bindinput="onUserPwd" data-index="{{index}}" />
+        <input class="ue-input ue-pwd" password="{{true}}" placeholder="留空不改" value="{{item.editPwd}}" bindinput="onUserPwd" data-index="{{index}}" />
         <button class="btn btn-primary btn-xs" bindtap="saveUser" data-index="{{index}}">保存</button>
         <button class="btn btn-xs btn-del" bindtap="deleteUser" data-index="{{index}}">✕</button>
       </view>
@@ -32,7 +40,7 @@
       <view class="add-row">
         <input class="add-input" placeholder="ID(拼音)" value="{{newUid}}" bindinput="onNewUid" />
         <input class="add-input" placeholder="显示名" value="{{newName}}" bindinput="onNewName" />
-        <input class="add-input" placeholder="密码" value="{{newPwd}}" bindinput="onNewPwd" />
+        <input class="add-input" password="{{true}}" placeholder="密码" value="{{newPwd}}" bindinput="onNewPwd" />
         <picker range="{{roleOptions}}" value="{{newRoleIdx}}" bindchange="onNewRole">
           <view class="ue-picker add-picker">{{newRoleName}}</view>
         </picker>
@@ -45,7 +53,7 @@
   <view wx:if="{{adminTab === 'rules'}}">
     <!-- 加分规则 -->
     <view class="rule-section">
-      <text class="rule-sec-title" style="color: #388E3C;">📈 加分规则</text>
+      <view class="rule-sec-title icon-heading" style="color: var(--green);"><ui-icon name="trend-up" size="30" theme="{{iconTheme}}" /><text>加分规则</text></view>
       <view wx:for="{{editRules.reward}}" wx:key="cid" wx:for-item="cat" wx:for-index="ci" class="rule-cat-edit">
         <view class="rce-header">
           <text class="rce-label">大类</text>
@@ -75,7 +83,7 @@
 
     <!-- 扣分规则 -->
     <view class="rule-section">
-      <text class="rule-sec-title" style="color: #D32F2F;">📉 扣分规则</text>
+      <view class="rule-sec-title icon-heading" style="color: var(--red);"><ui-icon name="trend-down" size="30" theme="{{iconTheme}}" /><text>扣分规则</text></view>
       <view wx:for="{{editRules.punish}}" wx:key="cid" wx:for-item="cat" wx:for-index="ci" class="rule-cat-edit punish-edit">
         <view class="rce-header">
           <text class="rce-label">大类</text>
@@ -105,7 +113,7 @@
 
     <!-- 特别规则 -->
     <view class="rule-section">
-      <text class="rule-sec-title" style="color: var(--amber);">⚠️ 特别规则</text>
+      <view class="rule-sec-title icon-heading" style="color: var(--amber);"><ui-icon name="warning" size="30" theme="{{iconTheme}}" /><text>特别规则</text></view>
       <view wx:for="{{editRules.special}}" wx:key="*this" wx:for-index="si" class="special-edit-row">
         <input class="special-input" value="{{item}}" bindinput="onSpecial" data-si="{{si}}" placeholder="特别规则描述" />
         <button class="btn btn-xs btn-small-red" bindtap="delSpecial" data-si="{{si}}">删</button>
@@ -123,7 +131,7 @@
   <!-- ========== 数据清理 ========== -->
   <view wx:if="{{adminTab === 'cleanup'}}" class="cleanup-section">
     <view class="card">
-      <text class="section-title">🧹 清理历史记录</text>
+      <view class="section-title icon-heading"><ui-icon name="clean" size="34" theme="{{iconTheme}}" /><text>清理历史记录</text></view>
       <text class="cleanup-hint">此操作不可撤销，建议先备份</text>
 
       <view class="cleanup-row">

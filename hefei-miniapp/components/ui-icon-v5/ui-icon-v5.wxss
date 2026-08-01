@@ -1,0 +1,21 @@
+:host {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.ui-icon-sprite {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.ui-icon-atlas {
+  position: absolute;
+  display: block;
+  max-width: none;
+  pointer-events: none;
+}

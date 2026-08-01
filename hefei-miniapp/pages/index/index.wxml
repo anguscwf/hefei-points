@@ -1,39 +1,63 @@
 <!-- pages/index/index.wxml - 首页 -->
-<view class="page-container">
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view class="page-container {{themeClass}}">
 
   <!-- 头部 -->
-  <view class="header">
-    <text class="header-title">恩霖积分</text>
+  <view class="header" wx:if="{{isLoggedIn}}">
+    <view class="hero-glow hero-glow-a"></view>
+    <view class="hero-glow hero-glow-b"></view>
+    <view class="brand-row">
+      <view class="brand-mark"><ui-icon name="brand" size="70" theme="{{iconTheme}}" variant="white" /></view>
+      <view class="brand-copy">
+        <text class="brand-title">糖罐积分</text>
+        <text class="brand-subtitle">把每一次好习惯，装进成长糖罐</text>
+      </view>
+    </view>
     <text class="header-status">{{loginStatusText}}</text>
-    <view class="refresh-btn" bindtap="onRefresh">↻</view>
+    <view class="refresh-btn" bindtap="onRefresh"><ui-icon name="refresh" size="38" theme="{{iconTheme}}" variant="white" /></view>
+  </view>
+
+  <!-- 未登录欢迎页 -->
+  <view class="welcome-card" wx:if="{{!isLoggedIn}}">
+    <view class="welcome-orbit welcome-orbit-a"></view>
+    <view class="welcome-orbit welcome-orbit-b"></view>
+    <view class="welcome-logo"><ui-icon name="brand" size="112" theme="{{iconTheme}}" /></view>
+    <text class="welcome-title">糖罐育儿积分</text>
+    <text class="welcome-subtitle">把每一次好习惯，装进成长糖罐</text>
+    <button class="btn btn-primary wx-login-btn" loading="{{wxLoginLoading}}" disabled="{{wxLoginLoading}}" bindtap="onWxLogin">{{wxLoginLoading ? '登录中...' : '微信一键登录'}}</button>
+    <text class="login-guide-link" bindtap="onOpenLoginGuide">第一次使用？查看 3 步登录说明</text>
   </view>
 
   <!-- 加载中 -->
   <view class="loading-bar" wx:if="{{!isLoggedIn && loadingUsers}}">
-    <view class="perm-hint">⏳ 正在加载用户列表...</view>
+    <view class="perm-hint loading-hint"><view class="loading-dot"></view><text>正在加载用户列表...</text></view>
   </view>
 
   <!-- 加载失败 -->
   <view class="loading-bar" wx:if="{{!isLoggedIn && !loadingUsers && userOptions.length === 0}}">
     <view class="perm-hint">
-      <text>⚠️ 加载失败，请检查网络后重试</text>
+      <text>用户列表受保护，请输入家庭中已有的用户ID登录</text>
       <button class="btn btn-primary btn-sm mt-sm" bindtap="onRetryLoad">重新加载</button>
     </view>
   </view>
 
-  <!-- 登录栏 -->
-  <view class="login-bar" wx:if="{{!isLoggedIn && !loadingUsers && userOptions.length > 0}}">
-    <picker class="user-picker" range="{{userOptions}}" range-key="name" value="{{selectedUserIdx}}" bindchange="onSelectUser">
-      <view class="picker-display">{{selectedUserName || '选择用户'}}</view>
-    </picker>
-    <input class="pwd-input" type="password" placeholder="密码" value="{{password}}" bindinput="onPwdInput" />
-    <button class="btn btn-primary btn-sm" bindtap="onLogin">登录</button>
+  <!-- 备用账号登录 -->
+  <view class="backup-login" wx:if="{{!isLoggedIn && !loadingUsers && pickerKey}}">
+    <view class="login-divider"><view></view><text>选择用户备用登录</text><view></view></view>
+    <view class="login-bar">
+      <picker wx:if="{{userOptions.length > 0}}" class="user-picker" range="{{userOptions}}" range-key="name" value="{{selectedUserIdx}}" bindchange="onSelectUser">
+        <view class="picker-display">{{selectedUserName || '选择用户'}}</view>
+      </picker>
+      <input wx:else class="uid-input" placeholder="用户ID" value="{{manualUserId}}" bindinput="onUserIdInput" />
+      <input class="pwd-input" password="{{true}}" placeholder="密码" value="{{password}}" bindinput="onPwdInput" />
+      <button class="btn btn-outline btn-sm" bindtap="onLogin">登录</button>
+    </view>
   </view>
 
   <!-- 已登录栏 -->
   <view class="login-bar logout-bar" wx:if="{{isLoggedIn}}">
-    <text class="logged-user">👤 {{currentUserName}}</text>
-    <button class="btn btn-outline btn-sm" wx:if="{{isAdmin}}" bindtap="goAdmin">⚙️</button>
+    <text class="logged-hint">已登录</text>
+    <button class="btn btn-outline btn-sm icon-only-btn" wx:if="{{isAdmin}}" bindtap="goAdmin" aria-label="管理后台"><ui-icon name="settings" size="34" theme="{{iconTheme}}" /></button>
     <button class="btn btn-outline btn-sm" bindtap="onLogout">退出</button>
   </view>
 
@@ -41,27 +65,67 @@
   <view class="perm-hint" wx:if="{{!isLoggedIn}}">登录后可查看积分</view>
 
   <!-- 积分卡片 -->
+  <view class="kid-switcher" wx:if="{{isLoggedIn && kidSwitcher.length > 0}}">
+    <view class="kid-switch-item {{item.selected ? 'selected' : ''}}" wx:for="{{kidSwitcher}}" wx:key="id"
+      bindtap="onKidViewTap" data-kid="{{item.id}}">
+      <view class="kid-switch-avatar" style="border-color: {{item.borderColor || 'var(--amber)'}};">
+        <image wx:if="{{item.avatar}}" src="{{item.avatar}}" mode="aspectFill" />
+        <ui-icon wx:else name="{{item.icon}}" size="46" theme="{{iconTheme}}" />
+      </view>
+      <text class="kid-switch-name">{{item.name}}</text>
+    </view>
+  </view>
+
   <view class="score-grid" wx:if="{{isLoggedIn && childCards.length > 0}}">
     <view class="score-card {{isChild ? 'score-card-child' : ''}}" wx:for="{{childCards}}" wx:key="id"
-      style="border-color: {{item.borderColor}};"
+      style="--jar-accent: {{item.borderColor}}; --jar-soft: {{item.softColor}};"
       bindtap="onCardTap" data-kid="{{item.id}}" data-name="{{item.name}}">
-      <view class="card-header">
-        <view class="card-avatar" style="background: {{item.borderColor}};">{{item.emoji}}</view>
-        <text class="card-name">{{item.name}}</text>
+      <view class="jar-lid">
+        <view class="jar-lid-gloss"></view>
+        <view class="jar-lid-ridge"></view>
+        <view class="jar-lid-ridge"></view>
+        <view class="jar-lid-ridge"></view>
       </view>
-      <view class="score-wrap" style="color: {{item.borderColor}};">
-        <text class="score-sign">{{item.sign}}</text>
-        <text class="score-num">{{item.absScore}}</text>
+      <view class="jar-neck"></view>
+      <view class="jar-body {{item.skin === 'star' ? 'jar-body-star' : ''}}">
+        <view class="jar-glass-rim"></view>
+        <view class="jar-shine"></view>
+        <view class="jar-family-watermark"><ui-icon name="family-heart" size="132" variant="white" /></view>
+        <view class="candy candy-a"></view>
+        <view class="candy candy-b"></view>
+        <view class="candy candy-c"></view>
+        <view class="candy candy-d"></view>
+        <view class="jar-label">
+          <view class="kid-card-avatar">
+            <image wx:if="{{item.avatar}}" src="{{item.avatar}}" mode="aspectFill" />
+            <ui-icon wx:else name="{{item.icon}}" size="42" theme="{{iconTheme}}" />
+          </view>
+          <view class="jar-label-copy">
+            <text class="jar-label-eyebrow">成长糖罐</text>
+            <text class="card-name">{{item.name}}</text>
+          </view>
+        </view>
+        <view class="score-wrap" style="color: {{item.borderColor}};">
+          <view class="score-number-core {{item.scoreSize}}">
+            <text class="score-sign">{{item.sign}}</text>
+            <text class="score-num {{item.scoreSize}}">{{item.absScore}}</text>
+          </view>
+        </view>
+        <text class="card-hint">{{isChild ? '我的每一步都在发光' : '轻点记录成长'}}</text>
       </view>
-      <text class="card-hint">{{isChild ? '我的积分' : '点击卡片加减分'}}</text>
     </view>
+  </view>
+
+  <view class="family-note" wx:if="{{isLoggedIn}}">
+    <view class="family-note-icon"><ui-icon name="family-heart" size="48" theme="{{iconTheme}}" /></view>
+    <view><text class="family-note-title">一起把小事做成好习惯</text><text class="family-note-sub">看见努力，及时鼓励，成长自然发生</text></view>
   </view>
 
   <!-- Tab 切换 -->
   <view class="tabs" wx:if="{{isLoggedIn}}">
     <view class="tab {{activeTab === 'history' ? 'active' : ''}}" bindtap="switchTab" data-tab="history">积分记录</view>
     <view class="tab {{activeTab === 'rules' ? 'active' : ''}}" bindtap="switchTab" data-tab="rules">规则</view>
-    <view class="tab {{activeTab === 'report' ? 'active' : ''}}" bindtap="switchTab" data-tab="report">报表</view>
+    <view class="tab tab-link" bindtap="switchTab" data-tab="report">成长报表 ↗</view>
   </view>
 
   <!-- Tab 内容 -->
@@ -94,7 +158,7 @@
       <block wx:else>
         <!-- 加分规则 -->
         <view wx:for="{{rulesData.reward}}" wx:key="category" wx:for-item="cat" class="rule-cat-card">
-          <text class="rule-cat-title" style="color: #639922;">📈 {{cat.category}}</text>
+          <view class="icon-heading rule-cat-title" style="color: var(--green);"><ui-icon name="trend-up" size="32" theme="{{iconTheme}}" /><text>{{cat.category}}</text></view>
           <view wx:for="{{cat.items}}" wx:key="label" wx:for-item="item" class="rule-item-row">
             <text class="rule-item-label">{{item.label}}</text>
             <text class="rule-item-range" style="color: #639922;">+{{item.min}}~+{{item.max}} {{item.unit}}</text>
@@ -102,7 +166,7 @@
         </view>
         <!-- 扣分规则 -->
         <view wx:for="{{rulesData.punish}}" wx:key="category" wx:for-item="cat" class="rule-cat-card punish-card">
-          <text class="rule-cat-title" style="color: #E24B4A;">📉 {{cat.category}}</text>
+          <view class="icon-heading rule-cat-title" style="color: var(--red);"><ui-icon name="trend-down" size="32" theme="{{iconTheme}}" /><text>{{cat.category}}</text></view>
           <view wx:for="{{cat.items}}" wx:key="label" wx:for-item="item" class="rule-item-row">
             <text class="rule-item-label">{{item.label}}</text>
             <text class="rule-item-range" style="color: #E24B4A;">{{item.min}}~{{item.max}} {{item.unit}}</text>
@@ -110,30 +174,57 @@
         </view>
         <!-- 特别规则 -->
         <view wx:if="{{rulesData.special && rulesData.special.length > 0}}" class="special-rules-card">
-          <text class="rule-cat-title" style="color: var(--amber);">⚠️ 特别规则</text>
+          <view class="icon-heading rule-cat-title" style="color: var(--amber);"><ui-icon name="warning" size="30" theme="{{iconTheme}}" /><text>特别规则</text></view>
           <text wx:for="{{rulesData.special}}" wx:key="*this" class="special-item">· {{item}}</text>
         </view>
       </block>
     </view>
 
-    <!-- 报表 -->
-    <view wx:if="{{activeTab === 'report'}}">
-      <text class="section-hint" wx:if="{{!isChild}}">请切换到「报表」Tab查看完整报表</text>
-      <text class="section-hint" wx:else>请切换到「报表」Tab查看我的报表</text>
-    </view>
   </view>
 
+  <view class="home-footer">
+    <text>v{{version}} · 粤ICP备2026059273号-1X</text>
+  </view>
+
+</view>
+
+<!-- 首次登录图解 -->
+<view class="login-guide-overlay" wx:if="{{showLoginGuide}}" bindtap="onCloseLoginGuide">
+  <view class="login-guide-panel" catchtap="stopBubble">
+    <view class="guide-handle"></view>
+    <text class="guide-title">第一次登录，只要 3 步</text>
+    <text class="guide-subtitle">不用记密码，下次打开会自动登录</text>
+    <view class="guide-steps">
+      <view class="guide-step">
+        <text class="guide-step-no">1</text><text class="guide-step-icon">微信</text>
+        <view><text class="guide-step-title">点微信登录</text><text class="guide-step-copy">从首页绿色主按钮开始</text></view>
+      </view>
+      <view class="guide-step-line"></view>
+      <view class="guide-step">
+        <text class="guide-step-no">2</text><text class="guide-step-icon">✓</text>
+        <view><text class="guide-step-title">同意授权</text><text class="guide-step-copy">只用于识别家庭账号</text></view>
+      </view>
+      <view class="guide-step-line"></view>
+      <view class="guide-step">
+        <text class="guide-step-no">3</text><text class="guide-step-icon">糖</text>
+        <view><text class="guide-step-title">自动进入糖罐</text><text class="guide-step-copy">积分与记录立即同步</text></view>
+      </view>
+    </view>
+    <button class="btn btn-primary guide-done" bindtap="onCloseLoginGuide">知道了，开始使用</button>
+  </view>
 </view>
 
 <!-- 底部操作弹窗 -->
 <action-sheet
   show="{{sheetVisible}}"
+  theme="{{iconTheme}}"
   kidName="{{sheetKidName}}"
   kidPoints="{{sheetKidPoints}}"
   rewardRules="{{rulesData.reward}}"
   punishRules="{{rulesData.punish}}"
   bind:close="onSheetClose"
-  bind:select="onRuleSelect"
+  bind:quick="onRuleQuick"
+  bind:adjust="onRuleSelect"
   bind:manual="onManualInput"
 />
 
@@ -143,6 +234,8 @@
   title="{{numTitle}}"
   desc="{{numDesc}}"
   value="{{numValue}}"
+  min="{{numItem ? numItem.min : -999}}"
+  max="{{numItem ? numItem.max : 999}}"
   bind:close="onNumModalClose"
   bind:confirm="onNumConfirm"
   bind:change="onNumChange"
@@ -150,7 +243,3 @@
 
 <!-- Toast -->
 <toast-msg message="{{toastMessage}}" show="{{toastVisible}}" />
-
-<view class="footer">
-  <text>恩霖润物育儿积分 · v1.0 · 爸爸为恩赫恩菲制作</text>
-</view>

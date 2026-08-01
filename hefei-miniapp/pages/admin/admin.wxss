@@ -3,6 +3,9 @@
   padding: 24rpx 28rpx;
   padding-bottom: 80rpx;
 }
+.skin-row { margin-top: 10rpx; padding-top: 12rpx; border-top: 1rpx dashed var(--border); }
+.skin-picker { min-width: 180rpx; color: var(--amber); font-weight: 600; }
+.skin-local-hint { margin-left: auto; color: var(--muted); font-size: var(--font-xs); }
 
 .admin-tabs {
   display: flex;
@@ -15,7 +18,7 @@
   border-radius: var(--radius-sm);
   border: 1rpx solid var(--border);
   background: var(--card);
-  font-size: 28rpx;
+  font-size: var(--font-md);
   text-align: center;
 }
 .admin-tab.active {
@@ -30,10 +33,10 @@
   border-radius: var(--radius-sm);
   padding: 20rpx;
   margin-bottom: 12rpx;
-  background: #fafafa;
+  background: var(--card);
 }
 .ue-index {
-  font-size: 24rpx;
+  font-size: var(--font-sm);
   color: var(--muted);
   display: block;
   margin-bottom: 8rpx;
@@ -47,23 +50,23 @@
 .ue-input {
   padding: 12rpx;
   border: 1rpx solid var(--border);
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
   width: 120rpx;
 }
 .ue-pwd {
   flex: 1;
 }
 .ue-label {
-  font-size: 24rpx;
+  font-size: var(--font-sm);
   color: var(--muted);
   min-width: 56rpx;
 }
 .ue-picker {
   padding: 12rpx 16rpx;
   border: 1rpx solid var(--border);
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
   background: var(--card);
 }
 .btn-del {
@@ -76,7 +79,7 @@
   margin-top: 24rpx;
 }
 .add-title {
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   font-weight: 600;
   display: block;
   margin-bottom: 12rpx;
@@ -90,8 +93,8 @@
 .add-input {
   padding: 12rpx;
   border: 1rpx solid var(--border);
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
   width: 120rpx;
 }
 .add-picker {
@@ -103,7 +106,7 @@
   margin-bottom: 24rpx;
 }
 .rule-sec-title {
-  font-size: 28rpx;
+  font-size: var(--font-md);
   font-weight: 600;
   display: block;
   margin: 16rpx 0 12rpx;
@@ -113,11 +116,11 @@
   border-radius: var(--radius-sm);
   padding: 20rpx;
   margin-bottom: 16rpx;
-  background: #fafffa;
+  background: var(--card);
 }
 .punish-edit {
   border-color: #FFCDD2;
-  background: #fffafa;
+  background: var(--card);
 }
 .rce-header {
   display: flex;
@@ -126,15 +129,15 @@
   margin-bottom: 12rpx;
 }
 .rce-label {
-  font-size: 24rpx;
+  font-size: var(--font-sm);
   color: var(--muted);
 }
 .rce-input {
   flex: 1;
   padding: 12rpx;
   border: 1rpx solid var(--border);
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 .btn-small-green {
@@ -142,32 +145,32 @@
   color: #388E3C;
   border: 1rpx solid #A5D6A7;
   padding: 8rpx 12rpx;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
 }
 .btn-small-red {
   background: #FFEBEE;
   color: #D32F2F;
   border: 1rpx solid #EF9A9A;
   padding: 8rpx 12rpx;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
 }
 .btn-small {
-  background: #f5f5f5;
+  background: var(--bg);
   color: #999;
   padding: 8rpx 12rpx;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
 }
 
 .rce-item {
   border: 1rpx solid #C8E6C9;
-  border-radius: 12rpx;
+  border-radius: var(--radius-sm);
   padding: 16rpx;
   margin-bottom: 8rpx;
-  background: #FAFFFA;
+  background: var(--card);
 }
 .punish-edit .rce-item {
   border-color: #FFEBEE;
-  background: #FFFAFA;
+  background: var(--card);
 }
 .rce-item-row {
   display: flex;
@@ -179,28 +182,28 @@
   width: 120rpx;
   padding: 8rpx;
   border: 1rpx solid var(--border);
-  border-radius: 10rpx;
-  font-size: 22rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
   font-weight: 500;
 }
 .rce-si-num {
   width: 60rpx;
   padding: 8rpx;
   border: 1rpx solid var(--border);
-  border-radius: 10rpx;
-  font-size: 22rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
   text-align: center;
 }
 .rce-hint {
-  font-size: 20rpx;
+  font-size: var(--font-xs);
   color: var(--muted);
 }
 .rce-unit {
   width: 100%;
   padding: 8rpx;
   border: 1rpx solid var(--border);
-  border-radius: 10rpx;
-  font-size: 22rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-xs);
   margin-top: 8rpx;
 }
 
@@ -222,16 +225,16 @@
   flex: 1;
   padding: 12rpx;
   border: 1rpx solid var(--border);
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
 }
 .btn-add-special {
-  background: #FFF3E0;
+  background: var(--amber-light);
   color: var(--amber);
-  border: 1rpx solid #FFE0B2;
+  border: 1rpx solid var(--border);
   font-weight: 500;
   padding: 12rpx 24rpx;
-  font-size: 24rpx;
+  font-size: var(--font-sm);
 }
 
 /* 保存栏 */
@@ -250,13 +253,13 @@
   padding: 0;
 }
 .section-title {
-  font-size: 28rpx;
+  font-size: var(--font-md);
   font-weight: 600;
   display: block;
   margin-bottom: 8rpx;
 }
 .cleanup-hint {
-  font-size: 22rpx;
+  font-size: var(--font-xs);
   color: var(--red, #E24B4A);
   display: block;
   margin-bottom: 20rpx;
@@ -269,27 +272,27 @@
   flex-wrap: wrap;
 }
 .cleanup-label {
-  font-size: 24rpx;
-  color: #666;
+  font-size: var(--font-sm);
+  color: var(--muted);
   min-width: 100rpx;
 }
 .cleanup-picker {
   padding: 12rpx 20rpx;
   border: 1rpx solid var(--border);
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
   background: var(--card);
 }
 .cleanup-date {
   padding: 12rpx 20rpx;
   border: 1rpx solid var(--border);
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
   background: var(--card);
   display: inline-block;
 }
 .cleanup-hint2 {
-  font-size: 20rpx;
+  font-size: var(--font-xs);
   color: #999;
 }
 .cleanup-actions {
@@ -300,7 +303,7 @@
 .cleanup-actions .btn {
   flex: 1;
   padding: 14rpx 0;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
 }
 .btn-danger {
   background: #E24B4A;
@@ -308,13 +311,16 @@
 }
 .cleanup-result {
   padding: 16rpx;
-  background: #FFF3E0;
-  border-radius: 12rpx;
-  font-size: 24rpx;
+  background: var(--amber-light);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
   text-align: center;
 }
 .cr-count {
-  font-size: 32rpx;
+  font-size: var(--font-lg);
   font-weight: 600;
   color: var(--amber);
 }
+/* 自有图标标题在管理页保持与其他页面一致。 */
+.rule-sec-title.icon-heading,
+.section-title.icon-heading { display: flex; }

@@ -6,41 +6,42 @@
     "pages/mine/mine",
     "pages/admin/admin"
   ],
+  "darkmode": false,
   "window": {
     "backgroundTextStyle": "light",
-    "navigationBarBackgroundColor": "#B86932",
-    "navigationBarTitleText": "恩霖积分",
+    "navigationBarBackgroundColor": "#2D9B7A",
+    "navigationBarTitleText": "糖罐积分",
     "navigationBarTextStyle": "white"
   },
   "tabBar": {
-    "color": "#999999",
-    "selectedColor": "#B86932",
-    "backgroundColor": "#FFFFFF",
+    "color": "#8F8178",
+    "selectedColor": "#2D9B7A",
+    "backgroundColor": "#FFFDFC",
     "borderStyle": "white",
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "首页",
+        "text": "糖罐",
         "iconPath": "images/home_inactive.png",
-        "selectedIconPath": "images/home_active.png"
+        "selectedIconPath": "images/home_active_mint.png"
       },
       {
         "pagePath": "pages/records/records",
         "text": "记录",
         "iconPath": "images/records_inactive.png",
-        "selectedIconPath": "images/records_active.png"
+        "selectedIconPath": "images/records_active_mint.png"
       },
       {
         "pagePath": "pages/report/report",
-        "text": "报表",
+        "text": "成长",
         "iconPath": "images/chart_inactive.png",
-        "selectedIconPath": "images/chart_active.png"
+        "selectedIconPath": "images/chart_active_mint.png"
       },
       {
         "pagePath": "pages/mine/mine",
         "text": "我的",
         "iconPath": "images/user_inactive.png",
-        "selectedIconPath": "images/user_active.png"
+        "selectedIconPath": "images/user_active_mint.png"
       }
     ]
   },

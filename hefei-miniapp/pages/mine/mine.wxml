@@ -1,18 +1,29 @@
 <!-- pages/mine/mine.wxml -->
-<view class="page-container">
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view class="page-container {{themeClass}}">
 
   <!-- 用户卡片 -->
   <view class="user-card card">
+    <view class="profile-sun profile-sun-a"></view>
+    <view class="profile-sun profile-sun-b"></view>
     <view class="user-row">
-      <view class="user-avatar">{{userEmoji}}</view>
+      <view class="user-avatar">
+        <image wx:if="{{userAvatar}}" src="{{userAvatar}}" mode="aspectFill" />
+        <ui-icon wx:else name="{{userIcon}}" size="60" theme="{{theme}}" />
+      </view>
       <view class="user-info">
         <text class="user-name">{{userName}}</text>
         <text class="user-role">{{roleText}}</text>
       </view>
     </view>
+    <text class="profile-warmth" wx:if="{{isLoggedIn}}">一家人认真生活的每一天，都值得被收藏</text>
+    <view class="avatar-actions" wx:if="{{isLoggedIn}}">
+      <button class="btn btn-outline btn-xs" bindtap="onChooseAvatar"><view class="icon-button-label"><ui-icon name="camera" size="28" theme="{{theme}}" variant="white" /><text>更换头像</text></view></button>
+      <button class="avatar-reset" wx:if="{{userAvatar}}" bindtap="onResetAvatar">恢复默认</button>
+    </view>
     <view class="user-stats" wx:if="{{isLoggedIn}}">
       <view class="us-item">
-        <text class="us-val">{{totalPoints}}</text>
+        <text class="us-val score-total">{{totalPoints}}</text>
         <text class="us-label">{{pointsLabel}}</text>
       </view>
       <view class="us-item">
@@ -29,11 +40,24 @@
   </view>
 
   <block wx:if="{{isLoggedIn}}">
+    <view class="card theme-card">
+      <view class="section-title icon-heading"><view class="section-icon"><ui-icon name="palette" size="34" theme="{{theme}}" /></view><text>家庭主题</text></view>
+      <text class="theme-hint">选择后立即生效，并保存在本机</text>
+      <view class="theme-options">
+        <view class="theme-option {{theme === 'amber' ? 'selected' : ''}}" bindtap="onThemeChange" data-theme="amber">
+          <view class="theme-swatch amber-swatch"></view><text>琥珀暖色</text><text class="theme-check">{{theme === 'amber' ? '✓' : ''}}</text>
+        </view>
+        <view class="theme-option {{theme === 'mint' ? 'selected' : ''}}" bindtap="onThemeChange" data-theme="mint">
+          <view class="theme-swatch mint-swatch"></view><text>薄荷绿</text><text class="theme-check">{{theme === 'mint' ? '✓' : ''}}</text>
+        </view>
+      </view>
+    </view>
+
     <!-- 积分规则 -->
     <view class="card">
-      <text class="section-title">📋 积分规则</text>
+      <view class="section-title icon-heading"><view class="section-icon"><ui-icon name="clipboard" size="34" theme="{{theme}}" /></view><text>积分规则</text></view>
       <block wx:if="{{rulesData.reward && rulesData.reward.length > 0}}">
-        <text class="rule-sec-title" style="color: #639922;">📈 加分</text>
+        <view class="rule-sec-title icon-heading" style="color: var(--green);"><ui-icon name="trend-up" size="28" theme="{{theme}}" /><text>加分</text></view>
         <block wx:for="{{rulesData.reward}}" wx:key="category" wx:for-item="cat">
           <view class="rule-cat-item">
             <text class="rule-cat-name">{{cat.category}}</text>
@@ -46,7 +70,7 @@
         </block>
       </block>
       <block wx:if="{{rulesData.punish && rulesData.punish.length > 0}}">
-        <text class="rule-sec-title" style="color: #E24B4A;">📉 扣分</text>
+        <view class="rule-sec-title icon-heading" style="color: var(--red);"><ui-icon name="trend-down" size="28" theme="{{theme}}" /><text>扣分</text></view>
         <block wx:for="{{rulesData.punish}}" wx:key="category" wx:for-item="cat">
           <view class="rule-cat-item">
             <text class="rule-cat-name">{{cat.category}}</text>
@@ -64,18 +88,29 @@
     <!-- 管理后台入口 -->
     <view class="card menu-card" wx:if="{{isAdmin}}" bindtap="goAdmin">
       <view class="menu-row">
-        <text class="menu-icon">⚙️</text>
+        <view class="menu-icon"><ui-icon name="settings" size="38" theme="{{theme}}" /></view>
         <text class="menu-text">管理后台</text>
         <text class="menu-arrow">→</text>
       </view>
       <text class="menu-desc">用户管理 · 积分规则管理</text>
     </view>
 
-    <!-- 版本信息 -->
-    <view class="version-text">恩霖润物育儿积分 v1.0</view>
   </block>
+
+  <!-- 版本与备案信息始终位于页面底部 -->
+  <view class="app-footer">
+    <text class="version-text">糖罐育儿积分 v{{version}}</text>
+    <text class="filing-text">粤ICP备2026059273号-1X</text>
+  </view>
 
 </view>
 
 <!-- Toast -->
 <toast-msg message="{{toastMessage}}" show="{{toastVisible}}" />
+<avatar-cropper
+  show="{{cropVisible}}"
+  src="{{cropSource}}"
+  accent="{{theme === 'mint' ? '#2D9B7A' : '#B86932'}}"
+  bind:cancel="onCropCancel"
+  bind:apply="onCropApply"
+/>

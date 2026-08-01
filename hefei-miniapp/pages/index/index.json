@@ -2,7 +2,8 @@
   "usingComponents": {
     "action-sheet": "/components/action-sheet/action-sheet",
     "number-modal": "/components/number-modal/number-modal",
-    "toast-msg": "/components/toast/toast"
+    "toast-msg": "/components/toast/toast",
+    "ui-icon": "/components/ui-icon-v5/ui-icon-v5"
   },
-  "navigationBarTitleText": "赫菲积分管理"
+  "navigationBarTitleText": "糖罐积分"
 }

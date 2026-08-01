@@ -1,1 +1,25 @@
-/* 数字调节弹窗 — 大部分样式已在 app.wxss 全局定义 */
+/* 数字调节弹窗：基础样式来自 app.wxss，这里只处理组件内排版。 */
+.modal-title,
+.num-desc {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding-left: 36rpx;
+  padding-right: 36rpx;
+}
+
+.modal-title {
+  line-height: 1.35;
+}
+
+.num-desc {
+  line-height: 1.5;
+}
+
+.num-step-hint {
+  display: block;
+  margin: -16rpx 0 18rpx;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  text-align: center;
+}

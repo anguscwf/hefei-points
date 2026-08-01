@@ -7,19 +7,31 @@ Page({
     isAdmin: false,
     isChild: false,
     userName: '未登录',
-    userEmoji: '👤',
+    userIcon: 'person',
+    userAvatar: '',
     roleText: '',
     totalPoints: 0,
     pointsLabel: '家庭总分',
     recordCount: 0,
     rulesData: {},
     toastMessage: '',
-    toastVisible: false
+    toastVisible: false,
+    theme: 'amber',
+    themePageStyle: '',
+    themeClass: '',
+    cropVisible: false,
+    cropSource: '',
+    version: '2.2.0'
   },
 
   onShow: function() {
     var that = this;
     var g = app.globalData;
+    this.setData({
+      theme: g.theme || 'amber',
+      themePageStyle: app.getThemePageStyle(),
+      themeClass: g.theme === 'mint' ? 'theme-mint' : ''
+    });
 
     // 等待初始数据加载
     var allUsers = g.allUsers;
@@ -57,8 +69,10 @@ Page({
     var userName = isLoggedIn ? g.user.name : '未登录';
     var roleMap = { admin: '管理员', parent: '家长', child: '孩子' };
     var roleText = isLoggedIn ? roleMap[g.user.role] || '' : '';
-    var emojiMap = { admin: '👑', parent: '👨‍👩‍👧', child: '👶' };
-    var userEmoji = isLoggedIn ? emojiMap[g.user.role] || '👤' : '👤';
+    var iconMap = { admin: 'brand', parent: 'family' };
+    var userIcon = isLoggedIn
+      ? (g.user.role === 'child' ? app.getKidIcon(g.user.id) : (iconMap[g.user.role] || 'person'))
+      : 'person';
 
     // 计算积分：孩子显示个人积分，家长显示家庭总分
     var totalPoints = 0;
@@ -77,17 +91,19 @@ Page({
       isAdmin: isAdmin,
       isChild: isChild,
       userName: userName,
-      userEmoji: userEmoji,
+      userIcon: userIcon,
+      userAvatar: isLoggedIn ? app.getLocalAvatar(g.user.id) : '',
       roleText: roleText,
       totalPoints: totalPoints,
       pointsLabel: pointsLabel,
-      rulesData: (g.rules && Array.isArray(g.rules.reward)) ? g.rules : { reward: [], punish: [], special: [] }
+      rulesData: (g.rules && Array.isArray(g.rules.reward)) ? g.rules : { reward: [], punish: [], special: [] },
+      version: g.version || '2.2.0'
     });
 
     // 加载记录数
     if (isLoggedIn) {
       var that = this;
-      app.fetchAPI('/api/history?token=' + (app.globalData.token || '')).then(function(data) {
+      app.fetchAPI('/api/history').then(function(data) {
         that.setData({ recordCount: (data.history || []).length });
       });
     }
@@ -99,6 +115,83 @@ Page({
 
   goAdmin: function() {
     wx.navigateTo({ url: '/pages/admin/admin' });
+  },
+
+  onChooseAvatar: function() {
+    var that = this;
+    var user = app.globalData.user;
+    if (!user) return;
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ['image'],
+      sourceType: ['album', 'camera'],
+      success: function(res) {
+        var sourcePath = res.tempFiles && res.tempFiles[0] && res.tempFiles[0].tempFilePath;
+        if (!sourcePath) return;
+        that.setData({ cropVisible: true, cropSource: sourcePath });
+      }
+    });
+  },
+
+  onCropCancel: function() {
+    this.setData({ cropVisible: false, cropSource: '' });
+  },
+
+  onCropApply: function(e) {
+    var user = app.globalData.user;
+    var filePath = e.detail && e.detail.filePath;
+    if (!user || !filePath) return;
+    this.setData({ cropVisible: false, cropSource: '' });
+    wx.showLoading({ title: '正在保存...' });
+    this.saveAvatarBase64(filePath, user.id);
+  },
+
+  saveAvatarBase64: function(filePath, userId) {
+    var that = this;
+    wx.getFileSystemManager().readFile({
+      filePath: filePath,
+      encoding: 'base64',
+      success: function(res) {
+        wx.hideLoading();
+        if (!res.data || res.data.length > 1800000) {
+          wx.showToast({ title: '图片太大，请换一张', icon: 'none' });
+          return;
+        }
+        var lowerPath = filePath.toLowerCase();
+        var mime = lowerPath.indexOf('.png') >= 0 ? 'image/png' : 'image/jpeg';
+        var avatar = 'data:' + mime + ';base64,' + res.data;
+        try {
+          wx.setStorageSync(app.getAvatarStorageKey(userId), avatar);
+          that.setData({ userAvatar: avatar });
+          that.showToast('头像已保存在本机');
+        } catch (err) {
+          wx.showToast({ title: '本地空间不足', icon: 'none' });
+        }
+      },
+      fail: function() {
+        wx.hideLoading();
+        wx.showToast({ title: '读取图片失败', icon: 'none' });
+      }
+    });
+  },
+
+  onResetAvatar: function() {
+    var user = app.globalData.user;
+    if (!user) return;
+    wx.removeStorageSync(app.getAvatarStorageKey(user.id));
+    this.setData({ userAvatar: '' });
+    this.showToast('已恢复默认头像');
+  },
+
+  onThemeChange: function(e) {
+    var theme = e.currentTarget.dataset.theme;
+    var pageStyle = app.setTheme(theme);
+    this.setData({
+      theme: app.globalData.theme,
+      themePageStyle: pageStyle,
+      themeClass: app.globalData.theme === 'mint' ? 'theme-mint' : ''
+    });
+    this.showToast(theme === 'mint' ? '已换成薄荷绿' : '已换成琥珀暖色');
   },
 
   showToast: function(msg) {

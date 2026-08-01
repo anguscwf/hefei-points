@@ -4,6 +4,7 @@ var app = getApp();
 Component({
   properties: {
     show: { type: Boolean, value: false },
+    focusNote: { type: Boolean, value: false },
     record: {
       type: Object,
       value: { kidName: '', reason: '', amount: 0, amountText: '', operator: '', time: '', note: '' }
@@ -30,6 +31,9 @@ Component({
   },
 
   methods: {
+    noop: function() {
+    },
+
     onClose: function() {
       this.triggerEvent('close');
     },

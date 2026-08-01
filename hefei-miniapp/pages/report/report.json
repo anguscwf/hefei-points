@@ -1,4 +1,6 @@
 {
-  "usingComponents": {},
+  "usingComponents": {
+    "ui-icon": "/components/ui-icon-v5/ui-icon-v5"
+  },
   "navigationBarTitleText": "报表"
 }

@@ -2,3 +2,89 @@
 .sheet-scroll {
   max-height: 50vh;
 }
+.quick-guide {
+  margin-bottom: 18rpx;
+  padding: 14rpx 18rpx;
+  border-radius: 20rpx;
+  color: var(--amber);
+  background: var(--amber-light);
+  font-size: var(--font-xs);
+  text-align: center;
+}
+.sheet-section-title.icon-heading { display: flex; }
+
+.manual-sign-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12rpx;
+  margin-top: 10rpx;
+  padding: 8rpx;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.manual-sign-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6rpx;
+  min-height: 64rpx;
+  border: 2rpx solid transparent;
+  border-radius: 22rpx;
+  color: var(--muted);
+  font-size: var(--font-sm);
+  font-weight: 700;
+  transition: background .18s ease, color .18s ease, box-shadow .18s ease;
+}
+
+.manual-sign-option.reward.active {
+  color: var(--green);
+  border-color: rgba(45,155,122,.3);
+  background: rgba(45,155,122,.12);
+  box-shadow: 0 6rpx 14rpx rgba(45,155,122,.12);
+}
+
+.manual-sign-option.punish.active {
+  color: var(--red);
+  border-color: rgba(226,75,74,.28);
+  background: rgba(226,75,74,.1);
+  box-shadow: 0 6rpx 14rpx rgba(226,75,74,.1);
+}
+
+.manual-sign-symbol {
+  font-size: var(--font-md);
+  line-height: 1;
+}
+
+.manual-row .manual-amount-field {
+  flex: 0 0 190rpx;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2rpx;
+  padding: 12rpx;
+  box-sizing: border-box;
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.manual-amount-field.reward .manual-amount-sign { color: var(--green); }
+.manual-amount-field.punish .manual-amount-sign { color: var(--red); }
+
+.manual-amount-sign {
+  flex: 0 0 auto;
+  font-size: var(--font-md);
+  font-weight: 800;
+}
+
+.manual-row .manual-amount-field .manual-amt {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.manual-row > .manual-reason {
+  min-width: 0;
+}

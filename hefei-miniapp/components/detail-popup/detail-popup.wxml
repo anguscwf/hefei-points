@@ -1,6 +1,6 @@
 <!-- components/detail-popup/detail-popup.wxml -->
-<view class="modal-overlay" wx:if="{{show}}" bindtap="onClose" style="animation: fadeIn 0.2s ease;">
-  <view class="modal-box" catchtap="" style="animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); position: relative;">
+<view class="modal-overlay" wx:if="{{show}}" catchtap="noop" style="animation: fadeIn 0.2s ease;">
+  <view class="modal-box" catchtap="noop" style="animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); position: relative;">
     <view class="modal-close" bindtap="onClose" style="position: absolute; top: 20rpx; right: 20rpx;">✕</view>
     <text class="modal-title">积分记录详情</text>
     <view class="dp-row">
@@ -27,7 +27,7 @@
       <text class="dp-note-label">备注</text>
       <view class="dp-note-current {{noteDisplayClass}}">{{noteDisplay}}</view>
       <view class="dp-note-input" wx:if="{{canEdit}}">
-        <input type="text" placeholder="输入备注" value="{{editNote}}" bindinput="onNoteInput" />
+        <input type="text" placeholder="输入备注" value="{{editNote}}" focus="{{focusNote}}" bindinput="onNoteInput" />
         <button class="btn btn-primary btn-sm" bindtap="onSaveNote">保存</button>
       </view>
     </view>

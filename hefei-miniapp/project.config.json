@@ -1,5 +1,6 @@
 {
-  "description": "赫菲积分 - 微信小程序",
+  "description": "糖罐积分 v2.2.0 - 微信小程序",
+  "version": "2.2.0",
   "packOptions": {
     "ignore": [],
     "include": []
@@ -31,7 +32,17 @@
       "disablePlugins": [],
       "outputPath": ""
     },
-    "condition": false
+    "condition": false,
+    "compileWorklet": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "swc": false,
+    "disableSWC": true
   },
   "compileType": "miniprogram",
   "libVersion": "3.5.5",
@@ -41,5 +52,6 @@
   "editorSetting": {
     "tabIndent": "insertSpaces",
     "tabSize": 2
-  }
+  },
+  "simulatorPluginLibVersion": {}
 }

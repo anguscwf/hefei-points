@@ -3,11 +3,13 @@ var app = getApp();
 
 Page({
   data: {
+    accessAllowed: false,
     adminTab: 'users',
 
     // 用户管理
     userList: [],
     roleOptions: ['管理员', '家长', '孩子'],
+    skinOptions: ['糖罐', '星空糖罐'],
     newUid: '',
     newName: '',
     newPwd: '',
@@ -27,11 +29,55 @@ Page({
     cleanupKidIdx: 0,
     cleanupBefore: '',
     cleanupAfter: '',
-    cleanupPreviewCount: -1
+    cleanupPreviewCount: -1,
+    themePageStyle: '',
+    themeClass: '',
+    iconTheme: 'mint'
   },
 
   onLoad: function() {
+    if (!this.ensureAdminAccess()) return;
+    this.setData({
+      themePageStyle: app.getThemePageStyle(),
+      themeClass: app.globalData.theme === 'mint' ? 'theme-mint' : '',
+      iconTheme: app.globalData.theme === 'amber' ? 'amber' : 'mint'
+    });
     this.loadData();
+  },
+
+  onShow: function() {
+    if (!this.ensureAdminAccess()) return;
+    this.setData({
+      themePageStyle: app.getThemePageStyle(),
+      themeClass: app.globalData.theme === 'mint' ? 'theme-mint' : '',
+      iconTheme: app.globalData.theme === 'amber' ? 'amber' : 'mint'
+    });
+  },
+
+  ensureAdminAccess: function() {
+    var user = app.globalData.user;
+    if (app.globalData.token && user && user.role === 'admin') {
+      if (!this.data.accessAllowed) this.setData({ accessAllowed: true });
+      return true;
+    }
+    if (this.data.accessAllowed) this.setData({ accessAllowed: false });
+    if (!this._redirectingUnauthorized) {
+      this._redirectingUnauthorized = true;
+      wx.showToast({ title: '仅管理员可访问', icon: 'none' });
+      var goHome = function() {
+        wx.switchTab({
+          url: '/pages/index/index',
+          fail: function() {
+            wx.reLaunch({ url: '/pages/index/index' });
+          }
+        });
+      };
+      wx.navigateBack({
+        delta: 1,
+        fail: goHome
+      });
+    }
+    return false;
   },
 
   // ========== 加载数据 ==========
@@ -41,15 +87,18 @@ Page({
     var roles = ['管理员', '家长', '孩子'];
     var roleMap = { admin: 0, parent: 1, child: 2 };
     var userList = allUsers.map(function(u) {
+      var roleIdx = Object.prototype.hasOwnProperty.call(roleMap, u.role) ? roleMap[u.role] : 2;
       return {
         id: u.id,
         name: u.name,
         role: u.role,
-        roleIdx: roleMap[u.role] || 2,
-        roleName: roles[roleMap[u.role] || 2],
+        roleIdx: roleIdx,
+        roleName: roles[roleIdx],
         editName: u.name,
         editPwd: '',
-        password: u.password
+        password: u.password,
+        skin: app.getKidSkin(u.id),
+        skinIdx: app.getKidSkin(u.id) === 'star' ? 1 : 0
       };
     });
 
@@ -115,8 +164,23 @@ Page({
     var roles = ['管理员', '家长', '孩子'];
     this.setData({
       ['userList[' + idx + '].roleIdx']: ri,
-      ['userList[' + idx + '].roleName']: roles[ri]
+      ['userList[' + idx + '].roleName']: roles[ri],
+      ['userList[' + idx + '].role']: ['admin', 'parent', 'child'][ri]
     });
+  },
+
+  onKidSkin: function(e) {
+    var idx = Number(e.currentTarget.dataset.index);
+    var skinIdx = Number(e.detail.value);
+    var user = this.data.userList[idx];
+    if (!user || user.roleIdx !== 2 || (skinIdx !== 0 && skinIdx !== 1)) return;
+    var skin = skinIdx === 1 ? 'star' : 'classic';
+    app.setKidSkin(user.id, skin);
+    this.setData({
+      ['userList[' + idx + '].skin']: skin,
+      ['userList[' + idx + '].skinIdx']: skinIdx
+    });
+    this.showToast('已为' + user.editName + '切换为' + this.data.skinOptions[skinIdx]);
   },
 
   saveUser: function(e) {
@@ -384,7 +448,7 @@ Page({
 
   onCleanupPreview: function() {
     var that = this;
-    app.fetchAPI('/api/history?token=' + (app.globalData.token || '')).then(function(data) {
+    app.fetchAPI('/api/history').then(function(data) {
       var history = data.history || [];
       var kid = that.data.cleanupKidOptions[that.data.cleanupKidIdx];
       var kidId = kid && kid.id !== 'all' ? kid.id : '';
@@ -409,7 +473,7 @@ Page({
     var kidName = kid ? kid.name : '所有孩子';
 
     wx.showModal({
-      title: '⚠️ 确认清理',
+      title: '确认清理',
       content: '确定要清理「' + kidName + '」在指定时间范围内的 ' + (this.data.cleanupPreviewCount >= 0 ? this.data.cleanupPreviewCount + ' 条' : '') + '记录吗？此操作不可撤销！',
       success: function(res) {
         if (!res.confirm) return;

@@ -1,6 +1,20 @@
 <!-- pages/records/records.wxml -->
-<view class="page-container">
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view class="page-container {{themeClass}}">
 
+  <view class="records-hero" wx:if="{{isLoggedIn}}">
+    <text class="records-hero-kicker">成长足迹</text>
+    <text class="records-hero-title">每一颗糖，都有它的故事</text>
+    <text class="records-hero-sub">回看被认真记录的努力与进步</text>
+  </view>
+
+  <!-- 未登录提示 -->
+  <view wx:if="{{!isLoggedIn}}" class="perm-hint">
+    <text>请先在首页登录</text>
+    <text class="hint-link" bindtap="goLogin">→ 去登录</text>
+  </view>
+
+  <block wx:if="{{isLoggedIn}}">
   <!-- 筛选栏 -->
   <view class="filter-bar">
     <view class="filter-tab {{activeFilter === 'all' ? 'active' : ''}}" bindtap="onFilter" data-filter="all">全部</view>
@@ -15,7 +29,11 @@
       <text class="month-title">{{item.month}}</text>
       <view wx:for="{{item.items}}" wx:key="recordId" wx:for-item="rec" class="history-item"
         style="border-left-color: {{rec.kidColor}};"
-        bindtap="onRecordTap" data-id="{{rec.recordId}}">
+        bindtap="onRecordTap"
+        bindlongpress="onRecordLongPress"
+        bindtouchend="onRecordTouchEnd"
+        bindtouchcancel="onRecordTouchEnd"
+        data-id="{{rec.recordId}}">
         <view class="hi-left">
           <text class="hi-kid" style="color: {{rec.kidColor}};">{{rec.kidName}}</text>
           <text class="hi-amount {{rec.isPlus ? 'plus' : 'minus'}}">{{rec.amountText}}</text>
@@ -29,6 +47,7 @@
       </view>
     </view>
   </view>
+  </block>
 
 </view>
 
@@ -36,6 +55,7 @@
 <detail-popup
   show="{{detailVisible}}"
   record="{{detailRecord}}"
+  focus-note="{{detailNoteFocus}}"
   bind:close="onDetailClose"
   bind:saveNote="onSaveNote"
 />

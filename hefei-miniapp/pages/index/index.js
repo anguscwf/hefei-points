@@ -14,10 +14,19 @@ Page({
     userOptions: [],
     selectedUserIdx: 0,
     selectedUserName: '',
+    manualUserId: '',
     password: '',
+    wxOpenid: '',
+    wxLoginLoading: false,
+    showLoginGuide: false,
 
     // 积分卡片
     childCards: [],
+    kidSwitcher: [],
+    activeKidView: 'all',
+    themePageStyle: '',
+    themeClass: '',
+    iconTheme: 'mint',
 
     // Tab
     activeTab: 'history',
@@ -47,91 +56,89 @@ Page({
 
     // 加载状态
     loadingUsers: true,
-    loadError: false
+    loadError: false,
+    headerBg: '#B86932',
+    pickerKey: 1,   // 登出时递增，强制重建 picker
+    version: '2.2.0'
   },
 
   onLoad: function() {
-    this.refreshState();
+    this.setData({
+      showLoginGuide: !app.globalData.token && !wx.getStorageSync('hefei_login_guide_v2')
+    });
+    // 页面加载时直接请求配置（不再依赖 onLaunch）
+    this._loadConfigAndRefresh();
   },
 
   onShow: function() {
-    this.refreshState();
+    var that = this;
+    var g = app.globalData;
+    var themeHeader = g.theme === 'mint' ? '#2D9B7A' : '#B86932';
+    this.setData({
+      themePageStyle: app.getThemePageStyle(),
+      themeClass: g.theme === 'mint' ? 'theme-mint' : '',
+      iconTheme: g.theme === 'amber' ? 'amber' : 'mint',
+      headerBg: themeHeader
+    });
+    if (g.token && g.user) {
+      // 每次回到首页都从服务端重新请求 /api/points，loadPoints 已显式禁用缓存。
+      app.loadData().then(function(result) {
+        that._doRefreshState();
+        if (!result.points || !result.points.success) {
+          that.showToast((result.points && result.points.message) || '积分数据刷新失败');
+        }
+      });
+    }
+  },
 
-  onLoad: function() {
-    this.refreshState();
+  // ========== 配置加载（带重试 · 页面级） ==========
+  _loadConfigAndRefresh: function() {
+    var that = this;
+    if (this._loadingUsers) return;
+    this._loadingUsers = true;
+    this.setData({ loadingUsers: true, loadError: false });
+    console.log('[index] 加载 /api/config...');
+
+    app.fetchAPI('/api/config', { timeout: 10000 }).then(function(res) {
+      that._loadingUsers = false;
+      if (res && res.success) {
+        console.log('[index] /api/config 成功, 用户数=' + (res.users || []).length);
+        app.globalData.allUsers = res.users;
+        app.globalData.rules = app.normalizeRules(res.rules);
+        // resolve dataReady 让其他等待者也能继续
+        if (app.globalData.dataReadyResolve) {
+          app.globalData.dataReadyResolve(true);
+        }
+        that._doRefreshState();
+      } else {
+        that.setData({ loadingUsers: false, loadError: true });
+        if (app.globalData.dataReadyResolve) {
+          app.globalData.dataReadyResolve(false);
+        }
+        that._doRefreshState();  // 渲染空壳
+      }
+    });
   },
 
   // ========== 状态刷新 ==========
   refreshState: function() {
-    var that = this;
     var g = app.globalData;
-
-    // 未登录时显示加载状态
-    if (!(g.token && g.user)) {
-      this.setData({ loadingUsers: true, loadError: false });
+    // 已登录时直接刷新界面
+    if (g.token && g.user) {
+      this._doRefreshState();
+      return;
     }
-
-    // 如果数据还没加载，等待 onLaunch 的 dataReady promise
-    var allUsers = g.allUsers;
-    if ((!allUsers || allUsers.length === 0) && g.dataReady && !this._waitingData) {
-      this._waitingData = true;
-      console.log('[index] 等待 dataReady...');
-      // 额外 3 秒兜底超时，防止 dataReady 永不 resolve
-      var timeout = new Promise(function(resolve) {
-        setTimeout(function() { resolve('timeout'); }, 5000);
-      });
-      Promise.race([g.dataReady, timeout]).then(function(result) {
-        that._waitingData = false;
-        if (result === 'timeout') {
-          console.warn('[index] dataReady 超时，主动拉取');
-          that._fetchConfigFallback();
-        } else if (result === true) {
-          console.log('[index] dataReady 成功，刷新界面');
-          that._doRefreshState();
-        } else {
-          console.warn('[index] dataReady 失败，主动拉取');
-          that._fetchConfigFallback();
-        }
-      });
-      return;  // 先渲染空壳，等数据回来再刷新
+    // 未登录且数据已有则刷新
+    if (g.allUsers && g.allUsers.length > 0) {
+      this._doRefreshState();
+      return;
     }
-
-    this._doRefreshState();
-  },
-
-  // 兜底：主动请求 /api/config（当 onLaunch 失败或超时时）
-  _fetchConfigFallback: function() {
-    var that = this;
-    if (this._loadingUsers) return;
-    this._loadingUsers = true;
-    console.log('[index] 兜底请求 /api/config...');
-    app.fetchAPI('/api/config', { timeout: 5000 }).then(function(res) {
-      that._loadingUsers = false;
-      if (res && res.success) {
-        app.globalData.allUsers = res.users;
-        app.globalData.rules = res.rules;
-        that._doRefreshState();
-      } else {
-        that.showToast('加载用户列表失败：' + ((res && res.message) || '网络超时，请下拉刷新'));
-        that._doRefreshState();  // 即使失败也要渲染（空壳）
-      }
-    });
+    // 数据还没加载，UI 保持在 loadingUsers 状态
   },
 
   // 手动重试加载
   onRetryLoad: function() {
-    this.setData({ loadingUsers: true, loadError: false });
-    var that = this;
-    app.fetchAPI('/api/config', { timeout: 5000 }).then(function(res) {
-      if (res && res.success) {
-        app.globalData.allUsers = res.users;
-        app.globalData.rules = res.rules;
-        that._doRefreshState();
-      } else {
-        that.setData({ loadingUsers: false, loadError: true });
-        that.showToast('加载失败，请检查网络连接');
-      }
-    });
+    this._loadConfigAndRefresh();
   },
 
   // 实际执行 setData（从 refreshState 和兜底逻辑中抽离）
@@ -144,29 +151,58 @@ Page({
     var isParent = isLoggedIn && (g.user && (g.user.role === 'admin' || g.user.role === 'parent'));
     var loginStatusText = isLoggedIn ? ('欢迎 ' + g.user.name) : '未登录';
 
+    // 用户主题色（header + 卡片的颜色）
+    var themeHeader = g.theme === 'mint' ? '#2D9B7A' : '#B86932';
+    var headerBg = themeHeader;
+
     // 用户选项（allUsers 由 onLaunch→dataReady 或 _fetchConfigFallback 保证已加载）
     var allUsers = g.allUsers || [];
     var userOptions = allUsers.map(function(u) { return { id: u.id, name: u.name }; });
 
-    // 孩子卡片：child 角色只看自己的卡片
+    // 孩子卡片：所有用户都能看到所有孩子卡片
     var kids = allUsers.filter(function(u) { return u.role === 'child'; });
-    if (isChild && g.user) {
-      kids = kids.filter(function(k) { return k.id === g.user.id; });
+    var activeKidView = isChild && g.user ? g.user.id : (this.data.activeKidView || 'all');
+    if (!isChild && activeKidView !== 'all' && !kids.some(function(k) { return k.id === activeKidView; })) {
+      activeKidView = 'all';
     }
-    var childCards = kids.map(function(k, i) {
-      var c = app.kidColors[i % app.kidColors.length];
-      var emoji = app.getKidEmoji(k.id);
+    var allKidCards = kids.map(function(k, i) {
+      var c = isChild ? app.getKidColor(k.id) : app.kidColors[i % app.kidColors.length];
+      var icon = app.getKidIcon(k.id);
       var val = (g.points && g.points[k.id]) ? g.points[k.id] : 0;
       var absScore = Math.abs(val);
       return {
         id: k.id,
         name: k.name,
-        emoji: emoji,
+        icon: icon,
+        jarIcon: i % 2 === 0 ? 'jar-blue' : 'jar-pink',
+        avatar: app.getLocalAvatar(k.id),
+        skin: app.getKidSkin(k.id),
         sign: val >= 0 ? '+' : '-',
-        absScore: absScore > 9999 ? '9999+' : absScore,
+        absScore: absScore,
+        scoreSize: absScore >= 100000000
+          ? 'score-num-ultralong'
+          : (absScore >= 1000000
+            ? 'score-num-xxlong'
+            : (absScore >= 100000
+              ? 'score-num-xlong'
+              : (absScore >= 10000
+                ? 'score-num-long'
+                : (absScore >= 1000 ? 'score-num-medium' : '')))),
+        softColor: c.bg,
         borderColor: c.border,
         score: val
       };
+    });
+    var childCards = activeKidView === 'all'
+      ? allKidCards
+      : allKidCards.filter(function(k) { return k.id === activeKidView; });
+    var kidSwitcher = (isChild ? [] : [{ id: 'all', name: '全部', icon: 'family', avatar: '' }]).concat(
+      allKidCards
+        .filter(function(k) { return !isChild || k.id === activeKidView; })
+        .map(function(k) { return { id: k.id, name: k.name, icon: k.icon, avatar: k.avatar, borderColor: k.borderColor }; })
+    ).map(function(k) {
+      k.selected = k.id === activeKidView;
+      return k;
     });
 
     // 规则（必须检查 rules.reward 是否为数组，因为 {} 是 truthy 不会触发 fallback）
@@ -179,11 +215,18 @@ Page({
       isParent: isParent,
       loadingUsers: false,
       loginStatusText: loginStatusText,
+      headerBg: headerBg,
       currentUserName: g.user ? g.user.name : '',
       userOptions: userOptions,
       selectedUserName: userOptions.length > 0 ? userOptions[0].name : '',
       childCards: childCards,
-      rulesData: rulesData
+      kidSwitcher: kidSwitcher,
+      activeKidView: activeKidView,
+      themePageStyle: app.getThemePageStyle(),
+      themeClass: app.globalData.theme === 'mint' ? 'theme-mint' : '',
+      iconTheme: app.globalData.theme === 'amber' ? 'amber' : 'mint',
+      rulesData: rulesData,
+      version: g.version || '2.2.0'
     });
 
     if (isLoggedIn) {
@@ -192,10 +235,69 @@ Page({
   },
 
   // ========== 登录 ==========
+  onWxLogin: function() {
+    if (this.data.wxLoginLoading) return;
+    var that = this;
+    this.setData({ wxLoginLoading: true });
+    wx.login({
+      success: function(loginRes) {
+        if (!loginRes.code) {
+          that.setData({ wxLoginLoading: false });
+          wx.showToast({ title: '微信登录失败', icon: 'none' });
+          return;
+        }
+        wx.showLoading({ title: '登录中...' });
+        app.fetchAPI('/api/wx-login', {
+          method: 'POST',
+          body: JSON.stringify({ code: loginRes.code })
+        }).then(function(res) {
+          wx.hideLoading();
+          that.setData({ wxLoginLoading: false });
+          if (res && res.success && res.token && res.user) {
+            // 已绑定 → 直接登录
+            app.globalData.token = res.token;
+            app.globalData.user = res.user;
+            wx.setStorageSync('hefei_token', res.token);
+            wx.setStorageSync('hefei_user', JSON.stringify(res.user));
+            that.setData({ wxOpenid: '' });
+            that.showToast('欢迎，' + res.user.name);
+            app.loadData().then(function() { that._doRefreshState(); });
+          } else if (res && res.success && res.isNew) {
+            // 首次登录 → 引导选择用户绑定
+            wx.showToast({ title: '首次使用，请选择用户并输入密码完成绑定', icon: 'none', duration: 3000 });
+            that.setData({ wxOpenid: res.openid, showBind: true, loadingUsers: false });
+          } else {
+            wx.showToast({ title: (res && res.message) || '登录失败', icon: 'none' });
+          }
+        }).catch(function() {
+          wx.hideLoading();
+          that.setData({ wxLoginLoading: false });
+          wx.showToast({ title: '网络错误', icon: 'none' });
+        });
+      },
+      fail: function() {
+        that.setData({ wxLoginLoading: false });
+        wx.showToast({ title: 'wx.login 调用失败', icon: 'none' });
+      }
+    });
+  },
+
+  onOpenLoginGuide: function() {
+    this.setData({ showLoginGuide: true });
+  },
+
+  onCloseLoginGuide: function() {
+    wx.setStorageSync('hefei_login_guide_v2', true);
+    this.setData({ showLoginGuide: false });
+  },
+
+  stopBubble: function() {
+  },
+
   onSelectUser: function(e) {
     var val = (e && e.detail) ? e.detail.value : -1;
-    var idx = parseInt(val);
-    if (isNaN(idx) || idx < 0) return;
+    var idx = Number(val);
+    if (!Number.isInteger(idx) || idx < 0) return;
     var opts = this.data.userOptions;
     if (!opts || !opts.length || idx >= opts.length) return;
     var name = opts[idx].name;
@@ -206,39 +308,61 @@ Page({
     this.setData({ password: e.detail.value });
   },
 
+  onUserIdInput: function(e) {
+    this.setData({ manualUserId: String(e.detail.value || '').trim() });
+  },
+
   onLogin: function() {
     var that = this;
     var opts = this.data.userOptions;
-    if (!opts || opts.length === 0) {
-      this.showToast('用户列表加载中，请稍后再试');
+    var selected = opts && opts[this.data.selectedUserIdx];
+    var uid = selected ? selected.id : this.data.manualUserId;
+    if (!uid) {
+      wx.showToast({ title: '请选择用户或输入用户ID', icon: 'none' });
       return;
     }
-    var selected = opts[this.data.selectedUserIdx];
-    if (!selected) {
-      this.showToast('请选择用户');
-      return;
-    }
-    var uid = selected.id;
     var pwd = this.data.password;
     if (!pwd) {
-      this.showToast('请输入密码');
+      wx.showToast({ title: '请输入密码', icon: 'none' });
       return;
     }
-    app.login(uid, pwd).then(function(res) {
-      if (res.success) {
+    var loginFn = this.data.wxOpenid
+      ? app.fetchAPI('/api/wx-bind', { method: 'POST', body: JSON.stringify({ openid: this.data.wxOpenid, userId: uid, password: pwd }) })
+      : app.login(uid, pwd);
+    loginFn.then(function(res) {
+      if (res && res.success && res.token) {
+        // 保存登录态
+        app.globalData.token = res.token;
+        app.globalData.user = res.user;
+        wx.setStorageSync('hefei_token', res.token);
+        wx.setStorageSync('hefei_user', JSON.stringify(res.user));
         that.showToast('欢迎，' + res.user.name);
+        that.setData({ wxOpenid: '' }); // 清除绑定状态
         app.loadData().then(function() {
-          that.refreshState();
+          that._doRefreshState();
         });
       } else {
-        that.showToast(res.message || '登录失败');
+        var msg = (res && res.message) ? res.message : '登录失败';
+        wx.showToast({ title: msg, icon: 'none', duration: 2500 });
       }
+    }).catch(function() {
+      wx.showToast({ title: '登录异常，请重试', icon: 'none' });
     });
   },
 
   onLogout: function() {
     app.logout();
-    this.setData({ isLoggedIn: false, isAdmin: false, isChild: false, isParent: false, loginStatusText: '未登录', childCards: [], historyList: [], password: '' });
+    var that = this;
+    this.setData({
+      pickerKey: 0,
+      isLoggedIn: false, isAdmin: false, isChild: false, isParent: false,
+      loginStatusText: '未登录', childCards: [], historyList: [],
+      password: '', selectedUserIdx: 0, selectedUserName: ''
+    });
+    // 短暂延迟后重建 picker，解决微信 picker 缓存旧索引的 bug
+    setTimeout(function() {
+      that.setData({ pickerKey: Date.now() });
+    }, 80);
     this.showToast('已退出');
   },
 
@@ -246,7 +370,7 @@ Page({
     if (this.data.isLoggedIn) {
       var that = this;
       app.loadData().then(function() {
-        that.refreshState();
+        that._doRefreshState();
         that.showToast('已刷新');
       });
     }
@@ -277,7 +401,7 @@ Page({
   },
 
   onRuleSelect: function(e) {
-    // 选择了规则，打开数字弹窗
+    // 长按规则时进入数字微调。
     var item = e.detail;
     this.setData({
       sheetVisible: false,
@@ -294,6 +418,44 @@ Page({
     });
   },
 
+  onKidViewTap: function(e) {
+    if (this.data.isChild) return;
+    var kidId = e.currentTarget.dataset.kid;
+    if (!kidId || kidId === this.data.activeKidView) return;
+    this.setData({ activeKidView: kidId });
+    this._doRefreshState();
+  },
+
+  onRuleQuick: function(e) {
+    if (this._quickChanging) return;
+    var that = this;
+    var item = e.detail || {};
+    var amount = Number(item.default);
+    if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 1000) {
+      this.showToast('规则默认分数无效，请长按调整');
+      return;
+    }
+    this._quickChanging = true;
+    this.setData({ sheetVisible: false });
+    wx.showToast({
+      title: '确认 ' + (amount > 0 ? '+' : '') + amount + ' · ' + (item.label || '积分'),
+      icon: 'none',
+      duration: 900
+    });
+    app.doChange(this.data.sheetKidId, amount, item.label || '规则积分', '').then(function(res) {
+      that._quickChanging = false;
+      if (res.success) {
+        that.showToast((that.data.sheetKidName || '') + ' ' + (amount > 0 ? '+' : '') + amount + '分');
+        app.loadData().then(function() { that._doRefreshState(); });
+      } else {
+        that.showToast(res.message || '操作失败');
+      }
+    }).catch(function() {
+      that._quickChanging = false;
+      that.showToast('网络异常，请重试');
+    });
+  },
+
   onManualInput: function(e) {
     // 手动输入
     var detail = e.detail;
@@ -302,7 +464,7 @@ Page({
     app.doChange(this.data.sheetKidId, detail.amount, detail.reason, detail.note).then(function(res) {
       if (res.success) {
         that.showToast((that.data.sheetKidName || '') + ' ' + (detail.amount > 0 ? '+' : '') + detail.amount + '分');
-        app.loadData().then(function() { that.refreshState(); });
+        app.loadData().then(function() { that._doRefreshState(); });
       } else {
         that.showToast(res.message || '操作失败');
       }
@@ -320,14 +482,14 @@ Page({
 
   onNumConfirm: function(e) {
     var that = this;
-    var value = this.data.numValue;
+    var value = e.detail && Number.isFinite(e.detail.value) ? e.detail.value : this.data.numValue;
     var label = this.data.numItem ? this.data.numItem.label : '';
     var note = e.detail ? e.detail.note : '';
     this.setData({ numModalVisible: false, numItem: null });
     app.doChange(this.data.sheetKidId, value, label, note).then(function(res) {
       if (res.success) {
         that.showToast((that.data.sheetKidName || '') + ' ' + (value > 0 ? '+' : '') + value + '分');
-        app.loadData().then(function() { that.refreshState(); });
+        app.loadData().then(function() { that._doRefreshState(); });
       } else {
         that.showToast(res.message || '操作失败');
       }
@@ -337,6 +499,18 @@ Page({
   // ========== 切换 Tab ==========
   switchTab: function(e) {
     var tab = e.currentTarget.dataset.tab;
+    if (tab === 'report') {
+      wx.showModal({
+        title: '打开成长报表',
+        content: '去成长页查看趋势、分类分布和家庭成长小结。',
+        confirmText: '去看看',
+        cancelText: '留在首页',
+        success: function(res) {
+          if (res.confirm) wx.switchTab({ url: '/pages/report/report' });
+        }
+      });
+      return;
+    }
     this.setData({ activeTab: tab });
   },
 
@@ -344,8 +518,10 @@ Page({
   loadHistory: function() {
     var that = this;
     var allUsers = app.globalData.allUsers || [];
-    var selfKid = (this.data.isChild && app.globalData.user) ? app.globalData.user.id : null;
-    app.fetchAPI('/api/history?token=' + (app.globalData.token || '')).then(function(data) {
+    var selfKid = (this.data.isChild && app.globalData.user)
+      ? app.globalData.user.id
+      : (this.data.activeKidView !== 'all' ? this.data.activeKidView : null);
+    app.fetchAPI('/api/history').then(function(data) {
       if (!data || !data.history || data.history.length === 0) {
         that.setData({ historyList: [] });
         return;
@@ -380,9 +556,8 @@ Page({
     var idx = e.currentTarget.dataset.index;
     var record = this.data.historyList[idx];
     if (record) {
-      wx.navigateTo({
-        url: '/pages/records/records?detail=' + encodeURIComponent(JSON.stringify(record))
-      });
+      app.globalData.pendingRecordId = record.id;
+      wx.switchTab({ url: '/pages/records/records' });
     }
   },
 

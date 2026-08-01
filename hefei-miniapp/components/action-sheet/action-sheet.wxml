@@ -1,5 +1,5 @@
 <!-- components/action-sheet/action-sheet.wxml -->
-<view class="sheet-overlay" wx:if="{{show}}" bindtap="onClose" style="animation: fadeIn 0.25s ease;"></view>
+<view class="sheet-overlay" wx:if="{{show}}" catchtap="noop" style="animation: fadeIn 0.25s ease;"></view>
 <view class="sheet-panel" wx:if="{{show}}" style="animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);">
   <view class="sheet-header">
     <text class="sheet-title">{{kidName}} · 当前 {{kidPoints}}分</text>
@@ -7,15 +7,16 @@
   </view>
 
   <scroll-view class="sheet-scroll" scroll-y enhanced show-scrollbar="{{false}}">
+    <view class="quick-guide">轻点直接记默认分 · 长按可调整分数</view>
 
     <!-- 加分规则 -->
     <block wx:if="{{rewardRules && rewardRules.length > 0}}">
-      <text class="sheet-section-title" style="color: var(--green);">📈 加分</text>
+      <view class="sheet-section-title icon-heading" style="color: var(--green);"><ui-icon name="trend-up" size="30" theme="{{theme}}" /><text>加分</text></view>
       <block wx:for="{{rewardRules}}" wx:key="category" wx:for-item="cat">
         <text class="text-sm text-muted" style="display:block; padding:4rpx 0;">{{cat.category}}</text>
         <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item"
           class="rule-btn reward"
-          bindtap="onSelectRule" data-item="{{item}}">
+          bindtap="onSelectRule" bindlongpress="onAdjustRule" data-item="{{item}}">
           <text class="rule-btn-label">{{item.label}}</text>
           <text class="rule-btn-hint">{{item.unit}} · 默认 +{{item.default}} 分</text>
         </view>
@@ -24,12 +25,12 @@
 
     <!-- 扣分规则 -->
     <block wx:if="{{punishRules && punishRules.length > 0}}">
-      <text class="sheet-section-title" style="color: var(--red);">📉 扣分</text>
+      <view class="sheet-section-title icon-heading" style="color: var(--red);"><ui-icon name="trend-down" size="30" theme="{{theme}}" /><text>扣分</text></view>
       <block wx:for="{{punishRules}}" wx:key="category" wx:for-item="cat">
         <text class="text-sm text-muted" style="display:block; padding:4rpx 0;">{{cat.category}}</text>
         <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item"
           class="rule-btn punish"
-          bindtap="onSelectRule" data-item="{{item}}">
+          bindtap="onSelectRule" bindlongpress="onAdjustRule" data-item="{{item}}">
           <text class="rule-btn-label">{{item.label}}</text>
           <text class="rule-btn-hint">{{item.unit}} · 默认 {{item.default}} 分</text>
         </view>
@@ -37,9 +38,20 @@
     </block>
 
     <!-- 手动输入 -->
-    <text class="sheet-section-title">✏️ 手动输入</text>
+    <view class="sheet-section-title icon-heading"><ui-icon name="edit" size="30" theme="{{theme}}" /><text>手动输入</text></view>
+    <view class="manual-sign-switch">
+      <view class="manual-sign-option reward {{manualSign === 1 ? 'active' : ''}}" bindtap="onManualSignChange" data-sign="1">
+        <text class="manual-sign-symbol">＋</text><text>加分</text>
+      </view>
+      <view class="manual-sign-option punish {{manualSign === -1 ? 'active' : ''}}" bindtap="onManualSignChange" data-sign="-1">
+        <text class="manual-sign-symbol">−</text><text>扣分</text>
+      </view>
+    </view>
     <view class="manual-row">
-      <input class="manual-amt" type="number" placeholder="分数" value="{{manualAmt}}" bindinput="onAmtInput" style="width:120rpx;" />
+      <view class="manual-amount-field {{manualSign === -1 ? 'punish' : 'reward'}}">
+        <text class="manual-amount-sign">{{manualSign === -1 ? '−' : '＋'}}</text>
+        <input class="manual-amt" type="number" placeholder="{{manualSign === -1 ? '扣分数' : '加分数'}}" value="{{manualAmt}}" bindinput="onAmtInput" />
+      </view>
       <input class="manual-reason" type="text" placeholder="事由（选填）" value="{{manualReason}}" bindinput="onReasonInput" />
       <button class="btn btn-primary btn-xs" bindtap="onManualConfirm">确定</button>
     </view>

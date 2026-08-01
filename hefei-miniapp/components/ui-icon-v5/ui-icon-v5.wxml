@@ -1,0 +1,9 @@
+<view class="ui-icon-sprite" style="width:{{size}}rpx;height:{{size}}rpx;">
+  <image
+    class="ui-icon-atlas"
+    src="{{atlasPath}}"
+    mode="scaleToFill"
+    draggable="{{false}}"
+    style="width:{{atlasSize}}rpx;height:{{atlasSize}}rpx;left:{{offsetX}}rpx;top:{{offsetY}}rpx;"
+  />
+</view>
