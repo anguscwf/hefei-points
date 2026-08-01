@@ -26,6 +26,22 @@ function signedNumber(value) {
   return '+' + number;
 }
 
+function stableId(value) {
+  return String(value || '').trim();
+}
+
+function ruleNames(item) {
+  var source = item && typeof item === 'object' ? item : {};
+  var seen = Object.create(null);
+  return [source.label].concat(Array.isArray(source.aliases) ? source.aliases : []).map(function(name) {
+    return String(name || '').trim();
+  }).filter(function(name) {
+    if (!name || seen[name]) return false;
+    seen[name] = true;
+    return true;
+  });
+}
+
 function formatRuleItem(item, type, isChild) {
   var source = item && typeof item === 'object' ? item : {};
   var aliases = Array.isArray(source.aliases) ? source.aliases.map(function(alias) {
@@ -118,6 +134,7 @@ function buildBrowserData(rules, options) {
         view.categoryIndex = categoryIndex;
         view.itemIndex = itemIndex;
         view.category = String(category.category || '未命名分类');
+        view.categoryId = categoryId;
         return view;
       }).filter(function(item) {
         return !query || categoryMatched || itemMatches(item, query);
@@ -154,6 +171,123 @@ function buildBrowserData(rules, options) {
   };
 }
 
+// 建立只读规则索引。流水优先通过稳定 ID 关联；旧流水再按名称快照和 aliases 兜底。
+function buildRuleLookup(rules) {
+  var safe = rules && typeof rules === 'object' && !Array.isArray(rules) ? rules : {};
+  var lookup = {
+    _isRuleLookup: true,
+    byRuleId: Object.create(null),
+    byCategoryId: Object.create(null),
+    byReason: Object.create(null),
+    entries: []
+  };
+  ['reward', 'punish'].forEach(function(type) {
+    var categories = Array.isArray(safe[type]) ? safe[type] : [];
+    categories.forEach(function(category, categoryIndex) {
+      var sourceCategory = category && typeof category === 'object' ? category : {};
+      var categoryId = stableId(sourceCategory.id);
+      var categoryEntry = {
+        id: categoryId,
+        category: String(sourceCategory.category || '未命名分类'),
+        type: type,
+        categoryIndex: categoryIndex,
+        raw: sourceCategory,
+        rules: []
+      };
+      if (categoryId) lookup.byCategoryId[categoryId] = categoryEntry;
+      (Array.isArray(sourceCategory.items) ? sourceCategory.items : []).forEach(function(item, itemIndex) {
+        var sourceItem = item && typeof item === 'object' ? item : {};
+        var ruleId = stableId(sourceItem.id);
+        var names = ruleNames(sourceItem);
+        var entry = {
+          id: ruleId,
+          categoryId: categoryId,
+          category: categoryEntry.category,
+          type: type,
+          categoryIndex: categoryIndex,
+          itemIndex: itemIndex,
+          label: String(sourceItem.label || '未命名规则'),
+          aliases: names.slice(1),
+          raw: sourceItem,
+          categoryRaw: sourceCategory
+        };
+        categoryEntry.rules.push(entry);
+        lookup.entries.push(entry);
+        if (ruleId) lookup.byRuleId[ruleId] = entry;
+        names.forEach(function(name) {
+          if (!lookup.byReason[name]) lookup.byReason[name] = entry;
+        });
+      });
+    });
+  });
+  return lookup;
+}
+
+function ensureRuleLookup(rulesOrLookup) {
+  return rulesOrLookup && rulesOrLookup._isRuleLookup
+    ? rulesOrLookup
+    : buildRuleLookup(rulesOrLookup);
+}
+
+function resolveRecordRule(record, rulesOrLookup) {
+  var source = record && typeof record === 'object' ? record : {};
+  var lookup = ensureRuleLookup(rulesOrLookup);
+  var ruleId = stableId(source.ruleId);
+  var categoryId = stableId(source.categoryId);
+  if (ruleId) return lookup.byRuleId[ruleId] || null;
+
+  var reason = String(source.reason || '').trim();
+  if (!reason) return null;
+  if (categoryId && lookup.byCategoryId[categoryId]) {
+    var categoryRules = lookup.byCategoryId[categoryId].rules;
+    for (var i = 0; i < categoryRules.length; i++) {
+      if (ruleNames(categoryRules[i].raw).indexOf(reason) >= 0) return categoryRules[i];
+    }
+    return null;
+  }
+  return lookup.byReason[reason] || null;
+}
+
+function recordMatchesCategory(record, category, rulesOrLookup) {
+  var source = record && typeof record === 'object' ? record : {};
+  var target = category && typeof category === 'object' ? category : {};
+  var recordCategoryId = stableId(source.categoryId);
+  var categoryId = stableId(target.id);
+  if (recordCategoryId) return !!categoryId && recordCategoryId === categoryId;
+
+  var ruleId = stableId(source.ruleId);
+  if (ruleId) {
+    var resolvedById = resolveRecordRule(source, rulesOrLookup || {
+      reward: [target],
+      punish: []
+    });
+    if (!resolvedById) return false;
+    if (categoryId) return resolvedById.categoryId === categoryId;
+    return resolvedById.categoryRaw === target || resolvedById.category === String(target.category || '');
+  }
+
+  var reason = String(source.reason || '').trim();
+  if (!reason) return false;
+  return (Array.isArray(target.items) ? target.items : []).some(function(item) {
+    return ruleNames(item).indexOf(reason) >= 0;
+  });
+}
+
+function recordRuleIdentity(record, rulesOrLookup) {
+  var source = record && typeof record === 'object' ? record : {};
+  var ruleId = stableId(source.ruleId);
+  if (ruleId) return 'rule:' + ruleId;
+  var resolved = resolveRecordRule(source, rulesOrLookup);
+  if (resolved && resolved.id) return 'rule:' + resolved.id;
+  if (resolved) return 'reason:' + resolved.label;
+  return 'reason:' + String(source.reason || '其他成长').trim();
+}
+
+function recordRuleLabel(record, rulesOrLookup) {
+  var resolved = resolveRecordRule(record, rulesOrLookup);
+  return resolved ? resolved.label : String((record && record.reason) || '其他成长');
+}
+
 function recordTimestamp(record) {
   var value = record && (record.time || record.occurredAt || record.createdAt);
   if (typeof value === 'number') return value;
@@ -175,12 +309,14 @@ function recordTimestamp(record) {
 
 function frequentRules(rules, history, limit) {
   var safe = cloneRules(rules);
+  var lookup = buildRuleLookup(safe);
   var all = [];
   ['reward', 'punish'].forEach(function(type) {
     safe[type].forEach(function(category, categoryIndex) {
       (category.items || []).forEach(function(item, itemIndex) {
         var view = formatRuleItem(item, type, false);
         view.category = category.category || '未命名分类';
+        view.categoryId = stableId(category.id);
         view.categoryIndex = categoryIndex;
         view.itemIndex = itemIndex;
         view.key = type + '-' + (item.id || categoryIndex + '-' + itemIndex);
@@ -194,17 +330,12 @@ function frequentRules(rules, history, limit) {
   var counts = {};
   (Array.isArray(history) ? history : []).forEach(function(record) {
     if (recordTimestamp(record) < cutoff) return;
-    var reason = String(record.reason || '');
-    if (reason) counts[reason] = (counts[reason] || 0) + 1;
+    var identity = recordRuleIdentity(record, lookup);
+    if (identity !== 'reason:') counts[identity] = (counts[identity] || 0) + 1;
   });
   all.forEach(function(item) {
-    var seenNames = {};
-    item.usageCount = [item.label].concat(item.aliases || []).reduce(function(total, name) {
-      var normalized = String(name || '').trim();
-      if (!normalized || seenNames[normalized]) return total;
-      seenNames[normalized] = true;
-      return total + (counts[normalized] || 0);
-    }, 0);
+    var identity = item.id ? 'rule:' + item.id : 'reason:' + item.label;
+    item.usageCount = counts[identity] || 0;
   });
   all.sort(function(a, b) {
     return b.usageCount - a.usageCount || a.categoryIndex - b.categoryIndex || a.itemIndex - b.itemIndex;
@@ -213,11 +344,16 @@ function frequentRules(rules, history, limit) {
 }
 
 module.exports = {
+  buildRuleLookup: buildRuleLookup,
   buildBrowserData: buildBrowserData,
   cloneRules: cloneRules,
   finiteNumber: finiteNumber,
   formatRuleItem: formatRuleItem,
   frequentRules: frequentRules,
+  recordMatchesCategory: recordMatchesCategory,
+  recordRuleIdentity: recordRuleIdentity,
+  recordRuleLabel: recordRuleLabel,
+  resolveRecordRule: resolveRecordRule,
   signedNumber: signedNumber,
   summarizeRules: summarizeRules
 };

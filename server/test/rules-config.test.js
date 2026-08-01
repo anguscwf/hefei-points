@@ -136,7 +136,7 @@ test('revision递增并阻止旧版本覆盖，同时返回最新规则', async 
     assert.equal(conflict.json.currentRevision, 2);
     assert.equal(conflict.json.revision, 2);
     assert.equal(conflict.json.rules.reward[0].items[0].hint, '第二位管理员已经更新');
-    assert.equal(repositories.config.getRules().reward[0].items[0].hint, '第二位管理员已经更新');
+    assert.equal(repositories.config.getRules('family_a').reward[0].items[0].hint, '第二位管理员已经更新');
   });
 });
 
@@ -161,7 +161,7 @@ test('两个管理员用同一revision并发保存时仅一个成功', async () 
     assert.equal(conflict.json.code, 'RULES_REVISION_CONFLICT');
     assert.equal(conflict.json.currentRevision, winner.json.revision);
     assert.equal(conflict.json.rules.reward[0].items[0].hint, winner.json.rules.reward[0].items[0].hint);
-    assert.equal(repositories.config.getRules().reward[0].items[0].hint, winner.json.rules.reward[0].items[0].hint);
+    assert.equal(repositories.config.getRules('family_a').reward[0].items[0].hint, winner.json.rules.reward[0].items[0].hint);
   });
 });
 
@@ -182,7 +182,10 @@ test('历史 -999 扣分范围读取时兼容为 -500，保存接口仍拒绝新
   const legacyRules = validRules();
   legacyRules.punish[0].items[0].min = -999;
   inTransaction(db => {
-    db.prepare('INSERT INTO rules(id, data_json) VALUES (1, ?)').run(JSON.stringify(legacyRules));
+    db.prepare(`
+      INSERT INTO rules(family_id, revision, data_json, updated_by, updated_at)
+      VALUES ('family_a', 0, ?, NULL, ?)
+    `).run(JSON.stringify(legacyRules), new Date().toISOString());
   });
 
   await withServer(async baseUrl => {

@@ -12,10 +12,14 @@ function inferRuleType(item, fallbackType) {
   return Number(rawRule(item).default) < 0 ? 'punish' : 'reward';
 }
 
-function presentRule(item, fallbackType, category, index) {
+function presentRule(item, fallbackType, category, index, categoryId) {
   var source = rawRule(item);
   var type = inferRuleType(item, fallbackType);
   var view = rulesViewModel.formatRuleItem(source, type, false);
+  var stableCategoryId = String((item && item.categoryId) || categoryId || source.categoryId || '').trim();
+  var eventRule = Object.assign({}, source);
+  if (view.id) eventRule.id = view.id;
+  if (stableCategoryId) eventRule.categoryId = stableCategoryId;
   var defaultDisplay = view.defaultValue === null
     ? '待设置'
     : rulesViewModel.signedNumber(view.defaultValue) + ' 分';
@@ -31,7 +35,7 @@ function presentRule(item, fallbackType, category, index) {
       ? view.rangeDisplay + ' 分'
       : view.rangeDisplay,
     defaultDisplay: defaultDisplay,
-    raw: source
+    raw: eventRule
   };
 }
 
@@ -40,10 +44,12 @@ function presentCategories(categories, type) {
     var categoryName = String((category && category.category) || '未命名分类');
     var sourceItems = category && Array.isArray(category.items) ? category.items : [];
     var items = sourceItems.map(function(item, itemIndex) {
-      return presentRule(item, type, categoryName, itemIndex);
+      return presentRule(item, type, categoryName, itemIndex, category && category.id);
     });
+    var categoryId = String((category && category.id) || '').trim();
     return {
-      key: type + '-' + categoryIndex,
+      key: type + '-' + (categoryId || categoryIndex),
+      id: categoryId,
       type: type,
       isReward: type === 'reward',
       category: categoryName,
@@ -71,7 +77,7 @@ function presentFrequentRules(frequent, rewardCategories, punishCategories) {
   var source = supplied.length ? supplied : fallback;
   var seen = {};
   return source.map(function(item, index) {
-    return presentRule(item, inferRuleType(item), item.category, index);
+    return presentRule(item, inferRuleType(item), item.category, index, item.categoryId);
   }).filter(function(item) {
     var sourceId = item.raw && item.raw.id;
     var identity = item.type + ':' + (sourceId || item.category + ':' + item.label);

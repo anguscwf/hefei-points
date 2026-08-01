@@ -1,5 +1,6 @@
 // pages/report/report.js
 var app = getApp();
+var rulesViewModel = require('../../utils/rules-view-model.js');
 
 var CANVAS_FONT_TOKENS = { xs: 22, sm: 26, md: 30, lg: 36, xl: 48 };
 function canvasFont(token, weight, scale) {
@@ -44,13 +45,17 @@ function netPoints(records) {
   return records.reduce(function(sum, record) { return sum + Number(record.amount || 0); }, 0);
 }
 
-// 规则改名后，历史流水仍保存当时的 reason；用 aliases 将旧名称归回当前规则。
-function ruleReasonMatches(item, reason) {
-  if (!item || typeof item !== 'object') return false;
-  var target = String(reason || '').trim();
-  if (!target) return false;
-  var names = [item.label].concat(Array.isArray(item.aliases) ? item.aliases : []);
-  return names.some(function(name) { return String(name || '').trim() === target; });
+function reportCategoryKey(category, type, index) {
+  var id = String((category && category.id) || '').trim();
+  if (id) return 'id:' + id;
+  return 'legacy:' + type + ':' + index + ':' + String((category && category.category) || '未命名分类');
+}
+
+function reportCategory(category, type, index) {
+  return Object.assign({}, category || {}, {
+    _reportKey: reportCategoryKey(category, type, index),
+    _reportType: type
+  });
 }
 
 function longestHabitStreak(records) {
@@ -114,12 +119,12 @@ function positiveStreakStats(records) {
   return { current: recent, best: best, activeDays: days.length };
 }
 
-function growthStageFor(records, streak) {
+function growthStageFor(records, streak, ruleLookup) {
   var positiveRecords = records.filter(function(record) { return Number(record.amount || 0) > 0; });
   var positiveCount = positiveRecords.length;
   var distinctReasons = {};
   positiveRecords.forEach(function(record) {
-    if (record.reason) distinctReasons[record.reason] = true;
+    distinctReasons[rulesViewModel.recordRuleIdentity(record, ruleLookup)] = true;
   });
 
   var stages = [
@@ -158,14 +163,15 @@ function growthStageFor(records, streak) {
   };
 }
 
-function topHabitFor(records, previousRecords, compareEnabled) {
+function topHabitFor(records, previousRecords, compareEnabled, ruleLookup) {
   var stats = {};
   records.forEach(function(record) {
     if (Number(record.amount || 0) <= 0) return;
-    var reason = String(record.reason || '其他成长');
-    if (!stats[reason]) stats[reason] = { reason: reason, count: 0, points: 0 };
-    stats[reason].count++;
-    stats[reason].points += Number(record.amount || 0);
+    var identity = rulesViewModel.recordRuleIdentity(record, ruleLookup);
+    var reason = rulesViewModel.recordRuleLabel(record, ruleLookup);
+    if (!stats[identity]) stats[identity] = { key: identity, reason: reason, count: 0, points: 0 };
+    stats[identity].count++;
+    stats[identity].points += Number(record.amount || 0);
   });
   var list = Object.keys(stats).map(function(key) { return stats[key]; }).sort(function(a, b) {
     return b.count - a.count || b.points - a.points;
@@ -176,7 +182,7 @@ function topHabitFor(records, previousRecords, compareEnabled) {
 
   var top = list[0];
   var previousCount = previousRecords.filter(function(record) {
-    return Number(record.amount || 0) > 0 && String(record.reason || '其他成长') === top.reason;
+    return Number(record.amount || 0) > 0 && rulesViewModel.recordRuleIdentity(record, ruleLookup) === top.key;
   }).length;
   var trendText;
   if (!compareEnabled) trendText = '累计记录 ' + top.count + ' 次';
@@ -321,10 +327,24 @@ Page({
     var rules = app.globalData.rules || {};
     var catOptions = [];
     if (rules.reward) {
-      rules.reward.forEach(function(c) { catOptions.push({ name: c.category, type: 'reward' }); });
+      rules.reward.forEach(function(c, index) {
+        catOptions.push({
+          key: reportCategoryKey(c, 'reward', index),
+          id: String(c.id || ''),
+          name: c.category,
+          type: 'reward'
+        });
+      });
     }
     if (rules.punish) {
-      rules.punish.forEach(function(c) { catOptions.push({ name: c.category, type: 'punish' }); });
+      rules.punish.forEach(function(c, index) {
+        catOptions.push({
+          key: reportCategoryKey(c, 'punish', index),
+          id: String(c.id || ''),
+          name: c.category,
+          type: 'punish'
+        });
+      });
     }
 
     this.setData({ kidOptions: kidOptions, catOptions: catOptions });
@@ -418,9 +438,10 @@ Page({
     }
 
     var rules = app.globalData.rules || {};
+    var ruleLookup = rulesViewModel.buildRuleLookup(rules);
     var allCats = [];
-    if (rules.reward) rules.reward.forEach(function(c) { allCats.push(c); });
-    if (rules.punish) rules.punish.forEach(function(c) { allCats.push(c); });
+    if (rules.reward) rules.reward.forEach(function(c, index) { allCats.push(reportCategory(c, 'reward', index)); });
+    if (rules.punish) rules.punish.forEach(function(c, index) { allCats.push(reportCategory(c, 'punish', index)); });
 
     var filtered = allData.filter(function(r) {
       var d = recordDate(r);
@@ -429,9 +450,9 @@ Page({
       if (reportRange !== 'all' && d > rangeEnd) return false;
       if (reportKid !== 'all' && r.kid !== reportKid) return false;
       if (reportCat !== 'all') {
-        var cat = allCats.find(function(c) { return c.category === reportCat; });
+        var cat = allCats.find(function(c) { return c._reportKey === reportCat; });
         if (!cat) return false;
-        if (!cat.items.some(function(item) { return ruleReasonMatches(item, r.reason); })) return false;
+        if (!rulesViewModel.recordMatchesCategory(r, cat, ruleLookup)) return false;
       }
       return true;
     });
@@ -505,8 +526,8 @@ Page({
         if (!date || date < previousStart || date > previousEnd) return false;
         if (reportKid !== 'all' && record.kid !== reportKid) return false;
         if (reportCat !== 'all') {
-          var category = allCats.find(function(cat) { return cat.category === reportCat; });
-          if (!category || !category.items.some(function(item) { return ruleReasonMatches(item, record.reason); })) return false;
+          var category = allCats.find(function(cat) { return cat._reportKey === reportCat; });
+          if (!category || !rulesViewModel.recordMatchesCategory(record, category, ruleLookup)) return false;
         }
         return true;
       });
@@ -543,7 +564,7 @@ Page({
     var habitHighlights = targetKids.map(function(kid) {
       var kidCurrent = filtered.filter(function(record) { return record.kid === kid.id; });
       var kidPrevious = previousFiltered.filter(function(record) { return record.kid === kid.id; });
-      var highlight = topHabitFor(kidCurrent, kidPrevious, compareEnabled);
+      var highlight = topHabitFor(kidCurrent, kidPrevious, compareEnabled, ruleLookup);
       highlight.kid = kid.id;
       highlight.kidName = kid.name;
       return highlight;
@@ -552,7 +573,7 @@ Page({
       // 成长阶段使用当前账号可见的累计流水，避免切换筛选后徽章倒退。
       var kidLifetime = allData.filter(function(record) { return record.kid === kid.id; });
       var streak = positiveStreakStats(kidLifetime);
-      var stage = growthStageFor(kidLifetime, streak);
+      var stage = growthStageFor(kidLifetime, streak, ruleLookup);
       stage.kid = kid.id;
       stage.kidName = kid.name;
       return stage;
@@ -746,14 +767,19 @@ Page({
       var filtered = that.data._filtered || [];
       var allCats = that.data._allCats || [];
       var reportMode = that.data._reportMode || 'score';
+      var ruleLookup = rulesViewModel.buildRuleLookup(app.globalData.rules || {});
 
       var catTotals = {};
       filtered.forEach(function(r) {
-        var cat = allCats.find(function(c) { return c.items.some(function(item) { return ruleReasonMatches(item, r.reason); }); });
-        var catName = cat ? cat.category : '其他';
-        if (!catTotals[catName]) catTotals[catName] = { total: 0, count: 0 };
-        catTotals[catName].total += Math.abs(Number(r.amount || 0));
-        catTotals[catName].count += 1;
+        var cat = allCats.find(function(c) {
+          return rulesViewModel.recordMatchesCategory(r, c, ruleLookup);
+        });
+        var catKey = cat ? cat._reportKey : 'other';
+        if (!catTotals[catKey]) {
+          catTotals[catKey] = { label: cat ? cat.category : '其他', total: 0, count: 0 };
+        }
+        catTotals[catKey].total += Math.abs(Number(r.amount || 0));
+        catTotals[catKey].count += 1;
       });
       var catEntries = Object.entries(catTotals);
       var grandTotal = catEntries.reduce(function(s, e) { return s + (reportMode === 'count' ? e[1].count : e[1].total); }, 0);
@@ -816,7 +842,8 @@ Page({
         ctx.fillStyle = '#555';
         ctx.font = canvasFont('xs', '', 0.5);
         ctx.textAlign = 'left';
-        var shortName = entry[0].length > 6 ? entry[0].substring(0, 6) + '…' : entry[0];
+        var label = entry[1].label;
+        var shortName = label.length > 6 ? label.substring(0, 6) + '…' : label;
         ctx.fillText(shortName + ' ' + val, legendX + 12, legendY);
       });
     });

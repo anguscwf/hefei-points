@@ -1,6 +1,6 @@
-// 糖罐积分 小程序 v2.4.0
+// 糖罐积分 小程序 v2.5.0
 // 全局状态 · API · 认证
-var VERSION = '2.4.0';
+var VERSION = '2.5.0';
 var API_BASE = 'https://hefeijifen.cn';
 
 App({
@@ -199,17 +199,25 @@ App({
   },
 
   // ========== 积分变动 ==========
-  doChange: function(kid, amount, reason, note) {
+  doChange: function(kid, amount, reason, note, ruleRef) {
     var that = this;
+    var payload = {
+      token: that.globalData.token,
+      kid: kid,
+      amount: amount,
+      reason: reason,
+      note: note || ''
+    };
+    var ruleId = ruleRef && String(ruleRef.ruleId || '').trim();
+    var categoryId = ruleRef && String(ruleRef.categoryId || '').trim();
+    // ruleId 是关联入口；旧分类缺稳定 ID 时由服务端尝试补全，不能静默降级成手动流水。
+    if (ruleId) {
+      payload.ruleId = ruleId;
+      if (categoryId) payload.categoryId = categoryId;
+    }
     return that.fetchAPI('/api/points/change', {
       method: 'POST',
-      body: JSON.stringify({
-        token: that.globalData.token,
-        kid: kid,
-        amount: amount,
-        reason: reason,
-        note: note || ''
-      })
+      body: JSON.stringify(payload)
     });
   },
 

@@ -19,14 +19,19 @@ router.get('/config', (req, res) => {
   }
   return res.json({
     success: true,
-    rules: repositories.config.getRules(),
+    rules: repositories.config.getRules(familyId),
     families: { [familyId]: family },
     users: repositories.users.listByFamily(familyId).map(safeUser)
   });
 });
 
 router.post('/config/rules', async (req, res) => {
-  if (!requireRole(getToken(req), ['admin'])) return res.status(403).json({ success: false, message: '仅管理员可修改规则' });
+  const admin = requireRole(getToken(req), ['admin']);
+  if (!admin) return res.status(403).json({ success: false, message: '仅管理员可修改规则' });
+  const familyId = admin.familyId || 'default';
+  if (!repositories.families.findById(familyId)) {
+    return res.status(404).json({ success: false, message: '家庭不存在' });
+  }
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const rules = body.rules;
   const rulesError = validation.validateRules(rules);
@@ -63,7 +68,12 @@ router.post('/config/rules', async (req, res) => {
   }
 
   try {
-    const savedRules = repositories.config.setRules(rules, { expectedRevision });
+    // familyId in the request body is intentionally ignored. The current user
+    // record resolved from the Token is the only authority for rule ownership.
+    const savedRules = repositories.config.setRules(familyId, rules, {
+      expectedRevision,
+      updatedBy: admin.id
+    });
     return res.json({ success: true, revision: savedRules.revision, rules: savedRules });
   } catch (error) {
     if (error.code === 'RULES_REVISION_CONFLICT') {
@@ -86,6 +96,113 @@ router.post('/config/rules', async (req, res) => {
       });
     }
     return res.status(503).json({ success: false, message: '保存失败' });
+  }
+});
+
+function parseVersionId(value) {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function historyAdmin(req, res) {
+  const admin = requireRole(getToken(req), ['admin']);
+  if (!admin) {
+    res.status(403).json({ success: false, message: '仅管理员可查看或恢复规则历史' });
+    return null;
+  }
+  return admin;
+}
+
+router.get('/config/rules/history', (req, res) => {
+  const admin = historyAdmin(req, res);
+  if (!admin) return;
+  const familyId = admin.familyId || 'default';
+  const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+  const offset = req.query.offset === undefined ? 0 : Number(req.query.offset);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0) {
+    return res.status(400).json({ success: false, message: '分页参数无效' });
+  }
+  try {
+    const history = repositories.config.listRuleVersions(familyId, { limit, offset });
+    const currentRevision = repositories.config.getRules(familyId).revision || 0;
+    return res.json({ success: true, currentRevision, history, versions: history });
+  } catch (error) {
+    if (error.code === 'RULES_FAMILY_NOT_FOUND') {
+      return res.status(404).json({ success: false, message: '家庭不存在' });
+    }
+    return res.status(503).json({ success: false, message: '读取规则历史失败' });
+  }
+});
+
+router.get('/config/rules/history/:versionId', (req, res) => {
+  const admin = historyAdmin(req, res);
+  if (!admin) return;
+  const versionId = parseVersionId(req.params.versionId);
+  if (!versionId) return res.status(400).json({ success: false, message: '版本ID无效' });
+  const version = repositories.config.getRuleVersion(admin.familyId || 'default', versionId);
+  if (!version) {
+    // A version from another family is deliberately indistinguishable from a
+    // missing version, preventing cross-family history enumeration.
+    return res.status(404).json({ success: false, code: 'RULES_VERSION_NOT_FOUND', message: '规则历史版本不存在' });
+  }
+  return res.json({ success: true, version });
+});
+
+router.post('/config/rules/history/:versionId/restore', (req, res) => {
+  const admin = historyAdmin(req, res);
+  if (!admin) return;
+  const versionId = parseVersionId(req.params.versionId);
+  if (!versionId) return res.status(400).json({ success: false, message: '版本ID无效' });
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (!Object.prototype.hasOwnProperty.call(body, 'revision')) {
+    return res.status(400).json({
+      success: false,
+      code: 'RULES_REVISION_REQUIRED',
+      message: '恢复历史版本必须携带当前 revision',
+      field: 'revision'
+    });
+  }
+  const expectedRevision = body.revision;
+  const revisionError = validation.validateRulesRevision(expectedRevision);
+  if (revisionError) {
+    return res.status(400).json({
+      success: false,
+      code: revisionError.code,
+      message: revisionError.message,
+      field: revisionError.field
+    });
+  }
+
+  try {
+    const restored = repositories.config.restoreRuleVersion(admin.familyId || 'default', versionId, {
+      expectedRevision,
+      updatedBy: admin.id
+    });
+    return res.json({
+      success: true,
+      revision: restored.rules.revision,
+      rules: restored.rules,
+      version: restored.version
+    });
+  } catch (error) {
+    if (error.code === 'RULES_VERSION_NOT_FOUND') {
+      return res.status(404).json({ success: false, code: error.code, message: error.message });
+    }
+    if (error.code === 'RULES_REVISION_CONFLICT') {
+      return res.status(409).json({
+        success: false,
+        code: error.code,
+        message: '规则已被其他管理员更新，请刷新历史后重试',
+        field: 'revision',
+        revision: error.currentRevision,
+        currentRevision: error.currentRevision,
+        rules: error.currentRules
+      });
+    }
+    if (error.code === 'RULES_VALIDATION_ERROR') {
+      return res.status(400).json({ success: false, code: error.code, message: error.message, field: error.field });
+    }
+    return res.status(503).json({ success: false, message: '恢复规则历史失败' });
   }
 });
 

@@ -80,7 +80,7 @@ Page({
     loadError: false,
     headerBg: '#B86932',
     pickerKey: 1,   // 登出时递增，强制重建 picker
-    version: '2.4.0'
+    version: '2.5.0'
   },
 
   onLoad: function() {
@@ -292,7 +292,7 @@ Page({
       ruleCenterTitle: ruleCopy.title,
       ruleCenterIntro: ruleCopy.intro,
       frequentRules: frequent,
-      version: g.version || '2.4.0'
+      version: g.version || '2.5.0'
     });
 
     if (isLoggedIn) {
@@ -552,6 +552,7 @@ Page({
       numValue: item.default,
       numItem: {
         id: item.id,
+        categoryId: item.categoryId || '',
         label: item.label,
         min: item.min,
         max: item.max
@@ -583,7 +584,10 @@ Page({
       icon: 'none',
       duration: 900
     });
-    app.doChange(this.data.sheetKidId, amount, item.label || '规则积分', '').then(function(res) {
+    app.doChange(this.data.sheetKidId, amount, item.label || '规则积分', '', {
+      ruleId: item.id,
+      categoryId: item.categoryId
+    }).then(function(res) {
       that._quickChanging = false;
       if (res.success) {
         that.showToast((that.data.sheetKidName || '') + ' ' + (amount > 0 ? '+' : '') + amount + '分');
@@ -639,14 +643,17 @@ Page({
       return;
     }
     this.setData({ numModalVisible: false, numItem: null });
-    this._submitRuleScore(kidId, kidName, value, label, note);
+    this._submitRuleScore(kidId, kidName, value, label, note, {
+      ruleId: item.id,
+      categoryId: item.categoryId
+    });
   },
 
-  _submitRuleScore: function(kidId, kidName, value, label, note) {
+  _submitRuleScore: function(kidId, kidName, value, label, note, ruleRef) {
     if (this._scoreSubmitting) return;
     var that = this;
     this._scoreSubmitting = true;
-    app.doChange(kidId, value, label, note).then(function(res) {
+    app.doChange(kidId, value, label, note, ruleRef).then(function(res) {
       that._scoreSubmitting = false;
       if (res.success) {
         that.showToast((kidName || '') + ' ' + (value > 0 ? '+' : '') + value + '分');
@@ -920,6 +927,8 @@ Page({
           amountText: (r.amount >= 0 ? '+' : '') + r.amount,
           isPlus: r.amount >= 0,
           reason: r.reason,
+          ruleId: r.ruleId || '',
+          categoryId: r.categoryId || '',
           note: r.note || '',
           operator: r.operator,
           time: r.time

@@ -1,0 +1,109 @@
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view wx:if="{{accessAllowed}}" class="history-page {{themeClass}}">
+  <view class="history-hero">
+    <view class="history-hero-copy">
+      <text class="history-eyebrow">规则时光册</text>
+      <text class="history-title">每一次调整，都有迹可循</text>
+      <text class="history-subtitle">当前使用 r{{currentRevision}} · 恢复旧版会生成新版本，不改动积分流水</text>
+    </view>
+    <view class="history-hero-icon"><ui-icon name="clipboard" size="70" variant="white" /></view>
+  </view>
+
+  <view wx:if="{{loading}}" class="history-state-card">
+    <view class="history-loading-dot"></view>
+    <text>正在翻开规则时光册…</text>
+  </view>
+
+  <view wx:elif="{{loadError}}" class="history-state-card error">
+    <ui-icon name="warning" size="58" theme="{{iconTheme}}" />
+    <text class="state-title">暂时没能加载历史</text>
+    <text class="state-copy">{{loadError}}</text>
+    <button class="history-primary-button" bindtap="retryLoad">重新加载</button>
+  </view>
+
+  <view wx:elif="{{history.length === 0}}" class="history-state-card">
+    <ui-icon name="spark" size="64" theme="{{iconTheme}}" />
+    <text class="state-title">还没有历史版本</text>
+    <text class="state-copy">下一次保存规则后，这里会留下第一张版本卡片。</text>
+  </view>
+
+  <view wx:else class="history-list">
+    <view class="history-guide-card">
+      <ui-icon name="family-heart" size="42" theme="{{iconTheme}}" />
+      <text>历史只记录规则变化。孩子已有的积分与流水始终保留。</text>
+    </view>
+    <view wx:for="{{history}}" wx:key="versionId" class="version-card {{item.isCurrent ? 'current' : ''}}" bindtap="openVersion" data-id="{{item.versionId}}">
+      <view class="version-line"></view>
+      <view class="version-card-head">
+        <view class="version-revision-wrap">
+          <text class="version-revision">r{{item.revision}}</text>
+          <text wx:if="{{item.isCurrent}}" class="version-current-tag">当前使用</text>
+        </view>
+        <text class="version-arrow">查看 ›</text>
+      </view>
+      <text class="version-source">{{item.sourceText}} · {{item.operatorText}}</text>
+      <text class="version-time">{{item.createdAtText}}</text>
+      <view class="version-counts">
+        <text class="reward">鼓励 {{item.rewardCount}}</text>
+        <text class="punish">提醒 {{item.punishCount}}</text>
+        <text class="special">约定 {{item.specialCount}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{detailVisible}}" class="version-detail-mask" catchtouchmove="stopBubble">
+    <view class="version-detail-panel" catchtap="stopBubble">
+      <view class="detail-handle"></view>
+      <view wx:if="{{detailLoading}}" class="detail-loading">
+        <view class="history-loading-dot"></view>
+        <text>正在读取这版规则…</text>
+      </view>
+      <block wx:else>
+        <view class="detail-head">
+          <view>
+            <text class="detail-eyebrow">历史版本</text>
+            <text class="detail-title">规则 r{{selectedVersion.revision}}</text>
+          </view>
+          <button class="detail-close" bindtap="closeDetail">×</button>
+        </view>
+        <view class="detail-meta-card">
+          <text>{{selectedVersion.sourceText}}</text>
+          <text>{{selectedVersion.operatorText}}</text>
+          <text>{{selectedVersion.createdAtText}}</text>
+        </view>
+        <view class="detail-count-grid">
+          <view><text class="detail-count-number reward">{{selectedVersion.rewardCount}}</text><text>鼓励规则</text></view>
+          <view><text class="detail-count-number punish">{{selectedVersion.punishCount}}</text><text>护糖提醒</text></view>
+          <view><text class="detail-count-number special">{{selectedVersion.specialCount}}</text><text>家庭约定</text></view>
+        </view>
+        <scroll-view class="detail-rules-preview" scroll-y="true" enhanced="true" show-scrollbar="false">
+          <view wx:if="{{selectedVersion.ruleGroups.length === 0 && selectedVersion.specialItems.length === 0}}" class="detail-rules-empty">这一版暂未设置具体规则</view>
+          <view wx:for="{{selectedVersion.ruleGroups}}" wx:for-item="group" wx:key="type" class="detail-rule-group {{group.type}}">
+            <text class="detail-rule-group-title">{{group.title}}</text>
+            <view wx:for="{{group.categories}}" wx:for-item="category" wx:key="key" class="detail-rule-category">
+              <text class="detail-rule-category-name">{{category.name}}</text>
+              <view wx:for="{{category.items}}" wx:for-item="rule" wx:key="key" class="detail-rule-row">
+                <text class="detail-rule-name">{{rule.label}}</text>
+                <text class="detail-rule-range">{{rule.range}}</text>
+              </view>
+            </view>
+          </view>
+          <view wx:if="{{selectedVersion.specialItems.length}}" class="detail-rule-group special">
+            <text class="detail-rule-group-title">家庭约定</text>
+            <text wx:for="{{selectedVersion.specialItems}}" wx:for-item="special" wx:for-index="specialIndex" wx:key="key" class="detail-special-row">{{specialIndex + 1}}. {{special.label}}</text>
+          </view>
+        </scroll-view>
+        <view class="detail-safety-note">
+          <ui-icon name="save" size="36" theme="{{iconTheme}}" />
+          <text>恢复后会生成新 revision；流水中的规则 ID 与原因快照不会改变。</text>
+        </view>
+        <view class="detail-actions">
+          <button class="detail-cancel" bindtap="closeDetail">返回</button>
+          <button class="detail-restore" loading="{{restoringId === selectedVersion.versionId}}" disabled="{{selectedVersion.isCurrent || restoringId}}" bindtap="restoreSelectedVersion">{{selectedVersion.isCurrent ? '正在使用' : '恢复这一版'}}</button>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <toast-msg message="{{toastMessage}}" show="{{toastVisible}}" />
+</view>

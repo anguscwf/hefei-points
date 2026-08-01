@@ -47,7 +47,9 @@ function getDefaultRuleTemplates() {
 
 function initData() {
   repositories.families.ensureDefault({ id: 'default', name: '安总家', inviteCode: generateInviteCode(), createdAt: new Date().toISOString() });
-  if (Object.keys(repositories.config.getRules()).length === 0) repositories.config.setRules(getDefaultRuleTemplates());
+  if (Object.keys(repositories.config.getRules('default')).length === 0) {
+    repositories.config.setRules('default', getDefaultRuleTemplates(), { updatedBy: 'system' });
+  }
   if (repositories.users.listAll().length === 0) {
     const legacyConfigFile = path.join(DATA_DIR, 'config.json');
     let legacyHasUsers = false;

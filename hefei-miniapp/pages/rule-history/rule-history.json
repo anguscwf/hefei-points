@@ -1,0 +1,7 @@
+{
+  "usingComponents": {
+    "toast-msg": "/components/toast/toast",
+    "ui-icon": "/components/ui-icon-v5/ui-icon-v5"
+  },
+  "navigationBarTitleText": "规则历史"
+}

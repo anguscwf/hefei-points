@@ -4,7 +4,8 @@
     "pages/records/records",
     "pages/report/report",
     "pages/mine/mine",
-    "pages/admin/admin"
+    "pages/admin/admin",
+    "pages/rule-history/rule-history"
   ],
   "darkmode": false,
   "window": {

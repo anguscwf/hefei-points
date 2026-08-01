@@ -229,6 +229,11 @@ Page({
       themeClass: app.globalData.theme === 'mint' ? 'theme-mint' : '',
       iconTheme: app.globalData.theme === 'amber' ? 'amber' : 'mint'
     });
+    if (app.globalData.ruleHistoryRestored) {
+      app.globalData.ruleHistoryRestored = false;
+      this.loadData({ skipDraftPrompt: true });
+      this.showToast('已载入恢复后的规则版本');
+    }
   },
 
   onUnload: function() {
@@ -669,6 +674,20 @@ Page({
 
   _ruleMutationBlocked: function() {
     return !!this.data.rulesSaving;
+  },
+
+  openRuleHistory: function() {
+    if (this._ruleMutationBlocked()) return;
+    if (this.data.ruleDirty || this.data.ruleEditorDirty) {
+      wx.showModal({
+        title: '请先处理当前修改',
+        content: '为避免历史恢复覆盖正在编辑的内容，请先保存或放弃当前规则草稿，再查看历史版本。',
+        showCancel: false,
+        confirmText: '知道了'
+      });
+      return;
+    }
+    wx.navigateTo({ url: '/pages/rule-history/rule-history' });
   },
 
   switchRuleType: function(e) {

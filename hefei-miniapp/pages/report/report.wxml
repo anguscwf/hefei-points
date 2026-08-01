@@ -52,10 +52,10 @@
       <text class="filter-label">类别</text>
       <view class="filter-btns">
         <text class="filter-btn {{reportCat === 'all' ? 'active' : ''}}" bindtap="onCat" data-cat="all">全部</text>
-        <text wx:for="{{catOptions}}" wx:key="name"
-          class="filter-btn {{reportCat === item.name ? 'active' : ''}}"
-          style="{{reportCat === item.name ? 'background:' + (item.type === 'reward' ? 'var(--green)' : 'var(--red)') + ';border-color:' + (item.type === 'reward' ? 'var(--green)' : 'var(--red)') + ';' : ''}}"
-          bindtap="onCat" data-cat="{{item.name}}">{{item.name}}</text>
+        <text wx:for="{{catOptions}}" wx:key="key"
+          class="filter-btn {{reportCat === item.key ? 'active' : ''}}"
+          style="{{reportCat === item.key ? 'background:' + (item.type === 'reward' ? 'var(--green)' : 'var(--red)') + ';border-color:' + (item.type === 'reward' ? 'var(--green)' : 'var(--red)') + ';' : ''}}"
+          bindtap="onCat" data-cat="{{item.key}}">{{item.name}}</text>
       </view>
     </view>
     <!-- 模式 -->
