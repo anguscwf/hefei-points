@@ -152,30 +152,111 @@
       </view>
     </view>
 
-    <!-- 规则 -->
-    <view wx:if="{{activeTab === 'rules'}}">
-      <view wx:if="{{!rulesData}}" class="empty">加载中...</view>
+    <!-- 规则中心：浏览和理解规则，不在这里直接记分 -->
+    <view wx:if="{{activeTab === 'rules'}}" class="rule-center">
+      <view wx:if="{{!rulesData}}" class="empty">正在整理家庭规则...</view>
       <block wx:else>
-        <!-- 加分规则 -->
-        <view wx:for="{{rulesData.reward}}" wx:key="category" wx:for-item="cat" class="rule-cat-card">
-          <view class="icon-heading rule-cat-title" style="color: var(--green);"><ui-icon name="trend-up" size="32" theme="{{iconTheme}}" /><text>{{cat.category}}</text></view>
-          <view wx:for="{{cat.items}}" wx:key="label" wx:for-item="item" class="rule-item-row">
-            <text class="rule-item-label">{{item.label}}</text>
-            <text class="rule-item-range" style="color: #639922;">+{{item.min}}~+{{item.max}} {{item.unit}}</text>
+        <view class="rule-center-hero">
+          <view class="rule-center-hero-icon"><ui-icon name="clipboard" size="44" theme="{{iconTheme}}" /></view>
+          <view class="rule-center-hero-copy">
+            <text class="rule-center-title">{{ruleCenterTitle}}</text>
+            <text class="rule-center-intro">{{ruleCenterIntro}}</text>
+            <text class="rule-center-count">{{ruleSummary.categoryCount}} 个分类 · {{ruleSummary.ruleCount}} 条积分规则 · {{ruleSummary.specialCount}} 条约定</text>
           </view>
         </view>
-        <!-- 扣分规则 -->
-        <view wx:for="{{rulesData.punish}}" wx:key="category" wx:for-item="cat" class="rule-cat-card punish-card">
-          <view class="icon-heading rule-cat-title" style="color: var(--red);"><ui-icon name="trend-down" size="32" theme="{{iconTheme}}" /><text>{{cat.category}}</text></view>
-          <view wx:for="{{cat.items}}" wx:key="label" wx:for-item="item" class="rule-item-row">
-            <text class="rule-item-label">{{item.label}}</text>
-            <text class="rule-item-range" style="color: #E24B4A;">{{item.min}}~{{item.max}} {{item.unit}}</text>
+
+        <view class="rule-search-box">
+          <view class="rule-search-glyph"></view>
+          <input class="rule-search-input" value="{{ruleQuery}}" placeholder="搜索规则、分类、单位或说明" confirm-type="search" bindinput="onRuleQueryInput" />
+          <text wx:if="{{ruleQuery}}" class="rule-search-clear" bindtap="onRuleQueryClear">清除</text>
+        </view>
+
+        <scroll-view class="rule-filter-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+          <view class="rule-filter-row">
+            <view wx:for="{{ruleFilterOptions}}" wx:key="value"
+              class="rule-filter-chip {{ruleFilter === item.value ? 'active' : ''}}"
+              data-filter="{{item.value}}" bindtap="onRuleFilterTap">{{item.label}}</view>
+          </view>
+        </scroll-view>
+
+        <view wx:if="{{!ruleSummary.isEmpty}}" class="rule-center-guide">
+          <ui-icon name="spark" size="28" theme="{{iconTheme}}" />
+          <text>{{isChild ? '通常分值是每次大约会得到或扣掉的糖果' : '通常分值用于轻点记录；长按记分规则可按范围调整'}}</text>
+        </view>
+
+        <view wx:if="{{!ruleQuery && ruleFilter === 'all' && frequentRules.length}}" class="frequent-rules-card">
+          <view class="rule-block-heading">
+            <view>
+              <text class="rule-block-title">最近常用</text>
+              <text class="rule-block-sub">轻点查看详情，记分仍从孩子糖罐进入</text>
+            </view>
+            <text class="rule-block-badge">优先展示</text>
+          </view>
+          <view class="frequent-rule-grid">
+            <view wx:for="{{frequentRules}}" wx:key="key" class="frequent-rule-item {{item.isReward ? 'reward' : 'punish'}}"
+              data-item="{{item}}" bindtap="onFrequentRuleTap">
+              <view class="frequent-rule-copy">
+                <text class="frequent-rule-label">{{item.label}}</text>
+                <text class="frequent-rule-category">{{item.category}}</text>
+              </view>
+              <text class="rule-default-pill {{item.isReward ? 'reward' : 'punish'}}">{{item.defaultText}}</text>
+            </view>
           </view>
         </view>
-        <!-- 特别规则 -->
-        <view wx:if="{{rulesData.special && rulesData.special.length > 0}}" class="special-rules-card">
-          <view class="icon-heading rule-cat-title" style="color: var(--amber);"><ui-icon name="warning" size="30" theme="{{iconTheme}}" /><text>特别规则</text></view>
-          <text wx:for="{{rulesData.special}}" wx:key="*this" class="special-item">· {{item}}</text>
+
+        <view wx:for="{{ruleBrowser.categories}}" wx:key="key" wx:for-item="cat"
+          class="rule-category-card {{cat.isReward ? 'reward' : 'punish'}}">
+          <view class="rule-category-head" data-key="{{cat.key}}" bindtap="onRuleCategoryTap">
+            <view class="rule-category-icon {{cat.isReward ? 'reward' : 'punish'}}">
+              <ui-icon name="{{cat.isReward ? 'trend-up' : 'trend-down'}}" size="32" theme="{{iconTheme}}" />
+            </view>
+            <view class="rule-category-copy">
+              <view class="rule-category-title-row">
+                <text class="rule-category-title">{{cat.category}}</text>
+                <text class="rule-category-count">{{cat.totalCount}} 项</text>
+              </view>
+              <text wx:if="{{!cat.expanded && cat.preview}}" class="rule-category-preview">{{cat.preview}}</text>
+            </view>
+            <text wx:if="{{ruleQuery}}" class="rule-category-toggle">匹配 {{cat.count}} 项</text>
+            <text wx:else class="rule-category-toggle">{{cat.expanded ? '收起 ︿' : '展开 ﹀'}}</text>
+          </view>
+          <view wx:if="{{cat.expanded}}" class="rule-category-items">
+            <view wx:for="{{cat.items}}" wx:key="key" wx:for-item="rule" class="rule-browser-row"
+              data-item="{{rule}}" bindtap="onRuleItemTap">
+              <view class="rule-browser-copy">
+                <text class="rule-browser-label">{{rule.label}}</text>
+                <text class="rule-browser-meta">{{rule.unit || '按每次记录'}} · {{rule.rangeDisplay}}{{rule.min !== null && rule.max !== null ? ' 分' : ''}}</text>
+                <text wx:if="{{rule.hint}}" class="rule-browser-hint">{{rule.hint}}</text>
+              </view>
+              <view class="rule-browser-value">
+                <text class="rule-default-pill {{rule.isReward ? 'reward' : 'punish'}}">{{rule.defaultText}}</text>
+                <text class="rule-row-arrow">›</text>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <view wx:if="{{ruleBrowser.specials.length}}" class="family-agreement-card">
+          <view class="rule-block-heading">
+            <view class="family-agreement-heading">
+              <view class="family-agreement-icon"><ui-icon name="family-heart" size="34" theme="{{iconTheme}}" /></view>
+              <view><text class="rule-block-title">我们家的约定</text><text class="rule-block-sub">全家一起记住、一起做到</text></view>
+            </view>
+            <text class="rule-block-badge">{{ruleBrowser.specials.length}} 条</text>
+          </view>
+          <view wx:for="{{ruleBrowser.specials}}" wx:key="key" class="family-agreement-row"
+            data-item="{{item}}" bindtap="onSpecialRuleTap">
+            <text class="family-agreement-no">{{item.numberText}}</text>
+            <text class="family-agreement-text">{{item.text}}</text>
+            <text class="rule-row-arrow">›</text>
+          </view>
+        </view>
+
+        <view wx:if="{{ruleBrowser.resultCount === 0}}" class="rule-empty-state">
+          <view class="rule-empty-icon"><ui-icon name="clipboard" size="50" theme="{{iconTheme}}" /></view>
+          <text class="rule-empty-title">{{ruleQuery ? '没有找到这条规则' : '家庭规则还在准备中'}}</text>
+          <text class="rule-empty-copy">{{ruleQuery ? '试试搜索分类、单位或更短的关键词' : (isChild ? '可以请家长一起商量成长约定' : '管理员可到管理后台添加第一条规则')}}</text>
+          <button wx:if="{{ruleQuery}}" class="btn btn-outline btn-xs rule-empty-action" bindtap="onRuleQueryClear">清除搜索</button>
         </view>
       </block>
     </view>
@@ -186,6 +267,49 @@
     <text>v{{version}} · 粤ICP备2026059273号-1X</text>
   </view>
 
+</view>
+
+<!-- 规则详情：只负责讲清规则，第一阶段不提供直接记分 -->
+<view class="rule-detail-overlay {{themeClass}}" wx:if="{{ruleDetailVisible}}" catchtouchmove="stopBubble">
+  <scroll-view class="rule-detail-panel" scroll-y enhanced show-scrollbar="{{false}}" catchtap="stopBubble">
+    <view class="rule-detail-handle"></view>
+    <view class="rule-detail-head">
+      <view>
+        <text class="rule-detail-type {{ruleDetail.toneClass}}">{{ruleDetail.typeText}}</text>
+        <text class="rule-detail-title">{{ruleDetail.label}}</text>
+      </view>
+      <view class="rule-detail-close" bindtap="onRuleDetailClose">×</view>
+    </view>
+
+    <view wx:if="{{ruleDetail.isSpecial}}" class="rule-detail-agreement">
+      <view class="rule-detail-agreement-icon"><ui-icon name="family-heart" size="54" theme="{{iconTheme}}" /></view>
+      <text>{{ruleDetail.hintText}}</text>
+    </view>
+
+    <block wx:else>
+      <view class="rule-detail-score-card {{ruleDetail.toneClass}}">
+        <text class="rule-detail-field-label">{{ruleDetail.defaultCaption}}</text>
+        <text class="rule-detail-score">{{ruleDetail.defaultText}}</text>
+      </view>
+      <view class="rule-detail-fields">
+        <view class="rule-detail-field">
+          <text class="rule-detail-field-label">{{ruleDetail.rangeCaption}}</text>
+          <text class="rule-detail-field-value">{{ruleDetail.rangeText}}</text>
+        </view>
+        <view class="rule-detail-field">
+          <text class="rule-detail-field-label">计算方式</text>
+          <text class="rule-detail-field-value">{{ruleDetail.unitText}}</text>
+        </view>
+      </view>
+      <view class="rule-detail-explain">
+        <text class="rule-detail-explain-title">{{ruleDetail.hintCaption}}</text>
+        <text class="rule-detail-explain-copy">{{ruleDetail.hintText}}</text>
+      </view>
+      <text wx:if="{{ruleDetail.toneClass === 'punish'}}" class="rule-detail-remedy">先理解发生了什么，再一起想想下次怎样做得更好。</text>
+    </block>
+
+    <button class="btn btn-primary rule-detail-done" bindtap="onRuleDetailClose">我明白了</button>
+  </scroll-view>
 </view>
 
 <!-- 首次登录图解 -->
@@ -222,6 +346,7 @@
   kidPoints="{{sheetKidPoints}}"
   rewardRules="{{rulesData.reward}}"
   punishRules="{{rulesData.punish}}"
+  frequentRules="{{frequentRules}}"
   bind:close="onSheetClose"
   bind:quick="onRuleQuick"
   bind:adjust="onRuleSelect"

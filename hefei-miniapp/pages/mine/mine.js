@@ -1,5 +1,6 @@
 // pages/mine/mine.js
 var app = getApp();
+var rulesViewModel = require('../../utils/rules-view-model.js');
 
 Page({
   data: {
@@ -14,6 +15,16 @@ Page({
     pointsLabel: '家庭总分',
     recordCount: 0,
     rulesData: {},
+    ruleSummary: {
+      categoryCount: 0,
+      ruleCount: 0,
+      rewardCount: 0,
+      punishCount: 0,
+      specialCount: 0,
+      isEmpty: true
+    },
+    ruleSummaryTitle: '家庭积分规则',
+    ruleSummaryIntro: '规则讲清楚，鼓励才更有力量',
     toastMessage: '',
     toastVisible: false,
     theme: 'amber',
@@ -21,7 +32,7 @@ Page({
     themeClass: '',
     cropVisible: false,
     cropSource: '',
-    version: '2.2.0'
+    version: '2.3.0'
   },
 
   onShow: function() {
@@ -73,6 +84,10 @@ Page({
     var userIcon = isLoggedIn
       ? (g.user.role === 'child' ? app.getKidIcon(g.user.id) : (iconMap[g.user.role] || 'person'))
       : 'person';
+    var rulesData = rulesViewModel.cloneRules(
+      (g.rules && Array.isArray(g.rules.reward)) ? g.rules : { reward: [], punish: [], special: [] }
+    );
+    var ruleSummary = rulesViewModel.summarizeRules(rulesData);
 
     // 计算积分：孩子显示个人积分，家长显示家庭总分
     var totalPoints = 0;
@@ -96,8 +111,13 @@ Page({
       roleText: roleText,
       totalPoints: totalPoints,
       pointsLabel: pointsLabel,
-      rulesData: (g.rules && Array.isArray(g.rules.reward)) ? g.rules : { reward: [], punish: [], special: [] },
-      version: g.version || '2.2.0'
+      rulesData: rulesData,
+      ruleSummary: ruleSummary,
+      ruleSummaryTitle: isChild ? '我的成长约定' : '家庭积分规则',
+      ruleSummaryIntro: isChild
+        ? '看看怎样赚糖、怎样护住糖，有疑问就和家长一起读'
+        : '用简单清楚的约定，帮助孩子理解努力与边界',
+      version: g.version || '2.3.0'
     });
 
     // 加载记录数
@@ -111,6 +131,14 @@ Page({
 
   goIndex: function() {
     wx.switchTab({ url: '/pages/index/index' });
+  },
+
+  goRulesCenter: function() {
+    app.globalData.openRulesCenter = true;
+    wx.switchTab({
+      url: '/pages/index/index',
+      fail: function() { app.globalData.openRulesCenter = false; }
+    });
   },
 
   goAdmin: function() {

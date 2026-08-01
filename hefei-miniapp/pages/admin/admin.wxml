@@ -50,81 +50,229 @@
   </view>
 
   <!-- ========== 积分规则 ========== -->
-  <view wx:if="{{adminTab === 'rules'}}">
-    <!-- 加分规则 -->
-    <view class="rule-section">
-      <view class="rule-sec-title icon-heading" style="color: var(--green);"><ui-icon name="trend-up" size="30" theme="{{iconTheme}}" /><text>加分规则</text></view>
-      <view wx:for="{{editRules.reward}}" wx:key="cid" wx:for-item="cat" wx:for-index="ci" class="rule-cat-edit">
-        <view class="rce-header">
-          <text class="rce-label">大类</text>
-          <input class="rce-input" value="{{cat.category}}" placeholder="大类名称" bindinput="onRCatName" data-ci="{{ci}}" />
-          <button class="btn btn-xs btn-small-green" bindtap="addRItem" data-type="reward" data-ci="{{ci}}">+小类</button>
-          <button class="btn btn-xs btn-small-red" bindtap="delRCategory" data-type="reward" data-ci="{{ci}}">删</button>
+  <view wx:if="{{adminTab === 'rules'}}" class="rules-admin">
+    <view class="rules-overview-card">
+      <view class="rules-overview-head">
+        <view>
+          <text class="rules-eyebrow">家庭规则工作台</text>
+          <text class="rules-overview-title">一次只整理一类规则</text>
         </view>
-        <view wx:for="{{cat.items}}" wx:key="iid" wx:for-item="item" wx:for-index="ii" class="rce-item">
-          <view class="rce-item-row">
-            <input class="rce-si-input" value="{{item.editLabel}}" bindinput="onRLabel" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" placeholder="项目" />
-            <text class="rce-hint">最少</text>
-            <input class="rce-si-num" type="number" value="{{item.editMin}}" bindinput="onRMin" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" />
-            <text class="rce-hint">最多</text>
-            <input class="rce-si-num" type="number" value="{{item.editMax}}" bindinput="onRMax" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" />
-            <text class="rce-hint">默认</text>
-            <input class="rce-si-num" type="number" value="{{item.editDefault}}" bindinput="onRDefault" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" />
-            <button class="btn btn-xs btn-small" bindtap="delRItem" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}">✕</button>
-          </view>
-          <input class="rce-unit" value="{{item.editUnit}}" bindinput="onRUnit" data-type="reward" data-ci="{{ci}}" data-ii="{{ii}}" placeholder="备注" />
-        </view>
+        <ui-icon name="clipboard" size="54" theme="{{iconTheme}}" />
       </view>
-      <view class="add-cat-row">
-        <input class="add-input" placeholder="新大类名" value="{{newRCatName}}" bindinput="onNewRCat" />
-        <button class="btn btn-primary btn-xs" bindtap="addRCategory" data-type="reward">+加分大类</button>
+      <view class="rules-counts">
+        <text>鼓励 {{ruleStats.reward}} 条</text>
+        <text>提醒 {{ruleStats.punish}} 条</text>
+        <text>约定 {{ruleStats.special}} 条</text>
+      </view>
+      <text class="rules-overview-tip">先展开分类，再点单条规则编辑；通常分值优先，上下限收在高级设置里。</text>
+    </view>
+
+    <view class="rule-type-tabs">
+      <view class="rule-type-tab reward {{ruleType === 'reward' ? 'active' : ''}}" bindtap="switchRuleType" data-type="reward">
+        <ui-icon name="trend-up" size="30" theme="{{iconTheme}}" />
+        <text>鼓励加分</text>
+        <text class="rule-type-count">{{ruleStats.reward}}</text>
+      </view>
+      <view class="rule-type-tab punish {{ruleType === 'punish' ? 'active' : ''}}" bindtap="switchRuleType" data-type="punish">
+        <ui-icon name="warning" size="30" theme="{{iconTheme}}" />
+        <text>护糖提醒</text>
+        <text class="rule-type-count">{{ruleStats.punish}}</text>
+      </view>
+      <view class="rule-type-tab special {{ruleType === 'special' ? 'active' : ''}}" bindtap="switchRuleType" data-type="special">
+        <ui-icon name="family-heart" size="30" theme="{{iconTheme}}" />
+        <text>家庭约定</text>
+        <text class="rule-type-count">{{ruleStats.special}}</text>
       </view>
     </view>
 
-    <!-- 扣分规则 -->
-    <view class="rule-section">
-      <view class="rule-sec-title icon-heading" style="color: var(--red);"><ui-icon name="trend-down" size="30" theme="{{iconTheme}}" /><text>扣分规则</text></view>
-      <view wx:for="{{editRules.punish}}" wx:key="cid" wx:for-item="cat" wx:for-index="ci" class="rule-cat-edit punish-edit">
-        <view class="rce-header">
-          <text class="rce-label">大类</text>
-          <input class="rce-input" value="{{cat.category}}" placeholder="大类名称" bindinput="onPCatName" data-ci="{{ci}}" />
-          <button class="btn btn-xs btn-small-green" bindtap="addRItem" data-type="punish" data-ci="{{ci}}">+小类</button>
-          <button class="btn btn-xs btn-small-red" bindtap="delRCategory" data-type="punish" data-ci="{{ci}}">删</button>
-        </view>
-        <view wx:for="{{cat.items}}" wx:key="iid" wx:for-item="item" wx:for-index="ii" class="rce-item">
-          <view class="rce-item-row">
-            <input class="rce-si-input" value="{{item.editLabel}}" bindinput="onRLabel" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" placeholder="项目" />
-            <text class="rce-hint">最少</text>
-            <input class="rce-si-num" type="number" value="{{item.editMin}}" bindinput="onRMin" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" />
-            <text class="rce-hint">最多</text>
-            <input class="rce-si-num" type="number" value="{{item.editMax}}" bindinput="onRMax" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" />
-            <text class="rce-hint">默认</text>
-            <input class="rce-si-num" type="number" value="{{item.editDefault}}" bindinput="onRDefault" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" />
-            <button class="btn btn-xs btn-small" bindtap="delRItem" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}">✕</button>
-          </view>
-          <input class="rce-unit" value="{{item.editUnit}}" bindinput="onRUnit" data-type="punish" data-ci="{{ci}}" data-ii="{{ii}}" placeholder="备注" />
-        </view>
-      </view>
-      <view class="add-cat-row">
-        <input class="add-input" placeholder="新大类名" value="{{newPCatName}}" bindinput="onNewPCat" />
-        <button class="btn btn-primary btn-xs" bindtap="addRCategory" data-type="punish">+扣分大类</button>
-      </view>
+    <view wx:if="{{ruleValidationMessage}}" class="rule-validation-banner">
+      <ui-icon name="warning" size="28" theme="{{iconTheme}}" />
+      <text>{{ruleValidationMessage}}</text>
     </view>
 
-    <!-- 特别规则 -->
-    <view class="rule-section">
-      <view class="rule-sec-title icon-heading" style="color: var(--amber);"><ui-icon name="warning" size="30" theme="{{iconTheme}}" /><text>特别规则</text></view>
+    <block wx:if="{{ruleType === 'reward' || ruleType === 'punish'}}">
+      <view wx:if="{{ruleType === 'reward' ? editRules.reward.length === 0 : editRules.punish.length === 0}}" class="rule-empty-state">
+        <ui-icon name="spark" size="64" theme="{{iconTheme}}" />
+        <text class="rule-empty-title">这一类还没有规则</text>
+        <text class="rule-empty-copy">先新建一个分类，再添加容易理解的小规则。</text>
+      </view>
+
+      <view
+        wx:for="{{ruleType === 'reward' ? editRules.reward : editRules.punish}}"
+        wx:key="_uiKey"
+        wx:for-item="cat"
+        wx:for-index="ci"
+        class="rule-category-card {{ruleType}} {{expandedRuleCategory === cat._uiKey ? 'expanded' : ''}}"
+      >
+        <view class="rule-category-summary" bindtap="toggleRuleCategory" data-key="{{cat._uiKey}}">
+          <view class="rule-category-icon">
+            <ui-icon name="{{ruleType === 'reward' ? 'trend-up' : 'warning'}}" size="34" theme="{{iconTheme}}" />
+          </view>
+          <view class="rule-category-copy">
+            <view class="rule-category-title-row">
+              <text class="rule-category-title">{{cat.category || '未命名分类'}}</text>
+              <text class="rule-category-count">{{cat._uiItemCount}} 条</text>
+            </view>
+            <text class="rule-category-preview">{{cat._uiPreview || '展开后添加第一条规则'}}</text>
+          </view>
+          <text class="rule-category-arrow">{{expandedRuleCategory === cat._uiKey ? '收起⌃' : '展开⌄'}}</text>
+        </view>
+
+        <view wx:if="{{expandedRuleCategory === cat._uiKey}}" class="rule-category-body">
+          <view class="category-edit-row">
+            <view class="category-name-field">
+              <text class="compact-label">分类名称</text>
+              <input
+                class="compact-input"
+                maxlength="{{30}}"
+                value="{{cat.category}}"
+                placeholder="例如：学习习惯"
+                bindinput="onCategoryName"
+                data-type="{{ruleType}}"
+                data-ci="{{ci}}"
+              />
+            </view>
+            <button class="category-delete-btn" bindtap="delRCategory" data-type="{{ruleType}}" data-ci="{{ci}}">删除分类</button>
+          </view>
+
+          <view wx:if="{{cat.items.length === 0}}" class="category-items-empty">这个分类还没有规则</view>
+          <view
+            wx:for="{{cat.items}}"
+            wx:key="_uiKey"
+            wx:for-item="ruleItem"
+            wx:for-index="ii"
+            class="rule-summary-row"
+            bindtap="openRuleEditor"
+            data-type="{{ruleType}}"
+            data-ci="{{ci}}"
+            data-ii="{{ii}}"
+          >
+            <view class="rule-summary-copy">
+              <text class="rule-summary-name">{{ruleItem.editLabel || '未命名规则'}}</text>
+              <text class="rule-summary-meta">{{ruleItem.editUnit || '按每次计算'}}{{ruleItem.editHint ? ' · ' + ruleItem.editHint : ''}}</text>
+            </view>
+            <text class="rule-summary-score">{{ruleItem._uiScoreText}}</text>
+            <text class="rule-summary-chevron">›</text>
+          </view>
+          <button class="add-rule-row" bindtap="addRItem" data-type="{{ruleType}}" data-ci="{{ci}}">＋ 添加一条{{ruleType === 'reward' ? '鼓励规则' : '护糖提醒'}}</button>
+        </view>
+      </view>
+
+      <view class="new-category-card">
+        <text class="new-category-title">新建{{ruleType === 'reward' ? '鼓励' : '提醒'}}分类</text>
+        <view class="new-category-row" wx:if="{{ruleType === 'reward'}}">
+          <input class="new-category-input" maxlength="{{30}}" placeholder="输入分类名称" value="{{newRCatName}}" bindinput="onNewRCat" />
+          <button class="new-category-button" bindtap="addRCategory" data-type="reward">添加分类</button>
+        </view>
+        <view class="new-category-row" wx:else>
+          <input class="new-category-input" maxlength="{{30}}" placeholder="输入分类名称" value="{{newPCatName}}" bindinput="onNewPCat" />
+          <button class="new-category-button" bindtap="addRCategory" data-type="punish">添加分类</button>
+        </view>
+      </view>
+    </block>
+
+    <view wx:if="{{ruleType === 'special'}}" class="special-rules-card">
+      <view class="special-rules-head">
+        <view>
+          <text class="special-rules-title">我们家的约定</text>
+          <text class="special-rules-copy">写成孩子也能读懂的一句话，尽量表达共同承诺。</text>
+        </view>
+        <ui-icon name="family-heart" size="48" theme="{{iconTheme}}" />
+      </view>
+      <view wx:if="{{editRules.special.length === 0}}" class="category-items-empty">还没有家庭约定，添加一条试试吧</view>
       <view wx:for="{{editRules.special}}" wx:key="*this" wx:for-index="si" class="special-edit-row">
-        <input class="special-input" value="{{item}}" bindinput="onSpecial" data-si="{{si}}" placeholder="特别规则描述" />
-        <button class="btn btn-xs btn-small-red" bindtap="delSpecial" data-si="{{si}}">删</button>
+        <text class="special-index">{{si + 1}}</text>
+        <textarea class="special-input" auto-height maxlength="{{300}}" value="{{item}}" bindinput="onSpecial" data-si="{{si}}" placeholder="例如：遇到困难先说出来，我们一起想办法" />
+        <button class="special-delete" bindtap="delSpecial" data-si="{{si}}">删除</button>
       </view>
-      <button class="btn btn-xs btn-add-special" bindtap="addSpecial">+ 特别规则</button>
+      <button class="add-rule-row special-add" bindtap="addSpecial">＋ 添加家庭约定</button>
     </view>
 
-    <!-- 保存按钮 -->
-    <view class="save-bar">
-      <button class="btn btn-primary save-main" bindtap="saveRules">保存规则</button>
-      <button class="btn btn-outline" bindtap="goBack">取消</button>
+    <view class="rules-save-spacer"></view>
+    <view class="rules-fixed-save">
+      <view class="rules-save-status">
+        <text class="rules-save-dot {{ruleDirty ? 'dirty' : ''}}"></text>
+        <view>
+          <text class="rules-save-title">{{ruleDirty ? '有未保存修改' : '规则已是最新'}}</text>
+          <text class="rules-save-sub">{{ruleDirty ? '已修改 ' + ruleChangeCount + ' 处' : '修改后统一保存整套规则'}}</text>
+        </view>
+      </view>
+      <button wx:if="{{ruleDirty}}" class="rules-discard-btn" bindtap="discardRuleChanges">放弃</button>
+      <button class="rules-save-btn" loading="{{rulesSaving}}" disabled="{{!ruleDirty || rulesSaving}}" bindtap="saveRules">保存</button>
+    </view>
+
+    <view wx:if="{{ruleEditorVisible}}" class="rule-editor-mask" catchtouchmove="noop">
+      <view class="rule-editor-panel" catchtap="noop">
+        <view class="rule-editor-head">
+          <view>
+            <text class="rule-editor-eyebrow">{{ruleEditor.type === 'punish' ? '用正数填写扣分值' : '把常用分值放在最前面'}}</text>
+            <text class="rule-editor-title">{{ruleEditor.typeTitle}}</text>
+          </view>
+          <button class="rule-editor-close" bindtap="closeRuleEditor">×</button>
+        </view>
+
+        <view class="editor-field">
+          <text class="editor-label">规则名称</text>
+          <input class="editor-input {{ruleEditor.errors.editLabel ? 'error' : ''}}" maxlength="{{50}}" value="{{ruleEditor.editLabel}}" placeholder="孩子一看就明白的名称" bindinput="onRuleEditorInput" data-field="editLabel" />
+          <text wx:if="{{ruleEditor.errors.editLabel}}" class="editor-error">{{ruleEditor.errors.editLabel}}</text>
+        </view>
+
+        <view class="editor-score-card">
+          <text class="editor-label">{{ruleEditor.scoreLabel}}</text>
+          <view class="editor-score-line">
+            <text class="editor-score-sign">{{ruleEditor.type === 'punish' ? '扣' : '+'}}</text>
+            <input class="editor-score-input {{ruleEditor.errors.editDefault ? 'error' : ''}}" type="number" value="{{ruleEditor.editDefault}}" bindinput="onRuleEditorInput" data-field="editDefault" />
+            <text class="editor-score-unit">分</text>
+          </view>
+          <text wx:if="{{ruleEditor.errors.editDefault}}" class="editor-error center">{{ruleEditor.errors.editDefault}}</text>
+          <view class="editor-quick-scores">
+            <button wx:for="{{[1, 3, 5, 10, 20]}}" wx:key="*this" class="quick-score" bindtap="onRuleScoreQuick" data-value="{{item}}">{{ruleEditor.type === 'punish' ? '扣' : '+'}}{{item}}</button>
+          </view>
+        </view>
+
+        <view class="editor-field">
+          <text class="editor-label">计算方式 <text class="editor-optional">选填</text></text>
+          <input class="editor-input {{ruleEditor.errors.editUnit ? 'error' : ''}}" maxlength="{{20}}" value="{{ruleEditor.editUnit}}" placeholder="例如：每次、每天、每科" bindinput="onRuleEditorInput" data-field="editUnit" />
+          <text wx:if="{{ruleEditor.errors.editUnit}}" class="editor-error">{{ruleEditor.errors.editUnit}}</text>
+        </view>
+
+        <view class="editor-field">
+          <text class="editor-label">给孩子的说明 <text class="editor-optional">选填</text></text>
+          <textarea class="editor-textarea {{ruleEditor.errors.editHint ? 'error' : ''}}" maxlength="{{200}}" value="{{ruleEditor.editHint}}" placeholder="为什么这样做，尽量用温和、具体的话说明" bindinput="onRuleEditorInput" data-field="editHint" />
+          <text wx:if="{{ruleEditor.errors.editHint}}" class="editor-error">{{ruleEditor.errors.editHint}}</text>
+        </view>
+
+        <view class="editor-advanced-toggle" bindtap="toggleRuleEditorAdvanced">
+          <text>高级设置</text>
+          <text>{{ruleEditorAdvanced ? '收起⌃' : '展开⌄'}}</text>
+        </view>
+        <view wx:if="{{ruleEditorAdvanced}}" class="editor-advanced-body">
+          <text wx:if="{{ruleEditor.type === 'punish'}}" class="punish-number-tip">这里只填正数：最低扣 1 分、最高最多扣 500 分；保存时会自动转换为负数。</text>
+          <view class="editor-range-row">
+            <view class="editor-field range-field">
+              <text class="editor-label">{{ruleEditor.rangeMinLabel}}</text>
+              <input class="editor-input {{ruleEditor.errors.editMin ? 'error' : ''}}" type="number" value="{{ruleEditor.editMin}}" bindinput="onRuleEditorInput" data-field="editMin" />
+              <text wx:if="{{ruleEditor.errors.editMin}}" class="editor-error">{{ruleEditor.errors.editMin}}</text>
+            </view>
+            <view class="editor-field range-field">
+              <text class="editor-label">{{ruleEditor.rangeMaxLabel}}</text>
+              <input class="editor-input {{ruleEditor.errors.editMax ? 'error' : ''}}" type="number" value="{{ruleEditor.editMax}}" bindinput="onRuleEditorInput" data-field="editMax" />
+              <text wx:if="{{ruleEditor.errors.editMax}}" class="editor-error">{{ruleEditor.errors.editMax}}</text>
+            </view>
+          </view>
+          <view class="editor-field system-id-field">
+            <text class="editor-label">规则 ID <text class="editor-optional">保持唯一</text></text>
+            <input class="editor-input {{ruleEditor.errors.id ? 'error' : ''}}" maxlength="{{64}}" value="{{ruleEditor.id}}" bindinput="onRuleEditorInput" data-field="id" />
+            <text wx:if="{{ruleEditor.errors.id}}" class="editor-error">{{ruleEditor.errors.id}}</text>
+          </view>
+        </view>
+
+        <view class="rule-editor-actions">
+          <button wx:if="{{!ruleEditor.isNew}}" class="editor-delete-btn" bindtap="deleteRuleFromEditor">删除规则</button>
+          <button class="editor-cancel-btn" bindtap="closeRuleEditor">取消</button>
+          <button class="editor-done-btn" bindtap="completeRuleEditor">完成</button>
+        </view>
+      </view>
     </view>
   </view>
 

@@ -53,36 +53,44 @@
       </view>
     </view>
 
-    <!-- 积分规则 -->
-    <view class="card">
-      <view class="section-title icon-heading"><view class="section-icon"><ui-icon name="clipboard" size="34" theme="{{theme}}" /></view><text>积分规则</text></view>
-      <block wx:if="{{rulesData.reward && rulesData.reward.length > 0}}">
-        <view class="rule-sec-title icon-heading" style="color: var(--green);"><ui-icon name="trend-up" size="28" theme="{{theme}}" /><text>加分</text></view>
-        <block wx:for="{{rulesData.reward}}" wx:key="category" wx:for-item="cat">
-          <view class="rule-cat-item">
-            <text class="rule-cat-name">{{cat.category}}</text>
-            <text class="rule-cat-count">{{cat.items.length}}项</text>
+    <!-- 积分规则摘要：完整内容统一在首页规则中心阅读 -->
+    <view class="card rule-summary-card">
+      <view class="rule-summary-head" bindtap="goRulesCenter">
+        <view class="section-icon rule-summary-icon"><ui-icon name="clipboard" size="36" theme="{{theme}}" /></view>
+        <view class="rule-summary-copy">
+          <text class="rule-summary-title">{{ruleSummaryTitle}}</text>
+          <text class="rule-summary-intro">{{ruleSummaryIntro}}</text>
+        </view>
+        <text class="rule-summary-arrow">›</text>
+      </view>
+
+      <view wx:if="{{!ruleSummary.isEmpty}}">
+        <text class="rule-summary-total">{{ruleSummary.categoryCount}} 个分类 · {{ruleSummary.ruleCount}} 条积分规则 · {{ruleSummary.specialCount}} 条家庭约定</text>
+        <view class="rule-summary-stats">
+          <view class="rule-summary-stat reward">
+            <text class="rule-summary-stat-value">{{ruleSummary.rewardCount}}</text>
+            <text class="rule-summary-stat-label">{{isChild ? '赚糖' : '鼓励加分'}}</text>
           </view>
-          <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item" class="rule-detail">
-            <text>{{item.label}}</text>
-            <text style="color: #639922;">+{{item.min}}~+{{item.max}}分</text>
+          <view class="rule-summary-stat punish">
+            <text class="rule-summary-stat-value">{{ruleSummary.punishCount}}</text>
+            <text class="rule-summary-stat-label">{{isChild ? '护糖' : '改进提醒'}}</text>
           </view>
-        </block>
-      </block>
-      <block wx:if="{{rulesData.punish && rulesData.punish.length > 0}}">
-        <view class="rule-sec-title icon-heading" style="color: var(--red);"><ui-icon name="trend-down" size="28" theme="{{theme}}" /><text>扣分</text></view>
-        <block wx:for="{{rulesData.punish}}" wx:key="category" wx:for-item="cat">
-          <view class="rule-cat-item">
-            <text class="rule-cat-name">{{cat.category}}</text>
-            <text class="rule-cat-count">{{cat.items.length}}项</text>
+          <view class="rule-summary-stat special">
+            <text class="rule-summary-stat-value">{{ruleSummary.specialCount}}</text>
+            <text class="rule-summary-stat-label">家庭约定</text>
           </view>
-          <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item" class="rule-detail">
-            <text>{{item.label}}</text>
-            <text style="color: #E24B4A;">{{item.min}}~{{item.max}}分</text>
-          </view>
-        </block>
-      </block>
-      <view wx:if="{{(!rulesData.reward || rulesData.reward.length === 0) && (!rulesData.punish || rulesData.punish.length === 0)}}" class="empty">暂无规则</view>
+        </view>
+      </view>
+
+      <view wx:else class="rule-summary-empty">
+        <text class="rule-summary-empty-title">家庭规则还在准备中</text>
+        <text class="rule-summary-empty-copy">{{isChild ? '可以和家长一起商量第一条成长约定' : '管理员可进入后台添加规则'}}</text>
+      </view>
+
+      <view class="rule-summary-actions">
+        <button class="btn btn-primary rule-summary-primary" bindtap="goRulesCenter">查看全部规则</button>
+        <button wx:if="{{isAdmin}}" class="btn btn-outline rule-summary-admin" bindtap="goAdmin">管理规则</button>
+      </view>
     </view>
 
     <!-- 管理后台入口 -->

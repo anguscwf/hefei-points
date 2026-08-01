@@ -1,5 +1,8 @@
 // pages/index/index.js
 var app = getApp();
+var rulesViewModel = require('../../utils/rules-view-model.js');
+
+var RULE_CENTER_PREF_KEY = 'hefei_rule_center_pref_v1';
 
 Page({
   data: {
@@ -36,6 +39,24 @@ Page({
 
     // 规则
     rulesData: null,
+    ruleSummary: {
+      categoryCount: 0,
+      ruleCount: 0,
+      rewardCount: 0,
+      punishCount: 0,
+      specialCount: 0,
+      isEmpty: true
+    },
+    ruleBrowser: { categories: [], specials: [], resultCount: 0 },
+    ruleFilter: 'all',
+    ruleQuery: '',
+    ruleExpandedKey: '',
+    ruleFilterOptions: [],
+    ruleCenterTitle: '我们家的成长约定',
+    ruleCenterIntro: '先讲清规则，再一起认真做到',
+    frequentRules: [],
+    ruleDetailVisible: false,
+    ruleDetail: null,
 
     // 操作弹窗
     sheetVisible: false,
@@ -59,12 +80,18 @@ Page({
     loadError: false,
     headerBg: '#B86932',
     pickerKey: 1,   // 登出时递增，强制重建 picker
-    version: '2.2.0'
+    version: '2.3.0'
   },
 
   onLoad: function() {
+    var savedPreference = wx.getStorageSync(RULE_CENTER_PREF_KEY) || {};
+    var savedFilter = ['all', 'reward', 'punish', 'special'].indexOf(savedPreference.filter) >= 0
+      ? savedPreference.filter
+      : 'all';
     this.setData({
-      showLoginGuide: !app.globalData.token && !wx.getStorageSync('hefei_login_guide_v2')
+      showLoginGuide: !app.globalData.token && !wx.getStorageSync('hefei_login_guide_v2'),
+      ruleFilter: savedFilter,
+      ruleExpandedKey: String(savedPreference.expandedKey || '')
     });
     // 页面加载时直接请求配置（不再依赖 onLaunch）
     this._loadConfigAndRefresh();
@@ -74,11 +101,14 @@ Page({
     var that = this;
     var g = app.globalData;
     var themeHeader = g.theme === 'mint' ? '#2D9B7A' : '#B86932';
+    var shouldOpenRules = !!g.openRulesCenter;
+    if (shouldOpenRules) g.openRulesCenter = false;
     this.setData({
       themePageStyle: app.getThemePageStyle(),
       themeClass: g.theme === 'mint' ? 'theme-mint' : '',
       iconTheme: g.theme === 'amber' ? 'amber' : 'mint',
-      headerBg: themeHeader
+      headerBg: themeHeader,
+      activeTab: shouldOpenRules ? 'rules' : this.data.activeTab
     });
     if (g.token && g.user) {
       // 每次回到首页都从服务端重新请求 /api/points，loadPoints 已显式禁用缓存。
@@ -206,7 +236,31 @@ Page({
     });
 
     // 规则（必须检查 rules.reward 是否为数组，因为 {} 是 truthy 不会触发 fallback）
-    var rulesData = (g.rules && Array.isArray(g.rules.reward)) ? g.rules : { reward: [], punish: [], special: [] };
+    var rulesData = rulesViewModel.cloneRules(
+      (g.rules && Array.isArray(g.rules.reward)) ? g.rules : { reward: [], punish: [], special: [] }
+    );
+    var ruleSummary = rulesViewModel.summarizeRules(rulesData);
+    var ruleCopy = isChild ? {
+      title: '我的成长糖果地图',
+      intro: '看看怎样赚糖、怎样护住糖，遇到不明白的可以和家长一起读',
+      reward: '怎么赚糖',
+      punish: '护糖提醒',
+      special: '家庭约定'
+    } : {
+      title: '我们家的成长约定',
+      intro: '和孩子一起看懂通常分值、调整范围和每条规则的原因',
+      reward: '鼓励加分',
+      punish: '改进提醒',
+      special: '家庭约定'
+    };
+    var ruleBrowserState = this._makeRuleBrowser(
+      rulesData,
+      isChild,
+      this.data.ruleQuery,
+      this.data.ruleFilter,
+      this.data.ruleExpandedKey
+    );
+    var frequent = rulesViewModel.frequentRules(rulesData, this.data.historyList, 4);
 
     this.setData({
       isLoggedIn: isLoggedIn,
@@ -226,12 +280,81 @@ Page({
       themeClass: app.globalData.theme === 'mint' ? 'theme-mint' : '',
       iconTheme: app.globalData.theme === 'amber' ? 'amber' : 'mint',
       rulesData: rulesData,
-      version: g.version || '2.2.0'
+      ruleSummary: ruleSummary,
+      ruleBrowser: ruleBrowserState.browser,
+      ruleExpandedKey: ruleBrowserState.expandedKey,
+      ruleFilterOptions: [
+        { value: 'all', label: '全部' },
+        { value: 'reward', label: ruleCopy.reward },
+        { value: 'punish', label: ruleCopy.punish },
+        { value: 'special', label: ruleCopy.special }
+      ],
+      ruleCenterTitle: ruleCopy.title,
+      ruleCenterIntro: ruleCopy.intro,
+      frequentRules: frequent,
+      version: g.version || '2.3.0'
     });
 
     if (isLoggedIn) {
       this.loadHistory();
     }
+  },
+
+  _makeRuleBrowser: function(rulesData, isChild, query, filter, expandedKey) {
+    var browser = rulesViewModel.buildBrowserData(rulesData, {
+      isChild: isChild,
+      query: query,
+      filter: filter
+    });
+    var normalizedQuery = String(query || '').trim();
+    var explicitlyCollapsed = expandedKey === '__none__';
+    var activeExpandedKey = explicitlyCollapsed ? '' : String(expandedKey || '');
+    var hasExpanded = browser.categories.some(function(category) {
+      return category.key === activeExpandedKey;
+    });
+    if (!normalizedQuery && !hasExpanded && !explicitlyCollapsed && browser.categories.length) {
+      activeExpandedKey = browser.categories[0].key;
+    }
+    browser.categories = browser.categories.map(function(category) {
+      category.expanded = normalizedQuery ? true : category.key === activeExpandedKey;
+      category.items = category.items.map(function(item) {
+        item.key = category.key + '-' + item.itemIndex;
+        return item;
+      });
+      return category;
+    });
+    browser.specials = browser.specials.map(function(item, index) {
+      item.numberText = index < 9 ? '0' + (index + 1) : String(index + 1);
+      return item;
+    });
+    return { browser: browser, expandedKey: activeExpandedKey };
+  },
+
+  _refreshRuleBrowser: function(options) {
+    var opts = options || {};
+    var query = opts.query !== undefined ? opts.query : this.data.ruleQuery;
+    var filter = opts.filter || this.data.ruleFilter;
+    var expandedKey = opts.expandedKey !== undefined ? opts.expandedKey : this.data.ruleExpandedKey;
+    var state = this._makeRuleBrowser(
+      this.data.rulesData || { reward: [], punish: [], special: [] },
+      this.data.isChild,
+      query,
+      filter,
+      expandedKey
+    );
+    this.setData({
+      ruleQuery: query,
+      ruleFilter: filter,
+      ruleExpandedKey: state.expandedKey,
+      ruleBrowser: state.browser
+    });
+  },
+
+  _saveRuleBrowserPreference: function() {
+    wx.setStorageSync(RULE_CENTER_PREF_KEY, {
+      filter: this.data.ruleFilter,
+      expandedKey: this.data.ruleExpandedKey
+    });
   },
 
   // ========== 登录 ==========
@@ -386,12 +509,14 @@ Page({
     var name = e.currentTarget.dataset.name;
     var card = this.data.childCards.find(function(c) { return c.id === kid; });
     var points = card ? card.score : 0;
+    var kidHistory = (this.data.historyList || []).filter(function(record) { return record.kid === kid; });
 
     this.setData({
       sheetVisible: true,
       sheetKidId: kid,
       sheetKidName: name,
-      sheetKidPoints: points
+      sheetKidPoints: points,
+      frequentRules: rulesViewModel.frequentRules(this.data.rulesData, kidHistory, 4)
     });
   },
 
@@ -514,6 +639,93 @@ Page({
     this.setData({ activeTab: tab });
   },
 
+  // ========== 规则中心 ==========
+  onRuleQueryInput: function(e) {
+    this._refreshRuleBrowser({ query: String((e.detail && e.detail.value) || '') });
+  },
+
+  onRuleQueryClear: function() {
+    this._refreshRuleBrowser({ query: '' });
+  },
+
+  onRuleFilterTap: function(e) {
+    var filter = e.currentTarget.dataset.filter;
+    if (['all', 'reward', 'punish', 'special'].indexOf(filter) < 0 || filter === this.data.ruleFilter) return;
+    this._refreshRuleBrowser({ filter: filter, expandedKey: '' });
+    this._saveRuleBrowserPreference();
+  },
+
+  onRuleCategoryTap: function(e) {
+    if (String(this.data.ruleQuery || '').trim()) return;
+    var key = String(e.currentTarget.dataset.key || '');
+    var expandedKey = key === this.data.ruleExpandedKey ? '__none__' : key;
+    this._refreshRuleBrowser({ expandedKey: expandedKey });
+    this._saveRuleBrowserPreference();
+  },
+
+  onRuleItemTap: function(e) {
+    this._openRuleDetail(e.currentTarget.dataset.item);
+  },
+
+  onFrequentRuleTap: function(e) {
+    this._openRuleDetail(e.currentTarget.dataset.item);
+  },
+
+  onSpecialRuleTap: function(e) {
+    var item = e.currentTarget.dataset.item || {};
+    this.setData({
+      ruleDetailVisible: true,
+      ruleDetail: {
+        isSpecial: true,
+        label: '我们家的约定',
+        typeText: this.data.isChild ? '和家人一起遵守' : '全家共同遵守',
+        hintText: String(item.text || ''),
+        toneClass: 'special'
+      }
+    });
+  },
+
+  _openRuleDetail: function(item) {
+    if (!item) return;
+    var isReward = item.type === 'reward' || item.isReward;
+    var isChild = this.data.isChild;
+    var fallbackHint = isReward
+      ? (isChild
+        ? '做到这件事，就是在给自己的成长糖罐添糖。'
+        : '看到孩子做到这件事时，及时说出具体的努力并给予鼓励。')
+      : (isChild
+        ? '一次提醒不代表失败，知道原因、下次做好，就能继续护住糖果。'
+        : '先说明发生了什么，再和孩子约定下一次可以怎样做。');
+    this.setData({
+      ruleDetailVisible: true,
+      ruleDetail: {
+        isSpecial: false,
+        label: item.label || '未命名规则',
+        typeText: isReward
+          ? (isChild ? '怎么赚糖' : '鼓励加分')
+          : (isChild ? '护糖提醒' : '改进提醒'),
+        defaultCaption: isChild
+          ? (isReward ? '通常会得到' : '通常会扣掉')
+          : '通常分值',
+        defaultText: item.defaultValue === null || item.defaultValue === undefined
+          ? (item.defaultText || '分值待设置')
+          : (rulesViewModel.signedNumber(item.defaultValue) + ' 分'),
+        rangeCaption: isChild ? '一次大约是' : '可调整范围',
+        rangeText: item.min === null || item.max === null
+          ? (item.rangeText || '范围待设置')
+          : (item.rangeText + ' 分'),
+        unitText: item.unit || '按每次记录',
+        hintCaption: isChild ? '为什么这样做' : '给孩子这样解释',
+        hintText: item.hint || fallbackHint,
+        toneClass: isReward ? 'reward' : 'punish'
+      }
+    });
+  },
+
+  onRuleDetailClose: function() {
+    this.setData({ ruleDetailVisible: false, ruleDetail: null });
+  },
+
   // ========== 加载历史 ==========
   loadHistory: function() {
     var that = this;
@@ -523,7 +735,10 @@ Page({
       : (this.data.activeKidView !== 'all' ? this.data.activeKidView : null);
     app.fetchAPI('/api/history').then(function(data) {
       if (!data || !data.history || data.history.length === 0) {
-        that.setData({ historyList: [] });
+        that.setData({
+          historyList: [],
+          frequentRules: rulesViewModel.frequentRules(that.data.rulesData, [], 4)
+        });
         return;
       }
       var list = data.history.map(function(r) {
@@ -547,7 +762,10 @@ Page({
       if (selfKid) {
         list = list.filter(function(r) { return r.kid === selfKid; });
       }
-      that.setData({ historyList: list });
+      that.setData({
+        historyList: list,
+        frequentRules: rulesViewModel.frequentRules(that.data.rulesData, list, 4)
+      });
     });
   },
 

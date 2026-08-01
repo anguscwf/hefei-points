@@ -1,23 +1,453 @@
-/* 操作弹窗样式 — 大部分样式已在 app.wxss 全局定义 */
-.sheet-scroll {
-  max-height: 50vh;
+/* 记分弹层：常用优先、分类折叠，颜色和圆角全部复用全局主题 token。 */
+.sheet-panel {
+  background: var(--bg);
+  overflow: hidden;
 }
-.quick-guide {
+
+.sheet-header {
+  gap: 18rpx;
   margin-bottom: 18rpx;
+}
+
+.sheet-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.sheet-title,
+.sheet-subtitle,
+.section-eyebrow,
+.section-title,
+.section-note,
+.frequent-rule-label,
+.frequent-rule-meta,
+.category-title,
+.category-preview,
+.rule-row-label,
+.rule-row-meta,
+.manual-card-title,
+.manual-card-note,
+.rules-empty-title,
+.rules-empty-copy {
+  display: block;
+}
+
+.sheet-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-subtitle {
+  margin-top: 4rpx;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  line-height: 1.5;
+}
+
+.sheet-close {
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--surface-soft);
+}
+
+.sheet-scroll {
+  max-height: 58vh;
+}
+
+.quick-guide {
+  margin-bottom: 20rpx;
   padding: 14rpx 18rpx;
-  border-radius: 20rpx;
-  color: var(--amber);
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--accent-dark);
   background: var(--amber-light);
   font-size: var(--font-xs);
+  line-height: 1.55;
   text-align: center;
 }
-.sheet-section-title.icon-heading { display: flex; }
+
+.quick-section,
+.all-rules-section,
+.manual-card,
+.rules-empty {
+  margin-bottom: 20rpx;
+  padding: 20rpx;
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+}
+
+.section-heading-row,
+.category-summary,
+.category-title-line,
+.rule-row,
+.manual-card-trigger,
+.manual-card-heading,
+.frequent-rule-top,
+.rule-type-heading {
+  display: flex;
+  align-items: center;
+}
+
+.section-heading-row {
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 16rpx;
+}
+
+.section-heading-row.compact {
+  margin-bottom: 8rpx;
+}
+
+.section-eyebrow {
+  margin-bottom: 2rpx;
+  color: var(--accent);
+  font-size: var(--font-xs);
+  font-weight: 700;
+  letter-spacing: 2rpx;
+}
+
+.section-title {
+  color: var(--text);
+  font-size: var(--font-md);
+  font-weight: 800;
+}
+
+.section-note {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--font-xs);
+}
+
+.frequent-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12rpx;
+}
+
+.frequent-rule {
+  min-width: 0;
+  padding: 16rpx;
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  box-sizing: border-box;
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+
+.frequent-rule.reward {
+  border-top: 5rpx solid var(--green);
+}
+
+.frequent-rule.punish {
+  border-top: 5rpx solid var(--red);
+}
+
+.rule-card-hover {
+  transform: translateY(-2rpx) scale(.985);
+  box-shadow: var(--shadow-sm);
+}
+
+.frequent-rule-top {
+  justify-content: space-between;
+  gap: 8rpx;
+}
+
+.frequent-rule-kind {
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  white-space: nowrap;
+}
+
+.default-score,
+.rule-default-pill {
+  flex: 0 0 auto;
+  border-radius: 999rpx;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.default-score {
+  padding: 5rpx 10rpx;
+  color: var(--accent-dark);
+  background: var(--amber-light);
+  font-size: var(--font-sm);
+}
+
+.frequent-rule.reward .default-score,
+.rule-row.reward .rule-default-pill {
+  color: var(--green);
+}
+
+.frequent-rule.punish .default-score,
+.rule-row.punish .rule-default-pill {
+  color: var(--red);
+}
+
+.frequent-rule-label {
+  display: -webkit-box;
+  min-height: 72rpx;
+  margin-top: 12rpx;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-md);
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-all;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.frequent-rule-meta {
+  margin-top: 8rpx;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-type-heading {
+  gap: 10rpx;
+  margin: 22rpx 2rpx 10rpx;
+}
+
+.rule-type-copy {
+  min-width: 0;
+}
+
+.rule-type-title,
+.rule-type-note {
+  display: block;
+}
+
+.rule-type-title {
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
+.rule-type-heading.reward .rule-type-title {
+  color: var(--green);
+}
+
+.rule-type-heading.punish .rule-type-title {
+  color: var(--red);
+}
+
+.rule-type-note {
+  margin-top: 2rpx;
+  color: var(--muted);
+  font-size: var(--font-xs);
+}
+
+.category-card {
+  margin-bottom: 10rpx;
+  overflow: hidden;
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.category-card.expanded {
+  box-shadow: var(--shadow-sm);
+}
+
+.category-summary {
+  min-height: 92rpx;
+  gap: 14rpx;
+  padding: 15rpx 16rpx;
+  box-sizing: border-box;
+}
+
+.category-summary:active {
+  background: var(--surface-soft);
+}
+
+.category-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.category-title-line {
+  min-width: 0;
+  gap: 10rpx;
+}
+
+.category-title {
+  min-width: 0;
+  max-width: 78%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-sm);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-count {
+  flex: 0 0 auto;
+  padding: 3rpx 10rpx;
+  border-radius: 999rpx;
+  color: var(--accent-dark);
+  background: var(--amber-light);
+  font-size: var(--font-xs);
+  white-space: nowrap;
+}
+
+.punish-card .category-count {
+  color: var(--red);
+}
+
+.category-preview {
+  margin-top: 4rpx;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--font-lg);
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform .2s ease;
+}
+
+.category-chevron.expanded {
+  transform: rotate(180deg);
+}
+
+.category-rules {
+  padding: 0 12rpx 12rpx;
+}
+
+.rule-row {
+  min-width: 0;
+  justify-content: space-between;
+  gap: 14rpx;
+  margin-top: 8rpx;
+  padding: 15rpx 14rpx;
+  border-left: 5rpx solid var(--green);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  box-sizing: border-box;
+}
+
+.rule-row.punish {
+  border-left-color: var(--red);
+}
+
+.rule-row-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.rule-row-label {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--font-sm);
+  font-weight: 700;
+  line-height: 1.35;
+  word-break: break-all;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rule-row-meta {
+  margin-top: 4rpx;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-default-pill {
+  max-width: 170rpx;
+  padding: 7rpx 12rpx;
+  overflow: hidden;
+  background: var(--amber-light);
+  font-size: var(--font-sm);
+  text-overflow: ellipsis;
+}
+
+.rules-empty {
+  align-items: center;
+  padding-top: 30rpx;
+  padding-bottom: 30rpx;
+  text-align: center;
+}
+
+.rules-empty-mark {
+  display: block;
+  margin-bottom: 8rpx;
+  font-size: var(--font-xl);
+}
+
+.rules-empty-title {
+  color: var(--text);
+  font-size: var(--font-md);
+  font-weight: 700;
+}
+
+.rules-empty-copy {
+  margin-top: 6rpx;
+  color: var(--muted);
+  font-size: var(--font-xs);
+  line-height: 1.6;
+}
+
+.manual-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.manual-card-trigger {
+  justify-content: space-between;
+  gap: 16rpx;
+  min-height: 96rpx;
+  padding: 16rpx 20rpx;
+  box-sizing: border-box;
+}
+
+.manual-card-trigger:active {
+  background: var(--surface-soft);
+}
+
+.manual-card-heading {
+  min-width: 0;
+  gap: 12rpx;
+}
+
+.manual-card-title {
+  color: var(--text);
+  font-size: var(--font-sm);
+  font-weight: 700;
+}
+
+.manual-card-note {
+  margin-top: 3rpx;
+  color: var(--muted);
+  font-size: var(--font-xs);
+}
+
+.manual-body {
+  padding: 0 20rpx 20rpx;
+  border-top: 1rpx solid var(--border);
+}
 
 .manual-sign-switch {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12rpx;
-  margin-top: 10rpx;
+  margin-top: 16rpx;
   padding: 8rpx;
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -39,16 +469,16 @@
 
 .manual-sign-option.reward.active {
   color: var(--green);
-  border-color: rgba(45,155,122,.3);
-  background: rgba(45,155,122,.12);
-  box-shadow: 0 6rpx 14rpx rgba(45,155,122,.12);
+  border-color: var(--border);
+  background: var(--surface-soft);
+  box-shadow: var(--shadow-sm);
 }
 
 .manual-sign-option.punish.active {
   color: var(--red);
-  border-color: rgba(226,75,74,.28);
-  background: rgba(226,75,74,.1);
-  box-shadow: 0 6rpx 14rpx rgba(226,75,74,.1);
+  border-color: var(--border);
+  background: var(--surface-soft);
+  box-shadow: var(--shadow-sm);
 }
 
 .manual-sign-symbol {
@@ -56,21 +486,37 @@
   line-height: 1;
 }
 
-.manual-row .manual-amount-field {
+.manual-row {
+  display: block;
+  padding: 14rpx 0 0;
+}
+
+.manual-fields {
+  display: flex;
+  align-items: stretch;
+  gap: 10rpx;
+}
+
+.manual-fields .manual-amount-field {
   flex: 0 0 190rpx;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 2rpx;
   padding: 12rpx;
-  box-sizing: border-box;
   border: 1rpx solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
+  box-sizing: border-box;
 }
 
-.manual-amount-field.reward .manual-amount-sign { color: var(--green); }
-.manual-amount-field.punish .manual-amount-sign { color: var(--red); }
+.manual-amount-field.reward .manual-amount-sign {
+  color: var(--green);
+}
+
+.manual-amount-field.punish .manual-amount-sign {
+  color: var(--red);
+}
 
 .manual-amount-sign {
   flex: 0 0 auto;
@@ -78,13 +524,29 @@
   font-weight: 800;
 }
 
-.manual-row .manual-amount-field .manual-amt {
+.manual-fields .manual-amount-field .manual-amt {
   min-width: 0;
   padding: 0;
   border: 0;
   background: transparent;
 }
 
-.manual-row > .manual-reason {
+.manual-fields > .manual-reason {
   min-width: 0;
+  flex: 1;
+  padding: 12rpx;
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  box-sizing: border-box;
+  font-size: var(--font-sm);
+}
+
+.manual-confirm {
+  width: 100%;
+  margin-top: 12rpx;
+}
+
+.sheet-safe-space {
+  height: 28rpx;
 }

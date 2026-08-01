@@ -2,60 +2,178 @@
 <view class="sheet-overlay" wx:if="{{show}}" catchtap="noop" style="animation: fadeIn 0.25s ease;"></view>
 <view class="sheet-panel" wx:if="{{show}}" style="animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);">
   <view class="sheet-header">
-    <text class="sheet-title">{{kidName}} · 当前 {{kidPoints}}分</text>
+    <view class="sheet-heading">
+      <text class="sheet-title">{{kidName || '孩子'}} · 当前 {{kidPoints}}分</text>
+      <text class="sheet-subtitle">看见每一次努力，也温柔提醒每一次成长</text>
+    </view>
     <view class="sheet-close" bindtap="onClose">✕</view>
   </view>
 
   <scroll-view class="sheet-scroll" scroll-y enhanced show-scrollbar="{{false}}">
-    <view class="quick-guide">轻点直接记默认分 · 长按可调整分数</view>
+    <view class="quick-guide">{{guideText}}</view>
 
-    <!-- 加分规则 -->
-    <block wx:if="{{rewardRules && rewardRules.length > 0}}">
-      <view class="sheet-section-title icon-heading" style="color: var(--green);"><ui-icon name="trend-up" size="30" theme="{{theme}}" /><text>加分</text></view>
-      <block wx:for="{{rewardRules}}" wx:key="category" wx:for-item="cat">
-        <text class="text-sm text-muted" style="display:block; padding:4rpx 0;">{{cat.category}}</text>
-        <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item"
-          class="rule-btn reward"
-          bindtap="onSelectRule" bindlongpress="onAdjustRule" data-item="{{item}}">
-          <text class="rule-btn-label">{{item.label}}</text>
-          <text class="rule-btn-hint">{{item.unit}} · 默认 +{{item.default}} 分</text>
+    <!-- 常用规则：轻点快速记分，长按沿用原有调整事件。 -->
+    <view class="quick-section" wx:if="{{frequentRuleViews.length}}">
+      <view class="section-heading-row">
+        <view>
+          <text class="section-eyebrow">快捷记录</text>
+          <text class="section-title">常用规则</text>
         </view>
-      </block>
-    </block>
-
-    <!-- 扣分规则 -->
-    <block wx:if="{{punishRules && punishRules.length > 0}}">
-      <view class="sheet-section-title icon-heading" style="color: var(--red);"><ui-icon name="trend-down" size="30" theme="{{theme}}" /><text>扣分</text></view>
-      <block wx:for="{{punishRules}}" wx:key="category" wx:for-item="cat">
-        <text class="text-sm text-muted" style="display:block; padding:4rpx 0;">{{cat.category}}</text>
-        <view wx:for="{{cat.items}}" wx:key="id" wx:for-item="item"
-          class="rule-btn punish"
-          bindtap="onSelectRule" bindlongpress="onAdjustRule" data-item="{{item}}">
-          <text class="rule-btn-label">{{item.label}}</text>
-          <text class="rule-btn-hint">{{item.unit}} · 默认 {{item.default}} 分</text>
-        </view>
-      </block>
-    </block>
-
-    <!-- 手动输入 -->
-    <view class="sheet-section-title icon-heading"><ui-icon name="edit" size="30" theme="{{theme}}" /><text>手动输入</text></view>
-    <view class="manual-sign-switch">
-      <view class="manual-sign-option reward {{manualSign === 1 ? 'active' : ''}}" bindtap="onManualSignChange" data-sign="1">
-        <text class="manual-sign-symbol">＋</text><text>加分</text>
+        <text class="section-note">通常分值已突出</text>
       </view>
-      <view class="manual-sign-option punish {{manualSign === -1 ? 'active' : ''}}" bindtap="onManualSignChange" data-sign="-1">
-        <text class="manual-sign-symbol">−</text><text>扣分</text>
+      <view class="frequent-grid">
+        <view
+          wx:for="{{frequentRuleViews}}"
+          wx:key="key"
+          wx:for-item="item"
+          class="frequent-rule {{item.isReward ? 'reward' : 'punish'}}"
+          hover-class="rule-card-hover"
+          bindtap="onSelectRule"
+          bindlongpress="onAdjustRule"
+          data-item="{{item.raw}}"
+        >
+          <view class="frequent-rule-top">
+            <text class="frequent-rule-kind">{{item.isReward ? '赚糖' : '护糖提醒'}}</text>
+            <text class="default-score">{{item.defaultDisplay}}</text>
+          </view>
+          <text class="frequent-rule-label">{{item.label}}</text>
+          <text class="frequent-rule-meta">{{item.category}}{{item.unit ? ' · ' + item.unit : ''}}</text>
+        </view>
       </view>
     </view>
-    <view class="manual-row">
-      <view class="manual-amount-field {{manualSign === -1 ? 'punish' : 'reward'}}">
-        <text class="manual-amount-sign">{{manualSign === -1 ? '−' : '＋'}}</text>
-        <input class="manual-amt" type="number" placeholder="{{manualSign === -1 ? '扣分数' : '加分数'}}" value="{{manualAmt}}" bindinput="onAmtInput" />
+
+    <!-- 全部规则仅展示分类摘要；同一时间最多展开一个分类。 -->
+    <view class="all-rules-section" wx:if="{{!rulesEmpty}}">
+      <view class="section-heading-row compact">
+        <view>
+          <text class="section-eyebrow">按分类查找</text>
+          <text class="section-title">全部规则</text>
+        </view>
+        <text class="section-note">共 {{rulesTotal}} 条</text>
       </view>
-      <input class="manual-reason" type="text" placeholder="事由（选填）" value="{{manualReason}}" bindinput="onReasonInput" />
-      <button class="btn btn-primary btn-xs" bindtap="onManualConfirm">确定</button>
+
+      <block wx:if="{{rewardCategories.length}}">
+        <view class="rule-type-heading reward">
+          <ui-icon name="trend-up" size="30" theme="{{theme}}" />
+          <view class="rule-type-copy">
+            <text class="rule-type-title">怎么赚糖</text>
+            <text class="rule-type-note">及时肯定做得好的小事</text>
+          </view>
+        </view>
+        <view class="category-card {{expandedCategoryKey === cat.key ? 'expanded' : ''}}" wx:for="{{rewardCategories}}" wx:key="key" wx:for-item="cat">
+          <view class="category-summary" bindtap="onToggleCategory" data-key="{{cat.key}}">
+            <view class="category-copy">
+              <view class="category-title-line">
+                <text class="category-title">{{cat.category}}</text>
+                <text class="category-count">{{cat.count}} 项</text>
+              </view>
+              <text class="category-preview">{{cat.preview || '点开看看具体规则'}}</text>
+            </view>
+            <text class="category-chevron {{expandedCategoryKey === cat.key ? 'expanded' : ''}}">⌄</text>
+          </view>
+          <view class="category-rules" wx:if="{{expandedCategoryKey === cat.key}}">
+            <view
+              wx:for="{{cat.items}}"
+              wx:key="key"
+              wx:for-item="item"
+              class="rule-row reward"
+              hover-class="rule-card-hover"
+              bindtap="onSelectRule"
+              bindlongpress="onAdjustRule"
+              data-item="{{item.raw}}"
+            >
+              <view class="rule-row-copy">
+                <text class="rule-row-label">{{item.label}}</text>
+                <text class="rule-row-meta">{{item.unit || '每次'}} · {{item.rangeDisplay}}</text>
+              </view>
+              <text class="rule-default-pill">{{item.defaultDisplay}}</text>
+            </view>
+          </view>
+        </view>
+      </block>
+
+      <block wx:if="{{punishCategories.length}}">
+        <view class="rule-type-heading punish">
+          <ui-icon name="trend-down" size="30" theme="{{theme}}" />
+          <view class="rule-type-copy">
+            <text class="rule-type-title">护糖提醒</text>
+            <text class="rule-type-note">先讲清约定，再温柔提醒</text>
+          </view>
+        </view>
+        <view class="category-card punish-card {{expandedCategoryKey === cat.key ? 'expanded' : ''}}" wx:for="{{punishCategories}}" wx:key="key" wx:for-item="cat">
+          <view class="category-summary" bindtap="onToggleCategory" data-key="{{cat.key}}">
+            <view class="category-copy">
+              <view class="category-title-line">
+                <text class="category-title">{{cat.category}}</text>
+                <text class="category-count">{{cat.count}} 项</text>
+              </view>
+              <text class="category-preview">{{cat.preview || '点开看看具体规则'}}</text>
+            </view>
+            <text class="category-chevron {{expandedCategoryKey === cat.key ? 'expanded' : ''}}">⌄</text>
+          </view>
+          <view class="category-rules" wx:if="{{expandedCategoryKey === cat.key}}">
+            <view
+              wx:for="{{cat.items}}"
+              wx:key="key"
+              wx:for-item="item"
+              class="rule-row punish"
+              hover-class="rule-card-hover"
+              bindtap="onSelectRule"
+              bindlongpress="onAdjustRule"
+              data-item="{{item.raw}}"
+            >
+              <view class="rule-row-copy">
+                <text class="rule-row-label">{{item.label}}</text>
+                <text class="rule-row-meta">{{item.unit || '每次'}} · {{item.rangeDisplay}}</text>
+              </view>
+              <text class="rule-default-pill">{{item.defaultDisplay}}</text>
+            </view>
+          </view>
+        </view>
+      </block>
     </view>
 
-    <view style="height: 40rpx;"></view>
+    <view class="rules-empty" wx:if="{{rulesEmpty}}">
+      <text class="rules-empty-mark">🍬</text>
+      <text class="rules-empty-title">还没有可选的家庭规则</text>
+      <text class="rules-empty-copy">可以先手动记一笔，或请管理员添加规则</text>
+    </view>
+
+    <!-- 手动输入作为低频入口收纳，展开后仍沿用原有提交事件。 -->
+    <view class="manual-card {{manualExpanded ? 'expanded' : ''}}">
+      <view class="manual-card-trigger" bindtap="onToggleManual">
+        <view class="manual-card-heading">
+          <ui-icon name="edit" size="30" theme="{{theme}}" />
+          <view>
+            <text class="manual-card-title">手动记一笔</text>
+            <text class="manual-card-note">找不到合适规则时再使用</text>
+          </view>
+        </view>
+        <text class="category-chevron {{manualExpanded ? 'expanded' : ''}}">⌄</text>
+      </view>
+
+      <view class="manual-body" wx:if="{{manualExpanded}}">
+        <view class="manual-sign-switch">
+          <view class="manual-sign-option reward {{manualSign === 1 ? 'active' : ''}}" bindtap="onManualSignChange" data-sign="1">
+            <text class="manual-sign-symbol">＋</text><text>加分</text>
+          </view>
+          <view class="manual-sign-option punish {{manualSign === -1 ? 'active' : ''}}" bindtap="onManualSignChange" data-sign="-1">
+            <text class="manual-sign-symbol">−</text><text>扣分</text>
+          </view>
+        </view>
+        <view class="manual-row">
+          <view class="manual-fields">
+            <view class="manual-amount-field {{manualSign === -1 ? 'punish' : 'reward'}}">
+              <text class="manual-amount-sign">{{manualSign === -1 ? '−' : '＋'}}</text>
+              <input class="manual-amt" type="number" placeholder="{{manualSign === -1 ? '扣分数' : '加分数'}}" value="{{manualAmt}}" bindinput="onAmtInput" />
+            </view>
+            <input class="manual-reason" type="text" maxlength="50" placeholder="事由（选填，最多50字）" value="{{manualReason}}" bindinput="onReasonInput" />
+          </view>
+          <button class="btn btn-primary manual-confirm" bindtap="onManualConfirm">确认记录</button>
+        </view>
+      </view>
+    </view>
+
+    <view class="sheet-safe-space"></view>
   </scroll-view>
 </view>
