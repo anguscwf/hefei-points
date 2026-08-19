@@ -1,6 +1,26 @@
 {
+  "name": "hefei-points",
+  "version": "2.0.0",
+  "description": "糖罐积分管理 · 家庭积分奖惩系统",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "main": "server/index.js",
+  "scripts": {
+    "start": "cross-env NODE_ENV=production PORT=3001 DATA_DIR=./data node server/index.js",
+    "dev": "cross-env NODE_ENV=development PORT=3002 DATA_DIR=./data-dev node server/index.js",
+    "migrate:sqlite": "node scripts/migrate-json-to-sqlite.js",
+    "backup": "node scripts/backup-sqlite.js",
+    "test": "node --test --test-concurrency=1",
+    "pm2:logrotate": "node scripts/configure-pm2-logrotate.js",
+    "check": "node scripts/check-rename.js",
+    "audit": "npm audit --omit=dev",
+    "audit:fix": "npm audit fix"
+  },
   "dependencies": {
-    "@resvg/resvg-js": "^2.6.2",
-    "sharp": "^0.34.5"
+    "cross-env": "^10.1.0",
+    "express": "^4.22.2",
+    "helmet": "^8.3.0",
+    "pino": "^10.3.1"
   }
 }
