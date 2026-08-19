@@ -24,7 +24,8 @@ hefei-points/
 └─ docs/
    ├─ adr/             架构决策记录
    ├─ handoff/         开发交接指令
-   └─ plans/           当前总体方案与推进计划
+   ├─ plans/           当前总体方案与推进计划
+   └─ product/         历史产品与实施方案
 ```
 
 `data/`、`data-dev/`、`backups/` 和 `logs/` 是本地运行目录，不属于源码。
@@ -50,6 +51,7 @@ HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harm
 - [最新开发交接](docs/handoff/Codex-糖罐积分开发交接指令-20260820.md)
 - [HarmonyOS MVP 方案与推进计划](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)
 - [架构决策记录](docs/adr/README.md)
+- [历史规则界面优化方案](docs/product/规则界面优化方案-历史.md)
 
 ## 安全与 Git 基线
 
