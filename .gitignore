@@ -1,8 +1,53 @@
+# Dependencies and test output
 node_modules/
+coverage/
+.nyc_output/
+
+# Runtime data, logs and backups (never commit family data)
+/data/
+/data-dev/
+/backups/
+/logs/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
 .backup/
 *.tmp.*
-.DS_Store
-Thumbs.db
+
+# Local environment and private tool configuration
+.env
+.env.*
+!.env.example
+hefei-miniapp/project.private.config.json
+/.workbuddy/
 /workbuddy/
 /blobs/
 /clipboard-images/
+
+# HarmonyOS local state, build output and signing material
+/.hvigor/
+/.idea/
+/.ohos/
+hefei-harmonyos/.hvigor/
+hefei-harmonyos/.idea/
+hefei-harmonyos/.ohos/
+hefei-harmonyos/build/
+hefei-harmonyos/entry/build/
+hefei-harmonyos/oh_modules/
+hefei-harmonyos/entry/oh_modules/
+hefei-harmonyos/build-profile.json5
+*.p12
+*.csr
+*.cer
+*.p7b
+*.jks
+*.keystore
+*.app
+*.hap
+*.hsp
+*.har
+
+# Operating-system noise
+.DS_Store
+Thumbs.db
