@@ -637,6 +637,6 @@ doBackup();
 
 const PORT = 3001;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('[启动] 赫菲积分管理服务 v4.0 已启动：http://0.0.0.0:' + PORT);
+  console.log('[启动] 糖罐积分管理服务 v4.0 已启动：http://0.0.0.0:' + PORT);
   console.log('[v4.0] ✨ 新增：多家庭支持、邀请码机制、语音交互');
 });

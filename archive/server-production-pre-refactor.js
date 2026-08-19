@@ -2,9 +2,16 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const https = require('https');
+const querystring = require('querystring');
+
+// 生产环境关闭 console
+if (process.env.NODE_ENV === 'production') {
+  console.log = console.warn = () => {};
+}
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '50kb' }));
 
 app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -20,9 +27,39 @@ const POINTS_FILE = path.join(DATA_DIR, 'points.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 
-// ============== Token 签名密钥 ==============
-const TOKEN_SECRET = crypto.randomBytes(32).toString('hex');
-console.log('[安全] Token 签名密钥已生成（本次会话）');
+// ============== Token 签名密钥（持久化） ==============
+const SECRET_FILE = path.join(DATA_DIR, '.secret');
+let TOKEN_SECRET;
+try {
+  if (fs.existsSync(SECRET_FILE)) {
+    TOKEN_SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+    console.log('[安全] Token 密钥已从 data/.secret 加载');
+  } else {
+    TOKEN_SECRET = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(SECRET_FILE, TOKEN_SECRET, 'utf8');
+    console.log('[安全] Token 密钥已生成并持久化到 data/.secret');
+  }
+} catch (e) {
+  TOKEN_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('[安全] 密钥持久化失败，使用临时密钥:', e.message);
+}
+
+// ============== 微信配置 ==============
+const WX_APPID = process.env.WX_APPID || 'wx90237ce600b51eea';
+const WX_APPSECRET = process.env.WX_APPSECRET || (() => {
+  try {
+    const envFile = path.join(__dirname, '..', '.env');
+    if (fs.existsSync(envFile)) {
+      const lines = fs.readFileSync(envFile, 'utf8').split('\n');
+      for (const line of lines) {
+        const m = line.match(/^WX_APPSECRET=(.+)$/);
+        if (m) return m[1].trim();
+      }
+    }
+  } catch (e) {}
+  console.warn('[警告] WX_APPSECRET 未配置，wx-login 接口将不可用');
+  return '';
+})();
 
 // ============== 原子写入 ==============
 function atomicSave(filepath, data) {
@@ -31,17 +68,19 @@ function atomicSave(filepath, data) {
   fs.renameSync(tmp, filepath);
 }
 
-// ============== 并发写入锁 ==============
+// ============== 并发写入锁（Promise 队列） ==============
 const locks = {};
-function withLock(key, fn, timeoutMs = 3000) {
-  if (locks[key]) {
-    const start = Date.now();
-    while (locks[key] && Date.now() - start < timeoutMs) {}
-    if (locks[key]) throw new Error('写入冲突，请稍后重试');
+async function withLock(key, fn) {
+  const prev = locks[key] || Promise.resolve();
+  let release;
+  locks[key] = new Promise(r => { release = r; });
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    release();
+    if (locks[key] === locks[key]) delete locks[key];
   }
-  locks[key] = true;
-  try { return fn(); }
-  finally { delete locks[key]; }
 }
 
 // ============== JSON 读写 ==============
@@ -56,23 +95,11 @@ function saveJSON(filepath, data) {
   const dir = path.dirname(filepath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   atomicSave(filepath, data);
-  invalidateCache(filepath);
 }
 
-// ============== 内存缓存（减少重复磁盘读取） ==============
-const memCache = {};
-function cachedRead(filepath, fallback, ttlMs) {
-  const now = Date.now();
-  const entry = memCache[filepath];
-  if (entry && entry.time && (now - entry.time) < ttlMs) {
-    return JSON.parse(JSON.stringify(entry.data)); // 返回深拷贝
-  }
-  const data = loadJSON(filepath, fallback);
-  memCache[filepath] = { data, time: now };
-  return JSON.parse(JSON.stringify(data));
-}
 function invalidateCache(filepath) {
-  delete memCache[filepath];
+  // loadJSON 直接读磁盘，无需真正失效缓存
+  // 保留接口为将来加内存缓存留口子
 }
 
 // ============== 备份 ==============
@@ -251,6 +278,43 @@ function isHashed(pwd) {
   return pwd && pwd.length === 64 && /^[a-f0-9]{64}$/.test(pwd);
 }
 
+// ============== 微信 code2session ==============
+function wxCode2Session(code) {
+  return new Promise((resolve, reject) => {
+    if (!WX_APPSECRET) {
+      return reject(new Error('WX_APPSECRET 未配置'));
+    }
+    const params = querystring.stringify({
+      appid: WX_APPID,
+      secret: WX_APPSECRET,
+      js_code: code,
+      grant_type: 'authorization_code'
+    });
+    const url = `https://api.weixin.qq.com/sns/jscode2session?${params}`;
+
+    const req = https.get(url, { timeout: 5000 }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          if (data.errcode && data.errcode !== 0) {
+            reject(new Error(`微信接口返回错误 ${data.errcode}: ${data.errmsg}`));
+          } else if (!data.openid) {
+            reject(new Error('微信返回缺少 openid'));
+          } else {
+            resolve({ openid: data.openid, session_key: data.session_key, unionid: data.unionid });
+          }
+        } catch (e) {
+          reject(new Error('微信返回非 JSON：' + body.slice(0, 100)));
+        }
+      });
+    });
+    req.on('error', (e) => reject(new Error('请求微信失败：' + e.message)));
+    req.on('timeout', () => { req.destroy(); reject(new Error('请求微信超时')); });
+  });
+}
+
 // ============== Token 工具 ==============
 function signToken(userId, role, familyId) {
   const ts = Date.now();
@@ -271,7 +335,7 @@ function verifyToken(token) {
     if (sig !== expected) return null;
     const age = Date.now() - parseInt(ts);
     if (age > 30 * 24 * 60 * 60 * 1000) return null;
-    const config = cachedRead(CONFIG_FILE, {}, 5000);
+    const config = loadJSON(CONFIG_FILE, {});
     const user = (config.users || []).find(u => u.id === userId);
     return user ? { ...user, familyId: user.familyId || 'default' } : null;
   } else if (parts.length === 6 && parts[0] === 'hefei') {
@@ -282,7 +346,7 @@ function verifyToken(token) {
     if (sig !== expected) return null;
     const age = Date.now() - parseInt(ts);
     if (age > 30 * 24 * 60 * 60 * 1000) return null;
-    const config = cachedRead(CONFIG_FILE, {}, 5000);
+    const config = loadJSON(CONFIG_FILE, {});
     const user = (config.users || []).find(u => u.id === userId);
     return user ? { ...user, familyId: familyId } : null;
   }
@@ -296,25 +360,25 @@ function requireRole(token, allowedRoles) {
 }
 
 function getValidKids(familyId) {
-  const config = cachedRead(CONFIG_FILE, {}, 5000);
+  const config = loadJSON(CONFIG_FILE, {});
   return (config.users || [])
     .filter(u => u.role === 'child' && u.familyId === (familyId || 'default'))
     .map(u => u.id);
 }
 
 function getKidName(kid) {
-  const config = cachedRead(CONFIG_FILE, {}, 5000);
+  const config = loadJSON(CONFIG_FILE, {});
   const u = (config.users || []).find(u => u.id === kid);
   return u ? u.name : kid;
 }
 
 function getFamilyPoints(familyId) {
-  const allPoints = cachedRead(POINTS_FILE, {}, 3000);
+  const allPoints = loadJSON(POINTS_FILE, {});
   return allPoints[familyId || 'default'] || {};
 }
 
 function saveFamilyPoints(familyId, points) {
-  const allPoints = loadJSON(POINTS_FILE, {});
+  const allPoints = loadJSON(POINTS_FILE, {});  // 写入时必须读最新
   allPoints[familyId || 'default'] = points;
   saveJSON(POINTS_FILE, allPoints);
 }
@@ -345,7 +409,7 @@ app.get('/api/points', (req, res) => {
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
   const familyId = user.familyId;
   const points = getFamilyPoints(familyId);
-  const config = cachedRead(CONFIG_FILE, { rules: {} }, 30000);
+  const config = loadJSON(CONFIG_FILE, { rules: {} });
   const family = (config.families || {})[familyId] || null;
   res.json({
     success: true,
@@ -357,7 +421,7 @@ app.get('/api/points', (req, res) => {
 });
 
 // ============== 加减分（admin + parent） ==============
-app.post('/api/points/change', (req, res) => {
+app.post('/api/points/change', async (req, res) => {
   const { token, kid, amount, reason, note } = req.body;
   const user = requireRole(token, ['admin', 'parent']);
   if (!user) {
@@ -375,7 +439,7 @@ app.post('/api/points/change', (req, res) => {
   }
 
   try {
-    const result = withLock('points_change_' + familyId, () => {
+    const result = await withLock('points_change_' + familyId, () => {
       const points = getFamilyPoints(familyId);
       points[kid] = (points[kid] || 0) + amountNum;
       saveFamilyPoints(familyId, points);
@@ -409,8 +473,7 @@ app.get('/api/history', (req, res) => {
   const familyId = user.familyId;
   const { kid } = req.query;
 
-  const history = cachedRead(HISTORY_FILE, [], 3000);
-
+  const history = loadJSON(HISTORY_FILE, []);
   let filtered = history.filter(r => r.familyId === familyId);
   if (kid && getValidKids(familyId).includes(kid)) {
     filtered = filtered.filter(r => r.kid === kid);
@@ -418,32 +481,50 @@ app.get('/api/history', (req, res) => {
   res.json({ success: true, history: filtered.slice(0, 50) });
 });
 
-// ============== 编辑历史记录备注（限定家庭） ==============
-app.post('/api/history/note', (req, res) => {
+// ============== 编辑历史记录备注 ==============
+app.post('/api/history/note', async (req, res) => {
   const { token, recordId, note } = req.body;
   const user = requireRole(token, ['admin', 'parent']);
   if (!user) return res.status(403).json({ success: false, message: '无操作权限' });
-  const userFamilyId = user.familyId || 'default';
 
   try {
-    withLock('history_note', () => {
+    await withLock('history_note_' + recordId, () => {
       const history = loadJSON(HISTORY_FILE, []);
       const record = history.find(r => r.id === recordId);
       if (!record) throw new Error('记录不存在');
-      if (record.familyId !== userFamilyId) throw new Error('无权操作此记录');
       record.note = note || '';
       saveJSON(HISTORY_FILE, history);
     });
     res.json({ success: true });
   } catch (e) {
-    const status = e.message === '记录不存在' ? 404 : (e.message === '无权操作此记录' ? 403 : 503);
-    res.status(status).json({ success: false, message: e.message || '操作失败' });
+    res.status(e.message === '记录不存在' ? 404 : 503).json({ success: false, message: e.message || '操作失败' });
+  }
+});
+
+// ============== 删除历史记录（admin + parent） ==============
+app.post('/api/history/delete', async (req, res) => {
+  const { token, recordId } = req.body;
+  const user = requireRole(token, ['admin', 'parent']);
+  if (!user) return res.status(403).json({ success: false, message: '无操作权限' });
+
+  try {
+    await withLock('history_delete', () => {
+      const history = loadJSON(HISTORY_FILE, []);
+      const idx = history.findIndex(r => r.id === recordId);
+      if (idx === -1) throw new Error('记录不存在');
+      const removed = history.splice(idx, 1)[0];
+      saveJSON(HISTORY_FILE, history);
+      return removed;
+    });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(e.message === '记录不存在' ? 404 : 503).json({ success: false, message: e.message || '删除失败' });
   }
 });
 
 // ============== 获取配置 ==============
 app.get('/api/config', (req, res) => {
-  const config = cachedRead(CONFIG_FILE, { rules: {}, users: [], families: {} }, 15000);
+  const config = loadJSON(CONFIG_FILE, { rules: {}, users: [], families: {} });
   res.json({
     success: true,
     rules: config.rules || {},
@@ -453,7 +534,7 @@ app.get('/api/config', (req, res) => {
 });
 
 // ============== 获取家庭信息 ==============
-app.get('/api/family', (req, res) => {
+app.get('/api/family', async (req, res) => {
   const user = verifyToken(req.query.token || '');
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
   const config = loadJSON(CONFIG_FILE, {});
@@ -473,7 +554,7 @@ app.get('/api/family', (req, res) => {
 });
 
 // ============== 创建新家庭 ==============
-app.post('/api/family/create', (req, res) => {
+app.post('/api/family/create', async (req, res) => {
   const { token, familyName } = req.body;
   const user = verifyToken(token);
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
@@ -483,7 +564,7 @@ app.post('/api/family/create', (req, res) => {
   }
 
   try {
-    const result = withLock('family_create', () => {
+    const result = await withLock('family_create', () => {
       const config = loadJSON(CONFIG_FILE, {});
       const familyId = 'fam_' + Date.now().toString(36);
       const inviteCode = generateInviteCode();
@@ -524,7 +605,7 @@ app.post('/api/family/create', (req, res) => {
 });
 
 // ============== 通过邀请码加入家庭 ==============
-app.post('/api/family/join', (req, res) => {
+app.post('/api/family/join', async (req, res) => {
   const { token, inviteCode } = req.body;
   const user = verifyToken(token);
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
@@ -534,24 +615,11 @@ app.post('/api/family/join', (req, res) => {
   }
 
   try {
-    let targetFamilyId = null;
-    // 先查找目标家庭（锁外查找，避免占用锁）
-    const configPre = loadJSON(CONFIG_FILE, {});
-    const code = inviteCode.trim().toUpperCase();
-    for (const fid of Object.keys(configPre.families || {})) {
-      if (configPre.families[fid].inviteCode === code) {
-        targetFamilyId = fid;
-        break;
-      }
-    }
-    if (!targetFamilyId) {
-      return res.status(400).json({ success: false, message: '邀请码无效' });
-    }
-
-    const result = withLock('family_join_' + targetFamilyId, () => {
+    const result = await withLock('family_join', () => {
       const config = loadJSON(CONFIG_FILE, {});
+      const code = inviteCode.trim().toUpperCase();
 
-      // 查找匹配的邀请码（重新确认）
+      // 查找匹配的邀请码
       let targetFamily = null;
       for (const fid of Object.keys(config.families || {})) {
         if (config.families[fid].inviteCode === code) {
@@ -585,7 +653,7 @@ app.post('/api/family/join', (req, res) => {
 });
 
 // ============== 离开家庭 ==============
-app.post('/api/family/leave', (req, res) => {
+app.post('/api/family/leave', async (req, res) => {
   const { token } = req.body;
   const user = verifyToken(token);
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
@@ -599,7 +667,7 @@ app.post('/api/family/leave', (req, res) => {
   }
 
   try {
-    withLock('family_leave_' + familyId, () => {
+    await withLock('family_leave_' + familyId, () => {
       const config = loadJSON(CONFIG_FILE, {});
       const u = (config.users || []).find(u => u.id === user.id);
       if (!u) throw new Error('用户不存在');
@@ -614,7 +682,7 @@ app.post('/api/family/leave', (req, res) => {
 });
 
 // ============== 删除家庭（仅 admin） ==============
-app.post('/api/family/delete', (req, res) => {
+app.post('/api/family/delete', async (req, res) => {
   const { token, familyId } = req.body;
   const admin = requireRole(token, ['admin']);
   if (!admin) return res.status(403).json({ success: false, message: '仅管理员可删除家庭' });
@@ -625,7 +693,7 @@ app.post('/api/family/delete', (req, res) => {
   }
 
   try {
-    withLock('family_delete_' + targetFid, () => {
+    await withLock('family_delete_' + targetFid, () => {
       const config = loadJSON(CONFIG_FILE, {});
       if (!config.families || !config.families[targetFid]) {
         throw new Error('家庭不存在');
@@ -654,7 +722,7 @@ app.post('/api/family/delete', (req, res) => {
 });
 
 // ============== 在本家庭创建孩子（admin + parent） ==============
-app.post('/api/family/child/create', (req, res) => {
+app.post('/api/family/child/create', async (req, res) => {
   const { token, id, name, password } = req.body;
   const user = requireRole(token, ['admin', 'parent']);
   if (!user) return res.status(403).json({ success: false, message: '仅家长或管理员可添加孩子' });
@@ -668,7 +736,7 @@ app.post('/api/family/child/create', (req, res) => {
 
   const familyId = user.familyId || 'default';
   try {
-    withLock('child_create_' + familyId, () => {
+    await withLock('child_create_' + familyId, () => {
       const config = loadJSON(CONFIG_FILE, {});
       if ((config.users || []).find(u => u.id === id)) {
         throw new Error('该ID已被使用');
@@ -695,13 +763,13 @@ app.post('/api/family/child/create', (req, res) => {
 });
 
 // ============== 更新规则（仅 admin） ==============
-app.post('/api/config/rules', (req, res) => {
+app.post('/api/config/rules', async (req, res) => {
   const { token, rules } = req.body;
   if (!requireRole(token, ['admin'])) {
     return res.status(403).json({ success: false, message: '仅管理员可修改规则' });
   }
   try {
-    withLock('config_rules', () => {
+    await withLock('config_rules', () => {
       const config = loadJSON(CONFIG_FILE, { rules: {}, users: [], families: {} });
       config.rules = rules;
       saveJSON(CONFIG_FILE, config);
@@ -712,50 +780,140 @@ app.post('/api/config/rules', (req, res) => {
   }
 });
 
-// ============== 更新用户（仅 admin，按家庭隔离） ==========
-app.post('/api/config/users', (req, res) => {
+// ============== 更新用户（仅 admin） ==============
+app.post('/api/config/users', async (req, res) => {
   const { token, users } = req.body;
-  const admin = requireRole(token, ['admin']);
-  if (!admin) {
+  if (!requireRole(token, ['admin'])) {
     return res.status(403).json({ success: false, message: '仅管理员可管理用户' });
   }
-  const adminFamilyId = admin.familyId || 'default';
-
   try {
-    withLock('config_users_' + adminFamilyId, () => {
+    await withLock('config_users', () => {
       const config = loadJSON(CONFIG_FILE, { rules: {}, users: [], families: {} });
-      const allUsers = config.users || [];
-
-      // 保留其他家庭的用户不变
-      const otherFamilyUsers = allUsers.filter(u => u.familyId !== adminFamilyId);
-
-      // 只更新当前家庭的用户，新用户自动绑定当前 familyId
       const newUsers = users.map(u => {
-        const old = allUsers.find(ou => ou.id === u.id);
+        const old = (config.users || []).find(ou => ou.id === u.id);
         let password = u.password || (old ? old.password : '');
         if (password && !isHashed(password)) password = hashPwd(password);
-        return { ...u, password, familyId: adminFamilyId };
+        return { ...u, password, familyId: u.familyId || old?.familyId || 'default' };
       });
-
-      // 合并 = 其他家庭用户 + 当前家庭新用户
-      config.users = otherFamilyUsers.concat(newUsers);
+      config.users = newUsers;
       saveJSON(CONFIG_FILE, config);
     });
-    // 重新读取输出（从缓存）
-    const updated = cachedRead(CONFIG_FILE, {}, 5000);
-    const familyUsers = (updated.users || []).filter(u => u.familyId === adminFamilyId);
-    res.json({
-      success: true,
-      users: familyUsers.map(u => ({ id: u.id, name: u.name, role: u.role, familyId: adminFamilyId }))
-    });
+    res.json({ success: true, users: config.users.map(u => ({ id: u.id, name: u.name, role: u.role, familyId: u.familyId || 'default' })) });
   } catch (e) {
     res.status(503).json({ success: false, message: '保存失败' });
   }
 });
 
-// ============== 历史记录清理（限定家庭） ==========
-app.post('/api/history/cleanup', (req, res) => {
-  const { token, kid, beforeDate, afterDate } = req.body;
+// ============== 备份 API ==============
+app.post('/api/backup', async (req, res) => {
+  if (!requireRole(req.body.token, ['admin'])) {
+    return res.status(403).json({ success: false, message: '仅管理员可触发备份' });
+  }
+  res.json(doBackup());
+});
+
+app.get('/api/backups', async (req, res) => {
+  if (!requireRole(req.query.token || '', ['admin'])) {
+    return res.status(403).json({ success: false, message: '仅管理员可查看备份列表' });
+  }
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) return res.json({ success: true, backups: [] });
+    const backups = fs.readdirSync(BACKUP_DIR)
+      .filter(f => fs.statSync(path.join(BACKUP_DIR, f)).isDirectory())
+      .sort().reverse().slice(0, 30);
+    res.json({ success: true, backups });
+  } catch (e) { res.json({ success: true, backups: [] }); }
+});
+
+// ============== 微信一键登录 ==============
+app.post('/api/wx-login', async (req, res) => {
+  const { code } = req.body || {};
+  if (!code || typeof code !== 'string') {
+    return res.status(400).json({ success: false, message: '缺少 code' });
+  }
+
+  try {
+    const { openid } = await wxCode2Session(code);
+
+    const config = loadJSON(CONFIG_FILE, { users: [], families: {} });
+    const user = (config.users || []).find(u => u.openid === openid);
+
+    if (!user) {
+      return res.json({
+        success: true,
+        isNew: true,
+        openid,
+        message: '首次使用，请选择用户并输入密码完成绑定'
+      });
+    }
+
+    const familyId = user.familyId || 'default';
+    const family = (config.families || {})[familyId] || { id: 'default', name: '默认家庭' };
+    const token = signToken(user.id, user.role, familyId);
+
+    return res.json({
+      success: true,
+      isNew: false,
+      token,
+      user: { id: user.id, name: user.name, role: user.role, familyId },
+      family: { id: family.id, name: family.name }
+    });
+  } catch (e) {
+    console.error('[wx-login] 失败:', e.message);
+    return res.status(500).json({ success: false, message: '微信登录失败：' + e.message });
+  }
+});
+
+// ============== 微信账号绑定 ==============
+app.post('/api/wx-bind', async (req, res) => {
+  const { openid, userId, password } = req.body || {};
+  if (!openid || !userId || !password) {
+    return res.status(400).json({ success: false, message: '参数不完整（需 openid + userId + password）' });
+  }
+
+  try {
+    let result;
+    await withLock('wx_bind', () => {
+      const config = loadJSON(CONFIG_FILE, { users: [], families: {} });
+      const pwdHash = hashPwd(password);
+
+      const user = (config.users || []).find(u => u.id === userId && u.password === pwdHash);
+      if (!user) {
+        throw new Error('账号或密码错误');
+      }
+
+      const conflict = (config.users || []).find(u => u.openid === openid && u.id !== userId);
+      if (conflict) {
+        throw new Error(`此微信已绑定到「${conflict.name}」账号，如需切换请先解绑`);
+      }
+
+      user.openid = openid;
+      user.boundAt = new Date().toISOString();
+      saveJSON(CONFIG_FILE, config);
+      invalidateCache(CONFIG_FILE);
+
+      const familyId = user.familyId || 'default';
+      const family = (config.families || {})[familyId] || { id: 'default', name: '默认家庭' };
+      const token = signToken(user.id, user.role, familyId);
+
+      result = {
+        token,
+        user: { id: user.id, name: user.name, role: user.role, familyId },
+        family: { id: family.id, name: family.name }
+      };
+    });
+
+    return res.json({ success: true, ...result, message: `「${result.user.name}」绑定成功` });
+  } catch (e) {
+    const code = ['账号或密码错误'].includes(e.message) ? 403 :
+                 e.message.includes('已绑定到') ? 409 : 500;
+    return res.status(code).json({ success: false, message: e.message });
+  }
+});
+
+// ============== 历史记录清理（限定家庭） ==============
+app.post('/api/history/cleanup', async (req, res) => {
+  const { token, kid, beforeDate, afterDate } = req.body || {};
   const admin = requireRole(token, ['admin']);
   if (!admin) {
     return res.status(403).json({ success: false, message: '仅管理员可清理记录' });
@@ -764,7 +922,7 @@ app.post('/api/history/cleanup', (req, res) => {
 
   try {
     let deletedCount = 0;
-    withLock('history_cleanup_' + adminFamilyId, () => {
+    await withLock('history_cleanup_' + adminFamilyId, () => {
       const history = loadJSON(HISTORY_FILE, []);
       const keep = [];
       history.forEach(r => {
@@ -783,39 +941,16 @@ app.post('/api/history/cleanup', (req, res) => {
         }
       });
       saveJSON(HISTORY_FILE, keep);
+      invalidateCache(HISTORY_FILE);
     });
-    res.json({ success: true, deletedCount, message: `已清理 ${deletedCount} 条记录` });
+    return res.json({ success: true, deletedCount, message: `已清理 ${deletedCount} 条记录` });
   } catch (e) {
-    res.status(503).json({ success: false, message: '清理失败' });
+    return res.status(503).json({ success: false, message: '清理失败：' + e.message });
   }
 });
-
-// ============== 备份 API ==============
-app.post('/api/backup', (req, res) => {
-  if (!requireRole(req.body.token, ['admin'])) {
-    return res.status(403).json({ success: false, message: '仅管理员可触发备份' });
-  }
-  res.json(doBackup());
-});
-
-app.get('/api/backups', (req, res) => {
-  if (!requireRole(req.query.token || '', ['admin'])) {
-    return res.status(403).json({ success: false, message: '仅管理员可查看备份列表' });
-  }
-  try {
-    if (!fs.existsSync(BACKUP_DIR)) return res.json({ success: true, backups: [] });
-    const backups = fs.readdirSync(BACKUP_DIR)
-      .filter(f => fs.statSync(path.join(BACKUP_DIR, f)).isDirectory())
-      .sort().reverse().slice(0, 30);
-    res.json({ success: true, backups });
-  } catch (e) { res.json({ success: true, backups: [] }); }
-});
-
-// ============== 开机自动备份 ==============
-doBackup();
 
 const PORT = 3001;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('[启动] 赫菲积分管理服务 v4.0 已启动：http://0.0.0.0:' + PORT);
+  console.log('[启动] 糖罐积分管理服务 v4.0 已启动：http://0.0.0.0:' + PORT);
   console.log('[v4.0] ✨ 新增：多家庭支持、邀请码机制、语音交互');
 });

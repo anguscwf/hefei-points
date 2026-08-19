@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>赫菲积分管理</title>
+<title>糖罐积分管理</title>
 <style>
 :root {
   --blue: #4A90D9; --blue-light: #E8F2FC; --blue-dark: #2E6EB5;
@@ -250,7 +250,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 <div class="container">
 
 <div class="header">
-  <h1>赫菲积分管理</h1>
+  <h1>糖罐积分管理</h1>
   <p id="loginStatus">未登录</p>
   <button class="refresh-btn" onclick="loadData()">↻</button>
 </div>
@@ -313,7 +313,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
   </div>
 </div>
 
-<div class="footer">赫菲积分管理 · <span id="verText">v4.1</span> · 爸爸为恩赫恩菲制作 · 💬快捷</div>
+<div class="footer">糖罐积分管理 · <span id="verText">v4.1</span> · 爸爸为恩赫恩菲制作 · 💬快捷</div>
 </div>
 
 <!-- Overlay + Sheet -->
@@ -537,53 +537,9 @@ async function doChange(kid, amount, reason, note) {
     if (res.success) {
       var user = (state.allUsers || []).find(function(u) { return u.id === kid; });
       toast((user?user.name:kid) + ' ' + (amount>0?'+':'') + amount + '分');
-      // 直接使用响应中的最新分数，跳过 loadData（省 2 次 API 调用）
-      state.points = res.points;
-      updateUI(true);  // skipTabRefresh = true
-      // 积分记录 tab：把新记录插到列表最前面，不用重新请求服务器
-      if (state.tab === 'recent' && res.record) {
-        prependHistoryRecord(res.record);
-      }
-    } else {
-      if (res.message && res.message.indexOf('权限') !== -1) {
-        forceRelogin('登录已过期，请重新登录');
-      } else {
-        toast(res.message || '操作失败');
-      }
-    }
+      await loadData();
+    } else { toast(res.message); }
   } catch(e) { toast('操作失败'); }
-}
-
-// 把新记录插入历史列表最前面（不请求服务器）
-function prependHistoryRecord(record) {
-  var el = document.getElementById('tabContent');
-  var db = state.allUsers || [];
-  var user = db.find(function(u) { return u.id === record.kid; });
-  var kidColor = user ? (getKidColor(record.kid)||{}) : {};
-  var bc = kidColor.border || '#ccc';
-  var html = '<div class="history-item" style="border-left-color:'+bc+';" onclick="openDetailPopup(' + JSON.stringify(record).replace(/"/g, '&quot;') + ')">';
-  html += '<div class="hi-left">';
-  html += '<span class="hi-kid" style="color:'+bc+';">'+(user?user.name:record.kid)+'</span>';
-  html += '<span class="hi-amount '+(record.amount>=0?'plus':'minus')+'">'+(record.amount>=0?'+':'')+record.amount+'</span>';
-  html += '<span class="hi-reason">'+record.reason+'</span>';
-  if (record.note) html += '<span class="hi-note">'+record.note+'</span>';
-  html += '</div>';
-  html += '<div class="hi-right"><span class="hi-op">'+record.operator+'</span><span class="hi-time">'+record.time+'</span></div>';
-  html += '</div>';
-  var first = el.firstElementChild;
-  if (first && first.classList.contains('empty')) {
-    el.innerHTML = html;
-  } else {
-    el.insertAdjacentHTML('afterbegin', html);
-  }
-}
-
-function forceRelogin(msg) {
-  state.token = ''; state.user = null; state.points = null;
-  localStorage.removeItem('hefei_token');
-  localStorage.removeItem('hefei_user');
-  updateUI(); loadData();
-  alert(msg || '登录已过期，请重新登录');
 }
 
 // === Tabs ===
@@ -1112,7 +1068,7 @@ function toast(msg) {
 // === UI state ===
 function canOperate() { return state.user && (state.user.role === 'admin' || state.user.role === 'parent'); }
 
-function updateUI(skipTabRefresh) {
+function updateUI() {
   var kids = (state.allUsers || []).filter(function(u) { return u.role === 'child'; });
   if (state.user) {
     document.getElementById('loginBar').style.display = 'none';
@@ -1141,11 +1097,9 @@ function updateUI(skipTabRefresh) {
     });
     document.getElementById('scoreGrid').innerHTML = html;
   }
-  if (!skipTabRefresh) {
-    if (state.tab === 'recent') loadHistory();
-    else if (state.tab === 'rules') renderRulesTab();
-    else if (state.tab === 'report') renderReport();
-  }
+  if (state.tab === 'recent') loadHistory();
+  else if (state.tab === 'rules') renderRulesTab();
+  else if (state.tab === 'report') renderReport();
 }
 
 async function loadData() {
@@ -1327,19 +1281,10 @@ async function submitVoice() {
     if (res.success) {
       var kidName = ((state.allUsers || []).find(function(u) { return u.id === kid; }) || {}).name || kid;
       toast(kidName + ' ' + (amount >= 0 ? '+' : '') + amount + '分 — ' + reason);
-      // 直接使用响应中的最新分数和记录
       state.points = res.points;
-      updateUI(true);
-      if (state.tab === 'recent' && res.record) {
-        prependHistoryRecord(res.record);
-      }
-    } else {
-      if (res.message && res.message.indexOf('权限') !== -1) {
-        forceRelogin('登录已过期，请重新登录');
-      } else {
-        toast(res.message || '操作失败');
-      }
-    }
+      updateUI();
+      if (state.tab === 'recent') loadHistory();
+    } else { toast(res.message || '操作失败'); }
   } catch(e) { toast('提交失败，请检查网络'); }
 }
 

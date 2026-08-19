@@ -56,6 +56,23 @@ function saveJSON(filepath, data) {
   const dir = path.dirname(filepath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   atomicSave(filepath, data);
+  invalidateCache(filepath);
+}
+
+// ============== 内存缓存（减少重复磁盘读取） ==============
+const memCache = {};
+function cachedRead(filepath, fallback, ttlMs) {
+  const now = Date.now();
+  const entry = memCache[filepath];
+  if (entry && entry.time && (now - entry.time) < ttlMs) {
+    return JSON.parse(JSON.stringify(entry.data)); // 返回深拷贝
+  }
+  const data = loadJSON(filepath, fallback);
+  memCache[filepath] = { data, time: now };
+  return JSON.parse(JSON.stringify(data));
+}
+function invalidateCache(filepath) {
+  delete memCache[filepath];
 }
 
 // ============== 备份 ==============
@@ -254,7 +271,7 @@ function verifyToken(token) {
     if (sig !== expected) return null;
     const age = Date.now() - parseInt(ts);
     if (age > 30 * 24 * 60 * 60 * 1000) return null;
-    const config = loadJSON(CONFIG_FILE, {});
+    const config = cachedRead(CONFIG_FILE, {}, 5000);
     const user = (config.users || []).find(u => u.id === userId);
     return user ? { ...user, familyId: user.familyId || 'default' } : null;
   } else if (parts.length === 6 && parts[0] === 'hefei') {
@@ -265,7 +282,7 @@ function verifyToken(token) {
     if (sig !== expected) return null;
     const age = Date.now() - parseInt(ts);
     if (age > 30 * 24 * 60 * 60 * 1000) return null;
-    const config = loadJSON(CONFIG_FILE, {});
+    const config = cachedRead(CONFIG_FILE, {}, 5000);
     const user = (config.users || []).find(u => u.id === userId);
     return user ? { ...user, familyId: familyId } : null;
   }
@@ -279,25 +296,25 @@ function requireRole(token, allowedRoles) {
 }
 
 function getValidKids(familyId) {
-  const config = loadJSON(CONFIG_FILE, {});
+  const config = cachedRead(CONFIG_FILE, {}, 5000);
   return (config.users || [])
     .filter(u => u.role === 'child' && u.familyId === (familyId || 'default'))
     .map(u => u.id);
 }
 
 function getKidName(kid) {
-  const config = loadJSON(CONFIG_FILE, {});
+  const config = cachedRead(CONFIG_FILE, {}, 5000);
   const u = (config.users || []).find(u => u.id === kid);
   return u ? u.name : kid;
 }
 
 function getFamilyPoints(familyId) {
-  const allPoints = loadJSON(POINTS_FILE, {});
+  const allPoints = cachedRead(POINTS_FILE, {}, 3000);
   return allPoints[familyId || 'default'] || {};
 }
 
 function saveFamilyPoints(familyId, points) {
-  const allPoints = loadJSON(POINTS_FILE, {});  // 写入时必须读最新
+  const allPoints = loadJSON(POINTS_FILE, {});
   allPoints[familyId || 'default'] = points;
   saveJSON(POINTS_FILE, allPoints);
 }
@@ -328,7 +345,7 @@ app.get('/api/points', (req, res) => {
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
   const familyId = user.familyId;
   const points = getFamilyPoints(familyId);
-  const config = loadJSON(CONFIG_FILE, { rules: {} });
+  const config = cachedRead(CONFIG_FILE, { rules: {} }, 30000);
   const family = (config.families || {})[familyId] || null;
   res.json({
     success: true,
@@ -392,7 +409,8 @@ app.get('/api/history', (req, res) => {
   const familyId = user.familyId;
   const { kid } = req.query;
 
-  const history = loadJSON(HISTORY_FILE, []);
+  const history = cachedRead(HISTORY_FILE, [], 3000);
+
   let filtered = history.filter(r => r.familyId === familyId);
   if (kid && getValidKids(familyId).includes(kid)) {
     filtered = filtered.filter(r => r.kid === kid);
@@ -400,50 +418,32 @@ app.get('/api/history', (req, res) => {
   res.json({ success: true, history: filtered.slice(0, 50) });
 });
 
-// ============== 编辑历史记录备注 ==============
+// ============== 编辑历史记录备注（限定家庭） ==============
 app.post('/api/history/note', (req, res) => {
   const { token, recordId, note } = req.body;
   const user = requireRole(token, ['admin', 'parent']);
   if (!user) return res.status(403).json({ success: false, message: '无操作权限' });
+  const userFamilyId = user.familyId || 'default';
 
   try {
     withLock('history_note', () => {
       const history = loadJSON(HISTORY_FILE, []);
       const record = history.find(r => r.id === recordId);
       if (!record) throw new Error('记录不存在');
+      if (record.familyId !== userFamilyId) throw new Error('无权操作此记录');
       record.note = note || '';
       saveJSON(HISTORY_FILE, history);
     });
     res.json({ success: true });
   } catch (e) {
-    res.status(e.message === '记录不存在' ? 404 : 503).json({ success: false, message: e.message || '操作失败' });
-  }
-});
-
-// ============== 删除历史记录（admin + parent） ==============
-app.post('/api/history/delete', (req, res) => {
-  const { token, recordId } = req.body;
-  const user = requireRole(token, ['admin', 'parent']);
-  if (!user) return res.status(403).json({ success: false, message: '无操作权限' });
-
-  try {
-    withLock('history_delete', () => {
-      const history = loadJSON(HISTORY_FILE, []);
-      const idx = history.findIndex(r => r.id === recordId);
-      if (idx === -1) throw new Error('记录不存在');
-      const removed = history.splice(idx, 1)[0];
-      saveJSON(HISTORY_FILE, history);
-      return removed;
-    });
-    res.json({ success: true });
-  } catch (e) {
-    res.status(e.message === '记录不存在' ? 404 : 503).json({ success: false, message: e.message || '删除失败' });
+    const status = e.message === '记录不存在' ? 404 : (e.message === '无权操作此记录' ? 403 : 503);
+    res.status(status).json({ success: false, message: e.message || '操作失败' });
   }
 });
 
 // ============== 获取配置 ==============
 app.get('/api/config', (req, res) => {
-  const config = loadJSON(CONFIG_FILE, { rules: {}, users: [], families: {} });
+  const config = cachedRead(CONFIG_FILE, { rules: {}, users: [], families: {} }, 15000);
   res.json({
     success: true,
     rules: config.rules || {},
@@ -534,11 +534,24 @@ app.post('/api/family/join', (req, res) => {
   }
 
   try {
-    const result = withLock('family_join', () => {
-      const config = loadJSON(CONFIG_FILE, {});
-      const code = inviteCode.trim().toUpperCase();
+    let targetFamilyId = null;
+    // 先查找目标家庭（锁外查找，避免占用锁）
+    const configPre = loadJSON(CONFIG_FILE, {});
+    const code = inviteCode.trim().toUpperCase();
+    for (const fid of Object.keys(configPre.families || {})) {
+      if (configPre.families[fid].inviteCode === code) {
+        targetFamilyId = fid;
+        break;
+      }
+    }
+    if (!targetFamilyId) {
+      return res.status(400).json({ success: false, message: '邀请码无效' });
+    }
 
-      // 查找匹配的邀请码
+    const result = withLock('family_join_' + targetFamilyId, () => {
+      const config = loadJSON(CONFIG_FILE, {});
+
+      // 查找匹配的邀请码（重新确认）
       let targetFamily = null;
       for (const fid of Object.keys(config.families || {})) {
         if (config.families[fid].inviteCode === code) {
@@ -699,27 +712,81 @@ app.post('/api/config/rules', (req, res) => {
   }
 });
 
-// ============== 更新用户（仅 admin） ==============
+// ============== 更新用户（仅 admin，按家庭隔离） ==========
 app.post('/api/config/users', (req, res) => {
   const { token, users } = req.body;
-  if (!requireRole(token, ['admin'])) {
+  const admin = requireRole(token, ['admin']);
+  if (!admin) {
     return res.status(403).json({ success: false, message: '仅管理员可管理用户' });
   }
+  const adminFamilyId = admin.familyId || 'default';
+
   try {
-    withLock('config_users', () => {
+    withLock('config_users_' + adminFamilyId, () => {
       const config = loadJSON(CONFIG_FILE, { rules: {}, users: [], families: {} });
+      const allUsers = config.users || [];
+
+      // 保留其他家庭的用户不变
+      const otherFamilyUsers = allUsers.filter(u => u.familyId !== adminFamilyId);
+
+      // 只更新当前家庭的用户，新用户自动绑定当前 familyId
       const newUsers = users.map(u => {
-        const old = (config.users || []).find(ou => ou.id === u.id);
+        const old = allUsers.find(ou => ou.id === u.id);
         let password = u.password || (old ? old.password : '');
         if (password && !isHashed(password)) password = hashPwd(password);
-        return { ...u, password, familyId: u.familyId || old?.familyId || 'default' };
+        return { ...u, password, familyId: adminFamilyId };
       });
-      config.users = newUsers;
+
+      // 合并 = 其他家庭用户 + 当前家庭新用户
+      config.users = otherFamilyUsers.concat(newUsers);
       saveJSON(CONFIG_FILE, config);
     });
-    res.json({ success: true, users: config.users.map(u => ({ id: u.id, name: u.name, role: u.role, familyId: u.familyId || 'default' })) });
+    // 重新读取输出（从缓存）
+    const updated = cachedRead(CONFIG_FILE, {}, 5000);
+    const familyUsers = (updated.users || []).filter(u => u.familyId === adminFamilyId);
+    res.json({
+      success: true,
+      users: familyUsers.map(u => ({ id: u.id, name: u.name, role: u.role, familyId: adminFamilyId }))
+    });
   } catch (e) {
     res.status(503).json({ success: false, message: '保存失败' });
+  }
+});
+
+// ============== 历史记录清理（限定家庭） ==========
+app.post('/api/history/cleanup', (req, res) => {
+  const { token, kid, beforeDate, afterDate } = req.body;
+  const admin = requireRole(token, ['admin']);
+  if (!admin) {
+    return res.status(403).json({ success: false, message: '仅管理员可清理记录' });
+  }
+  const adminFamilyId = admin.familyId || 'default';
+
+  try {
+    let deletedCount = 0;
+    withLock('history_cleanup_' + adminFamilyId, () => {
+      const history = loadJSON(HISTORY_FILE, []);
+      const keep = [];
+      history.forEach(r => {
+        if (r.familyId !== adminFamilyId) {
+          keep.push(r);
+          return;
+        }
+        const matchKid = !kid || r.kid === kid;
+        const rDate = r.time ? r.time.split(' ')[0].replace(/\//g, '-') : '';
+        const matchBefore = !beforeDate || rDate <= beforeDate;
+        const matchAfter = !afterDate || rDate >= afterDate;
+        if (matchKid && matchBefore && matchAfter) {
+          deletedCount++;
+        } else {
+          keep.push(r);
+        }
+      });
+      saveJSON(HISTORY_FILE, keep);
+    });
+    res.json({ success: true, deletedCount, message: `已清理 ${deletedCount} 条记录` });
+  } catch (e) {
+    res.status(503).json({ success: false, message: '清理失败' });
   }
 });
 
@@ -749,6 +816,6 @@ doBackup();
 
 const PORT = 3001;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('[启动] 赫菲积分管理服务 v4.0 已启动：http://0.0.0.0:' + PORT);
+  console.log('[启动] 糖罐积分管理服务 v4.0 已启动：http://0.0.0.0:' + PORT);
   console.log('[v4.0] ✨ 新增：多家庭支持、邀请码机制、语音交互');
 });
