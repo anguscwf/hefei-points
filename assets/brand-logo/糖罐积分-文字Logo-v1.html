@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>糖罐积分 · 文字Logo方案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #f0ece4; display: flex; flex-wrap: wrap; gap: 32px; padding: 40px; justify-content: center; align-items: flex-start; font-family: 'ZCOOL KuaiLe', 'Microsoft YaHei', sans-serif; }
+  .card { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .label { font-size: 13px; color: #888; font-family: sans-serif; }
+
+  /* 方形版（头像/图标） */
+  .logo-square {
+    width: 280px; height: 280px;
+    background: #FFF4E6;
+    border-radius: 56px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  .row { display: flex; gap: 8px; }
+  .char { font-size: 90px; line-height: 1; }
+  .divider { width: 220px; height: 4px; background: #FFA94D; border-radius: 2px; margin: 14px 0; }
+
+  /* 横版 */
+  .logo-wide {
+    height: 100px;
+    background: #FFF4E6;
+    border-radius: 20px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 32px;
+    gap: 4px;
+  }
+  .char-wide { font-size: 62px; line-height: 1; }
+  .divider-v { width: 4px; height: 60px; background: #FFA94D; border-radius: 2px; margin: 0 20px; }
+
+  /* 配色变量 */
+  .tang  { color: #F06C9E; }
+  .guan  { color: #FFA94D; }
+  .ji    { color: #F2A81E; }
+  .fen   { color: #5FB73F; }
+</style>
+</head>
+<body>
+
+<!-- 版本1：标准方形（微信头像/App图标） -->
+<div class="card">
+  <div class="logo-square">
+    <div class="row">
+      <span class="char tang">糖</span>
+      <span class="char guan">罐</span>
+    </div>
+    <div class="divider"></div>
+    <div class="row">
+      <span class="char ji">积</span>
+      <span class="char fen">分</span>
+    </div>
+  </div>
+  <div class="label">方形版 · 头像 / App图标 280px</div>
+</div>
+
+<!-- 版本2：横版Logo（页面顶部/横幅） -->
+<div class="card">
+  <div class="logo-wide">
+    <span class="char-wide tang">糖</span>
+    <span class="char-wide guan">罐</span>
+    <div class="divider-v"></div>
+    <span class="char-wide ji">积</span>
+    <span class="char-wide fen">分</span>
+  </div>
+  <div class="label">横版 · 页面顶部 / 横幅</div>
+</div>
+
+<!-- 版本3：小尺寸预览（验证缩小后可读性） -->
+<div class="card">
+  <div class="logo-square" style="width:144px;height:144px;border-radius:28px;padding:10px;">
+    <div class="row">
+      <span class="char tang" style="font-size:44px;">糖</span>
+      <span class="char guan" style="font-size:44px;">罐</span>
+    </div>
+    <div class="divider" style="width:110px;height:3px;margin:7px 0;"></div>
+    <div class="row">
+      <span class="char ji" style="font-size:44px;">积</span>
+      <span class="char fen" style="font-size:44px;">分</span>
+    </div>
+  </div>
+  <div class="label">小尺寸 144px · 微信头像最低要求</div>
+</div>
+
+</body>
+</html>

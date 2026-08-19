@@ -16,7 +16,7 @@
   <circle cx="340" cy="340" r="300" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="2"/>
   
   <!-- HF 字母组合 -->
-  <text x="340" y="440" font-family="Arial, sans-serif" font-size="200" font-weight="bold" fill="white" text-anchor="middle" letter-spacing="-8">HF</text>
+  <text x="340" y="440" font-family="Arial, sans-serif" font-size="200" font-weight="bold" fill="white" text-anchor="middle" letter-spacing="-8">糖</text>
   
   <!-- 顶部星光 -->
   <circle cx="340" cy="120" r="28" fill="rgba(255,255,255,0.9)"/>
