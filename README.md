@@ -51,6 +51,7 @@ HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harm
 - [最新开发交接](docs/handoff/Codex-糖罐积分开发交接指令-20260820.md)
 - [HarmonyOS MVP 方案与推进计划](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)
 - [架构决策记录](docs/adr/README.md)
+- [2026-08-20 canonical 仓库基线记录](docs/baseline/2026-08-20-repository-baseline.md)
 - [历史规则界面优化方案](docs/product/规则界面优化方案-历史.md)
 
 ## 安全与 Git 基线
