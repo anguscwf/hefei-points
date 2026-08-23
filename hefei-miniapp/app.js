@@ -53,6 +53,11 @@ App({
   // 带重试的配置加载（最多 maxRetries 次）
   _loadConfigWithRetry: function(maxRetries) {
     var that = this;
+    if (!that.globalData.token) {
+      that.globalData.allUsers = [];
+      if (that.globalData.dataReadyResolve) that.globalData.dataReadyResolve(true);
+      return;
+    }
     var attempt = 0;
     function tryLoad() {
       attempt++;
@@ -137,6 +142,8 @@ App({
     this.globalData.token = '';
     this.globalData.user = null;
     this.globalData.points = null;
+    this.globalData.rules = null;
+    this.globalData.allUsers = [];
     wx.removeStorageSync('hefei_token');
     wx.removeStorageSync('hefei_user');
   },
@@ -184,6 +191,15 @@ App({
 
   loadData: function() {
     var that = this;
+    if (!that.globalData.token) {
+      that.globalData.points = null;
+      that.globalData.rules = null;
+      that.globalData.allUsers = [];
+      return Promise.resolve({
+        points: { success: false, code: 'AUTH_REQUIRED', message: '请先登录' },
+        config: { success: true, public: true, users: [] }
+      });
+    }
     return Promise.all([
       that.loadPoints(),
       that.fetchAPI('/api/config')

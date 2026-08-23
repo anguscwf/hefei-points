@@ -44,7 +44,12 @@ Page({
       themeClass: g.theme === 'mint' ? 'theme-mint' : ''
     });
 
-    // 等待初始数据加载
+    if (!g.token || !g.user) {
+      this._doRefreshMine();
+      return;
+    }
+
+    // 已登录时等待初始数据加载
     var allUsers = g.allUsers;
     if ((!allUsers || allUsers.length === 0) && g.dataReady && !this._waitingData) {
       this._waitingData = true;
@@ -54,7 +59,7 @@ Page({
       Promise.race([g.dataReady, timeout]).then(function(result) {
         that._waitingData = false;
         if (result === 'timeout' || result === false) {
-          // 超时或失败，主动拉取一次
+          // 超时或失败，使用当前登录态主动拉取一次
           app.fetchAPI('/api/config', { timeout: 15000 }).then(function(res) {
             if (res && res.success) {
               app.globalData.allUsers = res.users;

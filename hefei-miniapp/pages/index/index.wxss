@@ -103,6 +103,8 @@
 .backup-login { margin-bottom: 22rpx; }
 .login-divider { display: flex; align-items: center; gap: 18rpx; margin: 8rpx 12rpx 18rpx; color: var(--muted); font-size: var(--font-xs); }
 .login-divider view { flex: 1; height: 1rpx; background: var(--border); }
+.bind-status { display: flex; justify-content: space-between; gap: 18rpx; margin: 0 4rpx 16rpx; color: var(--muted); font-size: var(--font-xs); }
+.bind-cancel { flex-shrink: 0; color: var(--amber); text-decoration: underline; }
 .backup-login .login-bar { margin-bottom: 0; }
 .header-status {
   font-size: var(--font-sm);

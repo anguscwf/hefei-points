@@ -19,7 +19,8 @@ Page({
     selectedUserName: '',
     manualUserId: '',
     password: '',
-    wxOpenid: '',
+    wxBindingTicket: '',
+    showBind: false,
     wxLoginLoading: false,
     showLoginGuide: false,
 
@@ -93,7 +94,7 @@ Page({
       ruleFilter: savedFilter,
       ruleExpandedKey: String(savedPreference.expandedKey || '')
     });
-    // 页面加载时直接请求配置（不再依赖 onLaunch）
+    // 已登录时读取家庭配置；未登录只进入手工账号/微信登录空壳。
     this._loadConfigAndRefresh();
   },
 
@@ -125,6 +126,13 @@ Page({
   _loadConfigAndRefresh: function() {
     var that = this;
     if (this._loadingUsers) return;
+    if (!app.globalData.token) {
+      app.globalData.allUsers = [];
+      this.setData({ loadingUsers: false, loadError: false });
+      if (app.globalData.dataReadyResolve) app.globalData.dataReadyResolve(true);
+      this._doRefreshState();
+      return;
+    }
     this._loadingUsers = true;
     this.setData({ loadingUsers: true, loadError: false });
     console.log('[index] 加载 /api/config...');
@@ -398,13 +406,17 @@ Page({
             app.globalData.user = res.user;
             wx.setStorageSync('hefei_token', res.token);
             wx.setStorageSync('hefei_user', JSON.stringify(res.user));
-            that.setData({ wxOpenid: '' });
+            that.setData({ wxBindingTicket: '', showBind: false });
             that.showToast('欢迎，' + res.user.name);
             app.loadData().then(function() { that._doRefreshState(); });
           } else if (res && res.success && res.isNew) {
-            // 首次登录 → 引导选择用户绑定
-            wx.showToast({ title: '首次使用，请选择用户并输入密码完成绑定', icon: 'none', duration: 3000 });
-            that.setData({ wxOpenid: res.openid, showBind: true, loadingUsers: false });
+            if (!res.bindingTicket) {
+              wx.showToast({ title: '绑定凭据获取失败，请重新微信登录', icon: 'none', duration: 3000 });
+              return;
+            }
+            // 首次登录 → 引导输入已有家庭用户 ID 绑定
+            wx.showToast({ title: '请输入已有家庭用户ID和密码完成绑定', icon: 'none', duration: 3000 });
+            that.setData({ wxBindingTicket: res.bindingTicket, showBind: true, loadingUsers: false });
           } else {
             wx.showToast({ title: (res && res.message) || '登录失败', icon: 'none' });
           }
@@ -428,6 +440,15 @@ Page({
   onCloseLoginGuide: function() {
     wx.setStorageSync('hefei_login_guide_v2', true);
     this.setData({ showLoginGuide: false });
+  },
+
+  onCancelWxBind: function() {
+    this.setData({
+      wxBindingTicket: '',
+      showBind: false,
+      manualUserId: '',
+      password: ''
+    });
   },
 
   stopBubble: function() {
@@ -457,7 +478,7 @@ Page({
     var selected = opts && opts[this.data.selectedUserIdx];
     var uid = selected ? selected.id : this.data.manualUserId;
     if (!uid) {
-      wx.showToast({ title: '请选择用户或输入用户ID', icon: 'none' });
+      wx.showToast({ title: '请输入用户ID', icon: 'none' });
       return;
     }
     var pwd = this.data.password;
@@ -465,8 +486,8 @@ Page({
       wx.showToast({ title: '请输入密码', icon: 'none' });
       return;
     }
-    var loginFn = this.data.wxOpenid
-      ? app.fetchAPI('/api/wx-bind', { method: 'POST', body: JSON.stringify({ openid: this.data.wxOpenid, userId: uid, password: pwd }) })
+    var loginFn = this.data.wxBindingTicket
+      ? app.fetchAPI('/api/wx-bind', { method: 'POST', body: JSON.stringify({ bindingTicket: this.data.wxBindingTicket, userId: uid, password: pwd }) })
       : app.login(uid, pwd);
     loginFn.then(function(res) {
       if (res && res.success && res.token) {
@@ -476,11 +497,14 @@ Page({
         wx.setStorageSync('hefei_token', res.token);
         wx.setStorageSync('hefei_user', JSON.stringify(res.user));
         that.showToast('欢迎，' + res.user.name);
-        that.setData({ wxOpenid: '' }); // 清除绑定状态
+        that.setData({ wxBindingTicket: '', showBind: false }); // 清除绑定状态
         app.loadData().then(function() {
           that._doRefreshState();
         });
       } else {
+        if (res && res.code === 'BINDING_TICKET_INVALID') {
+          that.setData({ wxBindingTicket: '', showBind: false, password: '' });
+        }
         var msg = (res && res.message) ? res.message : '登录失败';
         wx.showToast({ title: msg, icon: 'none', duration: 2500 });
       }
@@ -496,7 +520,8 @@ Page({
       pickerKey: 0,
       isLoggedIn: false, isAdmin: false, isChild: false, isParent: false,
       loginStatusText: '未登录', childCards: [], historyList: [],
-      password: '', selectedUserIdx: 0, selectedUserName: ''
+      password: '', manualUserId: '', wxBindingTicket: '', showBind: false,
+      userOptions: [], selectedUserIdx: 0, selectedUserName: '', loadingUsers: false
     });
     // 短暂延迟后重建 picker，解决微信 picker 缓存旧索引的 bug
     setTimeout(function() {

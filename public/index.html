@@ -31,7 +31,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 /* === Login === */
 .login-bar { display:flex; align-items:center; gap:6px; margin-bottom:10px; }
 .login-bar select { width:72px; padding:10px 6px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:14px; outline:none; background:var(--card); transition:border-color 0.2s; }
-.login-bar input { flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:15px; outline:none; transition:border-color 0.2s; }
+.login-bar input { flex:1; min-width:0; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:15px; outline:none; transition:border-color 0.2s; }
 .login-bar input:focus, .login-bar select:focus { border-color:var(--amber); box-shadow:0 0 0 3px rgba(184,105,50,0.1); }
 
 /* === Buttons === */
@@ -256,7 +256,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"
 </div>
 
 <div class="login-bar" id="loginBar">
-  <select id="selUser"></select>
+  <input type="text" id="loginUserId" placeholder="用户ID" autocomplete="username">
   <input type="password" id="pwd" placeholder="密码" onkeydown="if(event.key==='Enter') login()">
   <button class="btn btn-primary btn-sm" onclick="login()">登录</button>
 </div>
@@ -394,15 +394,18 @@ function getKidEmoji(kid) {
 }
 
 async function fetchAPI(url, opts) {
-  try { var res = await fetch(url, opts); return await res.json(); }
+  var requestOpts = Object.assign({}, opts || {});
+  requestOpts.headers = Object.assign({}, requestOpts.headers || {});
+  if (state.token) requestOpts.headers.Authorization = 'Bearer ' + state.token;
+  try { var res = await fetch(url, requestOpts); return await res.json(); }
   catch(e) { return { success:false, message:'网络错误' }; }
 }
 
 // === Auth ===
 async function login() {
-  var uid = document.getElementById('selUser').value;
+  var uid = document.getElementById('loginUserId').value.trim();
   var pwd = document.getElementById('pwd').value;
-  if (!uid || !pwd) return toast('请选择用户并输入密码');
+  if (!uid || !pwd) return toast('请输入用户ID和密码');
   var res = await fetchAPI(API+'/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({userId:uid, password:pwd}) });
   if (res.success) {
     state.token = res.token; state.user = res.user;
@@ -414,8 +417,9 @@ async function login() {
 }
 
 function logout() {
-  state.token = ''; state.user = null; state.points = null;
+  state.token = ''; state.user = null; state.points = null; state.rules = null; state.allUsers = null;
   localStorage.removeItem('hefei_token'); localStorage.removeItem('hefei_user');
+  document.getElementById('loginUserId').value = '';
   document.getElementById('pwd').value = '';
   updateUI(); loadData();
   toast('已退出');
@@ -1125,10 +1129,6 @@ function updateUI(skipTabRefresh) {
     document.getElementById('loginStatus').textContent = '未登录';
     document.getElementById('permHint').style.display = 'block';
   }
-  var sel = document.getElementById('selUser');
-  if (sel.options.length === 0 && state.allUsers) {
-    state.allUsers.forEach(function(u) { var o = document.createElement('option'); o.value = u.id; o.textContent = u.name; sel.appendChild(o); });
-  }
   document.getElementById('adminBtn').style.display = (state.user && state.user.role === 'admin') ? '' : 'none';
   if (state.points && kids.length > 0) {
     var html = '';
@@ -1149,7 +1149,12 @@ function updateUI(skipTabRefresh) {
 }
 
 async function loadData() {
-  var res = await fetchAPI(API+'/api/points?token='+(state.token||''));
+  if (!state.token) {
+    state.points = null; state.rules = null; state.allUsers = null;
+    updateUI();
+    return;
+  }
+  var res = await fetchAPI(API+'/api/points');
   if (res.success) { state.points = res.points; state.rules = res.rules; }
   var cres = await fetchAPI(API+'/api/config');
   if (cres.success) { state.allUsers = cres.users; }
