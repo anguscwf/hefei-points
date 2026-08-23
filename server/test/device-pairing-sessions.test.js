@@ -2,6 +2,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const fs = require('fs');
+const http = require('node:http');
 const os = require('os');
 const path = require('path');
 const express = require('express');
@@ -27,6 +28,7 @@ const credentials = require('../lib/device-credentials');
 const sessionConfig = require('../config/device-sessions');
 const { requireDeviceV2 } = require('../lib/v2-auth');
 const deviceService = require('../services/device-pairing-sessions');
+const childSelfService = require('../services/child-self');
 
 const TEST_PASSWORD = 'synthetic-device-password';
 const legalTexts = Object.freeze({
@@ -80,6 +82,7 @@ function createApi() {
   app.use(express.json({ limit: '50kb' }));
   app.use('/api', require('../routes/v2-guardian-consents'));
   app.use('/api', require('../routes/v2-device-pairing-sessions'));
+  app.use('/api', require('../routes/v2-child-self'));
   return app;
 }
 
@@ -134,6 +137,39 @@ async function request(pathname, {
     assert.fail(`expected JSON response, received ${response.status}: ${text}\n${error.message}`);
   }
   return { response, body: parsed };
+}
+
+async function getWithJsonBody(pathname, bearer, body) {
+  const url = new URL(`${baseUrl}${pathname}`);
+  const payload = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const outgoing = http.request({
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => {
+        try {
+          resolve({
+            response: { status: response.statusCode, headers: response.headers },
+            body: JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    outgoing.on('error', reject);
+    outgoing.end(payload);
+  });
 }
 
 function assertApiError(result, status, code, secrets = []) {
@@ -308,6 +344,19 @@ async function fullDeviceFlow(fixture, child = fixture.children[0], label = fixt
   await confirmClaim(fixture, created, claimed);
   const completed = await completeClaim(claimed, device);
   return { device, created, claimed, completed };
+}
+
+function addSyntheticTransaction(fixture, child, amount, reason, suffix = '') {
+  const childUser = repositories.users.findById(child.id);
+  return repositories.points.changePoints({
+    familyId: fixture.familyId,
+    kid: child.id,
+    kidName: childUser.name,
+    amount,
+    reason,
+    operator: `合成私密操作人${suffix}`,
+    note: `合成内部备注${suffix}`
+  }).record;
 }
 
 function refreshEligibleAt(session, offsetMs = 0) {
@@ -1095,6 +1144,10 @@ test('功能门关闭仍可撤销设备，旧 Access/Refresh 立即失效且响�
 
   enableAllGates();
   assertDeviceAuthError(completed.session.accessToken, 'SESSION_REVOKED');
+  const revokedSelf = await request('/api/v2/me/summary', {
+    bearer: completed.session.accessToken
+  });
+  assertApiError(revokedSelf, 401, 'SESSION_REVOKED', [completed.session.accessToken]);
   const refresh = await request(`/api/v2/devices/${completed.device.id}/session-challenges`, {
     method: 'POST', bearer: completed.session.refreshToken,
     idempotency: idempotencyKey('revoked-refresh')
@@ -1164,6 +1217,10 @@ test('会话撤销按家庭与授权隔离、幂等撤销整组且不影响兄�
   }).status, 'revoked');
   enableAllGates();
   assertDeviceAuthError(first.completed.session.accessToken, 'SESSION_REVOKED');
+  const revokedSelf = await request('/api/v2/me/transactions', {
+    bearer: first.completed.session.accessToken
+  });
+  assertApiError(revokedSelf, 401, 'SESSION_REVOKED', [first.completed.session.accessToken]);
   const revokedRefresh = await request(
     `/api/v2/devices/${first.completed.device.id}/session-challenges`,
     {
@@ -1175,6 +1232,11 @@ test('会话撤销按家庭与授权隔离、幂等撤销整组且不影响兄�
   assert.equal(requireDeviceV2(
     deviceRequest(sibling.completed.session.accessToken)
   ).childId, family.children[1].id);
+  const siblingSelf = await request('/api/v2/me/summary', {
+    bearer: sibling.completed.session.accessToken
+  });
+  assert.equal(siblingSelf.response.status, 200);
+  assert.equal(siblingSelf.body.child.id, family.children[1].id);
 });
 
 test('授权撤回在功能门关闭时仍联动撤销目标儿童设备并保持兄弟姐妹隔离', async () => {
@@ -1227,6 +1289,557 @@ test('授权撤回在功能门关闭时仍联动撤销目标儿童设备并保�
 
   enableAllGates();
   assertDeviceAuthError(first.completed.session.accessToken, 'SESSION_REVOKED');
+  const withdrawnSelf = await request('/api/v2/me/summary', {
+    bearer: first.completed.session.accessToken
+  });
+  assertApiError(withdrawnSelf, 401, 'SESSION_REVOKED', [first.completed.session.accessToken]);
   assert.equal(requireDeviceV2(deviceRequest(sibling.completed.session.accessToken)).childId,
     fixture.children[1].id);
+  const siblingSelf = await request('/api/v2/me/summary', {
+    bearer: sibling.completed.session.accessToken
+  });
+  assert.equal(siblingSelf.response.status, 200);
+  assert.equal(siblingSelf.body.child.id, fixture.children[1].id);
+});
+
+test('设备本人摘要和流水只返回当前绑定儿童的最小字段', async () => {
+  const fixture = await createAuthorizedFamily({ childCount: 2 });
+  const self = await fullDeviceFlow(fixture, fixture.children[0], 'self-minimum');
+  const own = addSyntheticTransaction(
+    fixture,
+    fixture.children[0],
+    11,
+    'OWN_CANARY',
+    '-own'
+  );
+  const sibling = addSyntheticTransaction(
+    fixture,
+    fixture.children[1],
+    222222,
+    'SIBLING_CANARY',
+    '-sibling'
+  );
+  const child = repositories.users.findById(fixture.children[0].id);
+  const readState = () => ({
+    account: getDb().prepare(`
+      SELECT balance FROM point_accounts WHERE family_id = ? AND kid_id = ?
+    `).get(fixture.familyId, fixture.children[0].id),
+    transactionCount: getDb().prepare(`
+      SELECT COUNT(*) AS count FROM transactions WHERE family_id = ? AND kid_id = ?
+    `).get(fixture.familyId, fixture.children[0].id).count,
+    binding: getDb().prepare(`
+      SELECT revision, last_seen_at, updated_at FROM device_bindings WHERE id = ?
+    `).get(self.completed.device.id),
+    session: getDb().prepare(`
+      SELECT revision, last_used_at, updated_at FROM device_sessions WHERE id = ?
+    `).get(self.completed.session.id)
+  });
+  const beforeReads = readState();
+
+  const summary = await request('/api/v2/me/summary', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.equal(summary.response.status, 200);
+  assert.deepEqual(summary.body, {
+    success: true,
+    child: { id: child.id, name: child.name },
+    points: { balance: 11 }
+  });
+  assert.match(summary.response.headers.get('cache-control'), /no-store/);
+  assertNoSensitiveResponse(summary.body, [
+    fixture.familyId,
+    fixture.children[1].id,
+    sibling.id,
+    self.completed.device.id,
+    self.completed.session.id
+  ]);
+
+  const transactions = await request('/api/v2/me/transactions', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.equal(transactions.response.status, 200);
+  assert.deepEqual(transactions.body.transactions.map(item => item.id), [own.id]);
+  assert.deepEqual(Object.keys(transactions.body.transactions[0]).sort(), [
+    'amount', 'categoryId', 'id', 'occurredAt', 'reason', 'ruleId'
+  ]);
+  assert.deepEqual(transactions.body.page, {
+    limit: 20,
+    hasMore: false,
+    nextCursor: null
+  });
+  assertNoSensitiveResponse(transactions.body, [
+    fixture.familyId,
+    fixture.children[0].id,
+    fixture.children[1].id,
+    sibling.id,
+    'SIBLING_CANARY',
+    '合成私密操作人-own',
+    '合成内部备注-own',
+    self.completed.device.id,
+    self.completed.session.id
+  ]);
+  assert.deepEqual(readState(), beforeReads);
+});
+
+test('本人接口拒绝客户端身份选择和非 Access 凭据传输', async () => {
+  const fixture = await createAuthorizedFamily({ childCount: 2 });
+  const self = await fullDeviceFlow(fixture, fixture.children[0], 'self-selectors');
+  const accessToken = self.completed.session.accessToken;
+  const selectorPaths = [
+    `/api/v2/me/summary?childId=${fixture.children[1].id}`,
+    `/api/v2/me/summary?childId=${fixture.children[0].id}`,
+    `/api/v2/me/transactions?kid=${fixture.children[1].id}`,
+    `/api/v2/me/transactions?familyId=${fixture.familyId}`,
+    `/api/v2/me/transactions?deviceBindingId=${self.completed.device.id}`,
+    `/api/v2/me/transactions?accessToken=${encodeURIComponent(accessToken)}`,
+    '/api/v2/me/transactions?offset=0',
+    '/api/v2/me/transactions?includeDeleted=true'
+  ];
+  for (const pathname of selectorPaths) {
+    const rejected = await request(pathname, { bearer: accessToken });
+    assertApiError(rejected, 400, 'VALIDATION_ERROR', [
+      fixture.children[1].id,
+      self.completed.device.id,
+      accessToken
+    ]);
+  }
+
+  const bodySelector = await getWithJsonBody(
+    '/api/v2/me/summary',
+    accessToken,
+    { childId: fixture.children[1].id }
+  );
+  assertApiError(bodySelector, 400, 'VALIDATION_ERROR', [fixture.children[1].id]);
+
+  const queryCredential = await request(
+    `/api/v2/me/summary?accessToken=${encodeURIComponent(accessToken)}`
+  );
+  assertApiError(queryCredential, 401, 'AUTH_REQUIRED', [accessToken]);
+  const bodyCredential = await getWithJsonBody(
+    '/api/v2/me/summary',
+    '',
+    { accessToken }
+  );
+  assertApiError(bodyCredential, 401, 'AUTH_REQUIRED', [accessToken]);
+  const adultCredential = await request('/api/v2/me/summary', {
+    userId: fixture.adminId
+  });
+  assertApiError(adultCredential, 401, 'AUTH_REQUIRED');
+  const refreshCredential = await request('/api/v2/me/transactions', {
+    bearer: self.completed.session.refreshToken
+  });
+  assertApiError(refreshCredential, 401, 'AUTH_REQUIRED', [self.completed.session.refreshToken]);
+  const claimCredential = await request('/api/v2/me/transactions', {
+    bearer: self.claimed.claimId
+  });
+  assertApiError(claimCredential, 401, 'AUTH_REQUIRED', [self.claimed.claimId]);
+  const unknownAccess = credentials.deriveAccessToken(crypto.randomUUID());
+  const unknownCredential = await request('/api/v2/me/summary', {
+    bearer: unknownAccess
+  });
+  assertApiError(unknownCredential, 401, 'SESSION_REVOKED', [unknownAccess]);
+});
+
+test('原授权续签后既有设备保持本人读取，撤回当前版本后立即失效', async () => {
+  const fixture = await createAuthorizedFamily();
+  const self = await fullDeviceFlow(fixture, fixture.children[0], 'self-consent-renewal');
+  const own = addSyntheticTransaction(
+    fixture,
+    fixture.children[0],
+    12,
+    'CONSENT_RENEWAL_CANARY'
+  );
+  const reauth = await request('/api/v2/reauth-assertions', {
+    method: 'POST',
+    userId: fixture.adminId,
+    body: { purpose: 'child_consent', password: TEST_PASSWORD }
+  });
+  assert.equal(reauth.response.status, 200);
+  const { alias: _alias, ...acceptance } = enrollmentBody(
+    reauth.body.reauthAssertion,
+    '合成续签别名不会改写孩子'
+  );
+  const renewed = await request(
+    `/api/v2/children/${fixture.children[0].id}/consents`,
+    {
+      method: 'POST',
+      userId: fixture.adminId,
+      idempotency: idempotencyKey('self-consent-renewal'),
+      body: {
+        ...acceptance,
+        expectedRevision: fixture.children[0].privacyState.revision
+      }
+    }
+  );
+  assert.equal(renewed.response.status, 201);
+  assert.equal(renewed.body.consent.status, 'active');
+  assert.equal(repositories.guardianConsents.findConsentById({
+    familyId: fixture.familyId,
+    consentId: fixture.children[0].consent.id
+  }).status, 'superseded');
+  assert.equal(repositories.deviceSessions.findBindingById({
+    bindingId: self.completed.device.id
+  }).status, 'active');
+
+  const summary = await request('/api/v2/me/summary', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.equal(summary.response.status, 200);
+  assert.equal(summary.body.points.balance, 12);
+  const transactions = await request('/api/v2/me/transactions', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.deepEqual(transactions.body.transactions.map(item => item.id), [own.id]);
+
+  const withdrawReauth = await request('/api/v2/reauth-assertions', {
+    method: 'POST',
+    userId: fixture.adminId,
+    body: { purpose: 'child_consent_withdraw', password: TEST_PASSWORD }
+  });
+  assert.equal(withdrawReauth.response.status, 200);
+  const withdrawn = await request(
+    `/api/v2/children/${fixture.children[0].id}/consents/withdraw`,
+    {
+      method: 'POST',
+      userId: fixture.adminId,
+      idempotency: idempotencyKey('self-consent-renewal-withdraw'),
+      body: {
+        reauthAssertion: withdrawReauth.body.reauthAssertion,
+        expectedRevision: renewed.body.privacyState.revision
+      }
+    }
+  );
+  assert.equal(withdrawn.response.status, 200);
+  const blocked = await request('/api/v2/me/summary', {
+    bearer: self.completed.session.accessToken
+  });
+  assertApiError(blocked, 401, 'SESSION_REVOKED', [
+    self.completed.session.accessToken,
+    'CONSENT_RENEWAL_CANARY'
+  ]);
+});
+
+test('Refresh 固定截止后仍允许使用截止前合法轮换且尚未过期的 Access', async () => {
+  const fixture = await createAuthorizedFamily();
+  const self = await fullDeviceFlow(fixture, fixture.children[0], 'self-refresh-tail');
+  addSyntheticTransaction(fixture, fixture.children[0], 13, 'REFRESH_TAIL_CANARY');
+  const refreshAt = new Date(Date.parse(self.completed.session.refreshExpiresAt) - 2_000);
+  const challenge = deviceService.issueSessionChallenge({
+    refreshToken: self.completed.session.refreshToken,
+    bindingId: self.completed.device.id,
+    idempotencyKey: idempotencyKey('self-refresh-tail-challenge'),
+    now: refreshAt
+  });
+  const rotated = deviceService.refreshSession({
+    refreshToken: self.completed.session.refreshToken,
+    idempotencyKey: idempotencyKey('self-refresh-tail-complete'),
+    body: {
+      challengeId: challenge.body.proof.challengeId,
+      signatureBase64url: signProof(challenge.body.proof, self.device.privateKey)
+    },
+    now: new Date(refreshAt.getTime() + 1)
+  });
+  const afterRefreshExpiry = new Date(Date.parse(rotated.body.session.refreshExpiresAt) + 1);
+  assert.ok(Date.parse(rotated.body.session.accessExpiresAt) > afterRefreshExpiry.getTime());
+  const actor = requireDeviceV2(
+    deviceRequest(rotated.body.session.accessToken),
+    afterRefreshExpiry
+  );
+  const summary = childSelfService.summary({
+    actor,
+    query: {},
+    now: afterRefreshExpiry
+  });
+  assert.equal(summary.points.balance, 13);
+});
+
+test('本人流水使用作用域绑定的 AEAD 游标稳定分页并拒绝畸形参数', async () => {
+  const fixture = await createAuthorizedFamily();
+  const self = await fullDeviceFlow(fixture, fixture.children[0], 'self-pages');
+  const records = [];
+  for (let index = 0; index < 5; index += 1) {
+    records.push(addSyntheticTransaction(
+      fixture,
+      fixture.children[0],
+      index + 1,
+      `OWN_PAGE_${index}`,
+      `-page-${index}`
+    ));
+  }
+
+  const first = await request('/api/v2/me/transactions?limit=2', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.equal(first.response.status, 200);
+  assert.deepEqual(first.body.transactions.map(item => item.id), [records[4].id, records[3].id]);
+  assert.equal(first.body.page.hasMore, true);
+  assert.match(first.body.page.nextCursor, /^[A-Za-z0-9_-]{92}$/);
+  const repeatedFirst = await request('/api/v2/me/transactions?limit=2', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.deepEqual(
+    repeatedFirst.body.transactions.map(item => item.id),
+    first.body.transactions.map(item => item.id)
+  );
+  assert.notEqual(repeatedFirst.body.page.nextCursor, first.body.page.nextCursor);
+
+  const insertedAfterFirstPage = addSyntheticTransaction(
+    fixture,
+    fixture.children[0],
+    99,
+    'NEW_AFTER_PAGE_ONE',
+    '-new-page'
+  );
+  const refreshNow = refreshEligibleAt(self.completed.session);
+  const refreshChallenge = deviceService.issueSessionChallenge({
+    refreshToken: self.completed.session.refreshToken,
+    bindingId: self.completed.device.id,
+    idempotencyKey: idempotencyKey('self-page-refresh-challenge'),
+    now: refreshNow
+  });
+  const rotated = deviceService.refreshSession({
+    refreshToken: self.completed.session.refreshToken,
+    idempotencyKey: idempotencyKey('self-page-refresh-complete'),
+    body: {
+      challengeId: refreshChallenge.body.proof.challengeId,
+      signatureBase64url: signProof(refreshChallenge.body.proof, self.device.privateKey)
+    },
+    now: new Date(refreshNow.getTime() + 1)
+  });
+  const oldAccess = await request('/api/v2/me/transactions', {
+    bearer: self.completed.session.accessToken
+  });
+  assertApiError(oldAccess, 401, 'SESSION_REVOKED', [self.completed.session.accessToken]);
+  const pageAccessToken = rotated.body.session.accessToken;
+  const second = await request(
+    `/api/v2/me/transactions?limit=2&cursor=${first.body.page.nextCursor}`,
+    { bearer: pageAccessToken }
+  );
+  assert.equal(second.response.status, 200);
+  assert.deepEqual(second.body.transactions.map(item => item.id), [records[2].id, records[1].id]);
+  assert.equal(second.body.page.hasMore, true);
+  const third = await request(
+    `/api/v2/me/transactions?limit=2&cursor=${second.body.page.nextCursor}`,
+    { bearer: pageAccessToken }
+  );
+  assert.equal(third.response.status, 200);
+  assert.deepEqual(third.body.transactions.map(item => item.id), [records[0].id]);
+  assert.deepEqual(third.body.page, { limit: 2, hasMore: false, nextCursor: null });
+  assert.deepEqual(
+    [...first.body.transactions, ...second.body.transactions, ...third.body.transactions]
+      .map(item => item.id),
+    records.slice().reverse().map(item => item.id)
+  );
+
+  const fresh = await request('/api/v2/me/transactions?limit=1', {
+    bearer: pageAccessToken
+  });
+  assert.equal(fresh.body.transactions[0].id, insertedAfterFirstPage.id);
+
+  const cursor = first.body.page.nextCursor;
+  const tampered = `${cursor.slice(0, -1)}${cursor.endsWith('0') ? '1' : '0'}`;
+  const packet = Buffer.from(cursor, 'base64url');
+  const componentTampered = [0, 1, 13, 29].map(offset => {
+    const changed = Buffer.from(packet);
+    changed[offset] ^= 1;
+    return changed.toString('base64url');
+  });
+  const invalidPaths = [
+    '/api/v2/me/transactions?limit=0',
+    '/api/v2/me/transactions?limit=51',
+    '/api/v2/me/transactions?limit=1.5',
+    '/api/v2/me/transactions?limit=1e2',
+    '/api/v2/me/transactions?limit=1&limit=2',
+    '/api/v2/me/transactions?cursor=abc%3D',
+    `/api/v2/me/transactions?cursor=${tampered}`,
+    ...componentTampered.map(value => `/api/v2/me/transactions?cursor=${value}`),
+    `/api/v2/me/transactions?cursor=${cursor.slice(0, -1)}`,
+    `/api/v2/me/transactions?cursor=${cursor}A`,
+    `/api/v2/me/transactions?cursor=${cursor}%3D`,
+    `/api/v2/me/transactions?cursor=${'a'.repeat(238)}`
+  ];
+  for (const pathname of invalidPaths) {
+    const rejected = await request(pathname, {
+      bearer: pageAccessToken
+    });
+    assertApiError(rejected, 400, 'VALIDATION_ERROR', [tampered]);
+  }
+});
+
+test('不透明游标兼容超长旧流水 ID 且边界软删除后仍可继续翻页', async () => {
+  const fixture = await createAuthorizedFamily();
+  const self = await fullDeviceFlow(fixture, fixture.children[0], 'self-legacy-cursor');
+  const child = repositories.users.findById(fixture.children[0].id);
+  const insert = (id, reason, time) => repositories.transactions.insert({
+    id,
+    familyId: fixture.familyId,
+    time,
+    kid: child.id,
+    kidName: child.name,
+    amount: 1,
+    reason,
+    operator: '合成旧操作人',
+    note: '合成旧备注'
+  });
+  const oldest = insert('legacy-oldest', 'LEGACY_OLDEST', '2026/1/1 08:00:00');
+  const longId = `legacy-${'x'.repeat(180)}`;
+  const boundary = insert(longId, 'LEGACY_LONG_ID', '2026/1/1 08:00:01');
+  const newest = insert('legacy-newest', 'LEGACY_NEWEST', '2026/1/1 08:00:02');
+  const boundaryRowId = getDb().prepare(
+    'SELECT CAST(rowid AS TEXT) AS row_id FROM transactions WHERE id = ?'
+  ).get(boundary.id).row_id;
+
+  const first = await request('/api/v2/me/transactions?limit=1', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.deepEqual(first.body.transactions.map(item => item.id), [newest.id]);
+  const second = await request(
+    `/api/v2/me/transactions?limit=1&cursor=${first.body.page.nextCursor}`,
+    { bearer: self.completed.session.accessToken }
+  );
+  assert.deepEqual(second.body.transactions.map(item => item.id), [boundary.id]);
+  assert.match(second.body.page.nextCursor, /^[A-Za-z0-9_-]{92}$/);
+
+  assert.equal(repositories.transactions.remove(boundary.id, fixture.familyId), true);
+  const third = await request(
+    `/api/v2/me/transactions?limit=1&cursor=${second.body.page.nextCursor}`,
+    { bearer: self.completed.session.accessToken }
+  );
+  assert.deepEqual(third.body.transactions.map(item => item.id), [oldest.id]);
+  assert.deepEqual(third.body.page, { limit: 1, hasMore: false, nextCursor: null });
+  assert.equal(JSON.stringify(third.body).includes('LEGACY_LONG_ID'), false);
+
+  getDb().prepare('DELETE FROM transactions WHERE id = ? AND family_id = ?')
+    .run(boundary.id, fixture.familyId);
+  const reused = insert('legacy-reused-rowid', 'LEGACY_REUSED_ROWID', '2026/1/1 08:00:03');
+  getDb().prepare('UPDATE transactions SET rowid = CAST(? AS INTEGER) WHERE id = ?')
+    .run(boundaryRowId, reused.id);
+  const stale = await request(
+    `/api/v2/me/transactions?limit=1&cursor=${second.body.page.nextCursor}`,
+    { bearer: self.completed.session.accessToken }
+  );
+  assertApiError(stale, 400, 'VALIDATION_ERROR', [reused.id, 'LEGACY_REUSED_ROWID']);
+});
+
+test('同家庭兄弟姐妹、跨家庭和跨绑定游标不能污染本人流水', async () => {
+  const family = await createAuthorizedFamily({ childCount: 2 });
+  const otherFamily = await createAuthorizedFamily();
+  const first = await fullDeviceFlow(family, family.children[0], 'self-isolation-first');
+  const sameChildPeer = await fullDeviceFlow(
+    family,
+    family.children[0],
+    'self-isolation-same-child-peer'
+  );
+  const sibling = await fullDeviceFlow(family, family.children[1], 'self-isolation-sibling');
+  const foreign = await fullDeviceFlow(
+    otherFamily,
+    otherFamily.children[0],
+    'self-isolation-foreign'
+  );
+  const ownRows = [
+    addSyntheticTransaction(family, family.children[0], 6, 'OWN_ISOLATION_1'),
+    addSyntheticTransaction(family, family.children[0], 7, 'OWN_ISOLATION_2')
+  ];
+  const siblingRows = [
+    addSyntheticTransaction(family, family.children[1], 8, 'SIBLING_ISOLATION_1'),
+    addSyntheticTransaction(family, family.children[1], 9, 'SIBLING_ISOLATION_2')
+  ];
+  const foreignRow = addSyntheticTransaction(
+    otherFamily,
+    otherFamily.children[0],
+    10,
+    'FOREIGN_ISOLATION'
+  );
+
+  const ownPage = await request('/api/v2/me/transactions', {
+    bearer: first.completed.session.accessToken
+  });
+  assert.equal(ownPage.response.status, 200);
+  assert.deepEqual(ownPage.body.transactions.map(item => item.id), ownRows.slice().reverse()
+    .map(item => item.id));
+  assertNoSensitiveResponse(ownPage.body, [
+    siblingRows[0].id,
+    siblingRows[1].id,
+    foreignRow.id,
+    'SIBLING_ISOLATION_1',
+    'FOREIGN_ISOLATION'
+  ]);
+
+  const siblingPage = await request('/api/v2/me/transactions?limit=1', {
+    bearer: sibling.completed.session.accessToken
+  });
+  assert.equal(siblingPage.response.status, 200);
+  assert.equal(siblingPage.body.page.hasMore, true);
+  const crossBindingCursor = await request(
+    `/api/v2/me/transactions?cursor=${siblingPage.body.page.nextCursor}`,
+    { bearer: first.completed.session.accessToken }
+  );
+  assertApiError(crossBindingCursor, 400, 'VALIDATION_ERROR', [
+    siblingRows[0].id,
+    siblingRows[1].id
+  ]);
+
+  const firstBindingPage = await request('/api/v2/me/transactions?limit=1', {
+    bearer: first.completed.session.accessToken
+  });
+  assert.equal(firstBindingPage.body.page.hasMore, true);
+  const sameChildCrossBinding = await request(
+    `/api/v2/me/transactions?cursor=${firstBindingPage.body.page.nextCursor}`,
+    { bearer: sameChildPeer.completed.session.accessToken }
+  );
+  assertApiError(sameChildCrossBinding, 400, 'VALIDATION_ERROR', ownRows.map(item => item.id));
+  const crossFamilyCursor = await request(
+    `/api/v2/me/transactions?cursor=${firstBindingPage.body.page.nextCursor}`,
+    { bearer: foreign.completed.session.accessToken }
+  );
+  assertApiError(crossFamilyCursor, 400, 'VALIDATION_ERROR', ownRows.map(item => item.id));
+
+  const foreignPage = await request('/api/v2/me/transactions', {
+    bearer: foreign.completed.session.accessToken
+  });
+  assert.deepEqual(foreignPage.body.transactions.map(item => item.id), [foreignRow.id]);
+});
+
+test('本人只读双门在数据查询前止损且不依赖 enrollment 门', async () => {
+  const fixture = await createAuthorizedFamily({ childCount: 2 });
+  const self = await fullDeviceFlow(fixture, fixture.children[0], 'self-gates');
+  addSyntheticTransaction(fixture, fixture.children[1], 333333, 'GATE_SIBLING_CANARY');
+
+  process.env.HARMONY_CHILD_ENABLED = 'false';
+  let blocked = await request('/api/v2/me/summary?childId=attacker-target', {
+    bearer: self.completed.session.accessToken
+  });
+  assertApiError(blocked, 403, 'FEATURE_DISABLED', ['GATE_SIBLING_CANARY']);
+
+  process.env.HARMONY_CHILD_ENABLED = 'true';
+  process.env.DEVICE_PAIRING_ENABLED = 'false';
+  blocked = await request('/api/v2/me/transactions', {
+    bearer: self.completed.session.accessToken
+  });
+  assertApiError(blocked, 403, 'FEATURE_DISABLED', ['GATE_SIBLING_CANARY']);
+
+  process.env.DEVICE_PAIRING_ENABLED = 'true';
+  process.env.CHILD_ENROLLMENT_ENABLED = 'false';
+  const summary = await request('/api/v2/me/summary', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.equal(summary.response.status, 200);
+  assert.equal(summary.body.points.balance, 0);
+  const empty = await request('/api/v2/me/transactions', {
+    bearer: self.completed.session.accessToken
+  });
+  assert.equal(empty.response.status, 200);
+  assert.deepEqual(empty.body.transactions, []);
+
+  getDb().prepare('DELETE FROM point_accounts WHERE family_id = ? AND kid_id = ?')
+    .run(fixture.familyId, fixture.children[0].id);
+  const incompleteSummary = await request('/api/v2/me/summary', {
+    bearer: self.completed.session.accessToken
+  });
+  assertApiError(incompleteSummary, 409, 'CHILD_DATA_INCOMPLETE');
+  const incompleteTransactions = await request('/api/v2/me/transactions', {
+    bearer: self.completed.session.accessToken
+  });
+  assertApiError(incompleteTransactions, 409, 'CHILD_DATA_INCOMPLETE');
+  enableAllGates();
 });
