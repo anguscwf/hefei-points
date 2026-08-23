@@ -9,7 +9,7 @@
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
 - HarmonyOS `0.1.0` 是技术诊断版本，只验证 ArkTS、HTTPS、存储、生命周期及签名链，不包含完整业务闭环。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
-- 阶段 1 已在本地完成 S0 安全前置和 S1/006 授权建档：家庭角色不自动继承监护权限，存量儿童默认暂停，建档/授权/撤回具备原子事务、重新认证、不可变证据和幂等边界；详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
+- 阶段 1 已在本地完成 S0、安全前置、S1/006 授权建档和 S2/007 设备配对与会话：家庭角色不自动继承监护权限，设备短码/凭据只落摘要，家长二次确认和 P-256 proof 后才激活绑定，Access/Refresh 单次轮换、重用检测及授权撤回级联撤销均已落地；详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
 - 生产迁移已增加“旧库一致性快照 + 清单校验 + 无清单拒绝迁移”门禁；但正式法律文本、PIPIA、存量数据整改和 AppGallery 正式上架均未完成，所有儿童生产功能继续默认关闭。
 - 当前阶段 1 变更仍只存在于本地分支，不代表已部署、已上架或已清理远端历史。
 
@@ -52,6 +52,8 @@ npm run backup:pre-migration -- --database <旧库路径> --backup-root <备份�
 ```
 
 再将命令输出的 `manifest.json` 路径设置为 `PRE_MIGRATION_BACKUP_MANIFEST` 后启动新代码。日常 `npm run backup` 是迁移后的运行备份，不能替代该门禁。
+
+生产开启 `DEVICE_PAIRING_ENABLED` 前还必须显式设置 `PAIRING_CLIENT_IP_MODE=direct`，或设置 `PAIRING_CLIENT_IP_MODE=trusted_proxy` 并通过 `TRUSTED_PROXIES` 列出实际代理 IP/CIDR。服务默认不信任转发地址头，避免伪造来源绕过持久猜码锁；该配置不替代边缘限流。
 
 HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harmonyos/build-profile.json5` 含本机签名信息并被强制忽略；开发者必须在本机独立配置，严禁提交密码、证书、Profile 或绝对路径。
 

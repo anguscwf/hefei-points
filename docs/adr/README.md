@@ -11,3 +11,4 @@
 - [ADR-0003：阶段 1 采用安全前置的纵向切片](0003-stage1-security-first-vertical-slices.md)
 - [ADR-0004：监护授权、儿童状态与可见性边界](0004-guardian-consent-state-and-visibility.md)
 - [ADR-0005：生产迁移必须先取得可验证的旧库快照](0005-pre-migration-backup-gate.md)
+- [ADR-0006：设备配对、设备身份与会话轮换边界](0006-device-pairing-session-security-boundary.md)
