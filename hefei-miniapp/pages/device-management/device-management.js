@@ -63,8 +63,9 @@ function pairingView(pairing) {
       locked: '配对已锁定',
       cancelled: '配对已取消'
     }[pairing.status] || '状态待确认',
-    deviceFingerprint: device && device.publicKey && device.publicKey.sha256
-      ? device.publicKey.sha256.slice(0, 16) + '…' : ''
+    deviceFingerprint: viewModel.formatSha256Fingerprint(
+      device && device.publicKey && device.publicKey.sha256
+    )
   });
 }
 

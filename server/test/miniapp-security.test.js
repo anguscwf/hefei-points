@@ -30,6 +30,15 @@ test('监护端 API 若存在则不暴露孩子端配对申领与设备会话刷
   assertNoErrors(miniappCheck.checkGuardianApiBoundary());
 });
 
+test('小程序项目与运行环境配置保持域名校验和生产隔离', () => {
+  assertNoErrors(miniappCheck.checkProjectConfiguration());
+  assertNoErrors(miniappCheck.checkRuntimeEnvironmentPolicy());
+});
+
+test('web-view 仅由公开法律文本页使用并处理加载失败', () => {
+  assertNoErrors(miniappCheck.checkWebViewBoundary());
+});
+
 test('静态门能够识别合成 Token body、AppSecret 和敏感导航样本', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hefei-miniapp-security-'));
   const filename = path.join(directory, 'synthetic-violation.js');

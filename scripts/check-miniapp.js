@@ -5,6 +5,11 @@ const { spawnSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const miniappRoot = path.join(root, 'hefei-miniapp');
 const sourceExtensions = new Set(['.js', '.json', '.wxml', '.wxss']);
+const productionApiBase = 'https://hefeijifen.cn';
+const projectConfigFile = path.join(miniappRoot, 'project.config.json');
+const runtimeEnvironmentFile = path.join(miniappRoot, 'utils', 'runtime-environment.js');
+const legalDocumentMarkup = path.join(miniappRoot, 'pages', 'legal-document', 'legal-document.wxml');
+const legalDocumentSource = path.join(miniappRoot, 'pages', 'legal-document', 'legal-document.js');
 
 function filesIn(directory, predicate) {
   const files = [];
@@ -194,13 +199,122 @@ function checkGuardianApiBoundary() {
     .map(value => `${relative(filename)}: guardian API exposes child credential route ${value}`);
 }
 
+function checkProjectConfiguration(filename = projectConfigFile) {
+  const errors = [];
+  let config;
+  try {
+    config = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  } catch (error) {
+    return [`${relative(filename)}: tracked project configuration is missing or invalid JSON`];
+  }
+  if (!config || config.compileType !== 'miniprogram') {
+    errors.push(`${relative(filename)}: compileType must be miniprogram`);
+  }
+  if (!config.setting || config.setting.urlCheck !== true) {
+    errors.push(`${relative(filename)}: tracked urlCheck must be true`);
+  }
+  return errors;
+}
+
+function loadRuntimeEnvironment() {
+  delete require.cache[require.resolve(runtimeEnvironmentFile)];
+  return require(runtimeEnvironmentFile);
+}
+
+function checkRuntimeEnvironmentPolicy(environment = loadRuntimeEnvironment()) {
+  const errors = [];
+  if (!environment || typeof environment.resolve !== 'function'
+      || typeof environment.isProductionOrigin !== 'function') {
+    return [`${relative(runtimeEnvironmentFile)}: runtime environment contract is incomplete`];
+  }
+
+  for (const envVersion of ['develop', 'trial']) {
+    const profile = environment.resolve(envVersion);
+    if (!profile || profile.envVersion !== envVersion) {
+      errors.push(`${relative(runtimeEnvironmentFile)}: ${envVersion} profile is missing`);
+      continue;
+    }
+    if (environment.isProductionOrigin(profile.apiBase) || profile.apiBase === productionApiBase) {
+      errors.push(`${relative(runtimeEnvironmentFile)}: ${envVersion} must reject the production API origin`);
+    }
+    if (profile.production !== false || profile.environmentReady !== false
+        || profile.guardianPreviewEnabled !== false) {
+      errors.push(`${relative(runtimeEnvironmentFile)}: ${envVersion} must remain fail closed until an approved synthetic API exists`);
+    }
+  }
+
+  const unknown = environment.resolve('unknown');
+  if (!unknown || unknown.envVersion !== 'unknown'
+      || unknown.production !== false
+      || unknown.environmentReady !== false
+      || unknown.guardianPreviewEnabled !== false
+      || environment.isProductionOrigin(unknown.apiBase)
+      || unknown.apiBase === productionApiBase) {
+    errors.push(`${relative(runtimeEnvironmentFile)}: unknown environments must fail closed away from production`);
+  }
+
+  const release = environment.resolve('release');
+  if (!release || release.envVersion !== 'release'
+      || release.apiBase !== productionApiBase
+      || release.production !== true
+      || release.environmentReady !== true
+      || release.guardianPreviewEnabled !== false
+      || !environment.isProductionOrigin(release.apiBase)) {
+    errors.push(`${relative(runtimeEnvironmentFile)}: release must use only the production API origin`);
+  }
+  for (const filename of miniappSourceFiles()) {
+    if (path.resolve(filename) === path.resolve(runtimeEnvironmentFile)) continue;
+    if (fs.readFileSync(filename, 'utf8').includes(productionApiBase)) {
+      errors.push(`${relative(filename)}: production API origin must be declared only in runtime-environment.js`);
+    }
+  }
+  const policySource = fs.readFileSync(runtimeEnvironmentFile, 'utf8');
+  if (/\b(?:getStorageSync|getExtConfigSync|getLaunchOptionsSync|getEnterOptionsSync)\s*\(/.test(policySource)) {
+    errors.push(`${relative(runtimeEnvironmentFile)}: runtime environment policy must not read client overrides`);
+  }
+  return errors;
+}
+
+function checkWebViewBoundary(files = filesIn(
+  miniappRoot,
+  filename => path.extname(filename).toLowerCase() === '.wxml'
+)) {
+  const errors = [];
+  const occurrences = [];
+  for (const filename of files) {
+    const source = fs.readFileSync(filename, 'utf8');
+    for (const match of source.matchAll(/<web-view\b[^>]*>/gi)) {
+      occurrences.push({ filename, tag: match[0] });
+    }
+  }
+  if (occurrences.length !== 1 || path.resolve(occurrences[0] && occurrences[0].filename || '') !== path.resolve(legalDocumentMarkup)) {
+    errors.push('hefei-miniapp: web-view is allowed only once in pages/legal-document/legal-document.wxml');
+    return errors;
+  }
+
+  const binding = occurrences[0].tag.match(/\bbinderror\s*=\s*["']([A-Za-z_$][\w$]*)["']/i);
+  if (!binding) {
+    errors.push(`${relative(legalDocumentMarkup)}: web-view must bind an error handler`);
+    return errors;
+  }
+  const pageSource = fs.readFileSync(legalDocumentSource, 'utf8');
+  const handler = new RegExp(`\\b${binding[1]}\\s*:\\s*function\\b`);
+  if (!handler.test(pageSource)) {
+    errors.push(`${relative(legalDocumentSource)}: web-view error handler ${binding[1]} is not implemented`);
+  }
+  return errors;
+}
+
 function runChecks() {
   return [
     ...checkJavaScriptSyntax(),
     ...checkRequestTokenFields(),
     ...checkEmbeddedSecrets(),
     ...checkSensitiveUiCalls(),
-    ...checkGuardianApiBoundary()
+    ...checkGuardianApiBoundary(),
+    ...checkProjectConfiguration(),
+    ...checkRuntimeEnvironmentPolicy(),
+    ...checkWebViewBoundary()
   ];
 }
 
@@ -222,5 +336,8 @@ module.exports = {
   checkEmbeddedSecrets,
   checkSensitiveUiCalls,
   checkGuardianApiBoundary,
+  checkProjectConfiguration,
+  checkRuntimeEnvironmentPolicy,
+  checkWebViewBoundary,
   runChecks
 };

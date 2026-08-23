@@ -22,8 +22,8 @@
 - 历史页面暂时继续使用 `app.fetchAPI`；新增监护、设备、家庭待办和数据权利页面只能调用 `app.guardianApi`，不得自行拼接 v2 URL 或认证头。
 - `app.requestV2` 只接受固定 HTTPS 源下的相对 `/api/v2/...` 路径。公开法律文本请求不发送认证头，其他家长端请求只发送成人 Bearer Token，不在 body 或 query 重复 Token。
 - 只有服务端返回 `401 AUTH_REQUIRED` 且响应对应的 Token 仍是当前会话时才清除登录态。`FEATURE_DISABLED`、`FORBIDDEN_SCOPE` 和 `REAUTH_REQUIRED` 必须原样交给页面处理。
-- v2 写请求不自动重试。页面应在一次用户动作开始时通过 `app.guardianApi.createIdempotencyKey(scope)` 生成密码学安全幂等键；网络失败、超时、网关 5xx 或畸形响应都按结果不确定处理，只允许用户显式复用同一个键重试，或放弃后先刷新服务端状态。
-- 授权建档与配对生成会先写入经读回验证的非秘密恢复标记；标记只含操作、儿童作用域和幂等键，不含别名、密码、重新认证断言、短码或 challenge。应用重启后必须先用原键向服务端核对，不能静默生成新键。
+- v2 写请求不自动重试。页面应在一次用户动作开始时通过 `app.guardianApi.createIdempotencyKey(scope)` 生成密码学安全幂等键；网络失败、超时、网关 5xx 或畸形响应都按结果不确定处理，只允许用户显式复用同一个键重试。资料权利请求一旦出现未知结果便不能“放弃后换新键”，必须按持久恢复句柄向服务端对账。
+- 授权建档、配对生成与资料权利请求都会在网络写入前写入经读回验证的非秘密恢复标记；标记只含操作、成人/家庭存储作用域、儿童作用域、请求类型和幂等键，不含别名、密码、重新认证断言、请求正文、短码或 challenge。应用重启后必须先用原键向服务端核对，不能静默生成新键。
 - mutation 成功响应必须绑定原操作、目标资源、终态和 revision。畸形 2xx 不是成功：页面保留当前内存中的原意图与幂等键，提示结果待核对。
 - 密码、重新认证断言、设备短码、挑战、公钥及任何设备会话凭据不得写入本地存储或日志。缓存用户只用于展示；家庭、儿童和监护范围始终由服务端从成人会话重新推导。
 - 成人会话替换先持久化空 Token 墓碑、再写用户、最后写新 Token 并整体读回，避免存储中途失败形成跨家庭的旧 Token/新用户组合。页面订阅会话代次并丢弃旧会话迟到响应。
@@ -33,11 +33,12 @@
 
 ## S6 封闭预发布边界
 
-- 正式版不显示新增儿童、设备配对和家庭待办等新流程入口；公开法律文本与家庭隐私安全入口保持可发现。开发版/体验版入口仍受服务端全部功能门约束。
-- 当前 API 基址固定为生产域名；在建立编译时绑定、不可由客户端改写的合成非生产端点，并让预览模式拒绝生产 host 之前，不得用开发版/体验版执行联网流程烟测。
+- 正式版只绑定 `https://hefeijifen.cn`，且不显示新增儿童、设备配对和家庭待办等新流程入口；公开法律文本与家庭隐私安全入口保持可发现。
+- 开发版/体验版的 API 与法律源由只读代码 profile 绑定。仓库尚无已批准的独立非生产端点，因此当前 profile 指向不可路由的 `.invalid` 合成源、关闭监护预览并在本地返回 `API_ENVIRONMENT_INVALID`，不会发出 `wx.request`，更不会回退生产域。真实非生产域建立并完成微信合法域名配置前不得执行联网流程烟测。
 - 查阅/导出响应只在当前页面内存中按白名单分区展示，不写文件、不写剪贴板、不进入持久缓存。安全文件交付、下载披露回执、专用限流和流式/异步大数据导出仍是生产硬门。
-- 结果未知的普通数据行权请求目前可在页面放弃或随页面隐藏而清除内存意图；生产前应增加非秘密 durable 恢复句柄和服务端对账，避免使用新键产生重复请求/审计记录。
-- 公开法律文本 `web-view` 生产前必须限定正式域名与路径并补加载失败处理；设备人工核对指纹也应展示更长的分组值。
+- 结果未知的资料权利请求只持久化最小作用域与幂等键；页面隐藏、重启或后续功能门关闭均保留标记。客户端通过 `GET /api/v2/data-rights-operations/request-create` 再读取本人请求详情，只有 child/type 精确匹配且本地标记清理读回成功后才解除新请求阻断。`not_found` 不按客户端时间自动放弃；该阻断不影响授权撤回或既有回执读取。
+- 公开法律文本 `web-view` 只接受当前环境精确 origin 下 `/legal/<type>/<version>/<sha256>.html` 的叶子路径，拒绝跨类型、端口、query、fragment 与路径穿越，并用 `binderror` 清空失败 URL。正式内容不可变托管、重定向/CSP、微信 business-domain 和真机验证仍是生产硬门。
+- 设备人工核对完整显示 64 位 SHA-256，每 8 位一组；无效指纹不截断展示。
 - 根测试和静态扫描不能替代微信开发者工具 WXML/WXSS 编译、合法域名校验、受控成人账号设备烟测和发布审核。
 
 ## 主要入口
@@ -57,6 +58,9 @@ utils/v2-request.js                 严格 v2 HTTPS 传输与稳定结果
 utils/guardian-api.js               家长端 v2 端点白名单
 utils/guardian-operation-recovery.js 授权写入的非秘密恢复标记
 utils/device-pairing-recovery.js     配对生成的非秘密恢复标记
+utils/data-rights-recovery.js        资料权利写入的非秘密恢复标记
+utils/runtime-environment.js         不可运行时改写的 API/法律源 profile
+utils/legal-public-url.js            法律文本 type/version/hash URL 合同
 pages/guardian-consent/              授权建档与重新授权
 pages/device-management/             配对确认、设备与会话撤销
 pages/family-tasks/                  家庭待办与单条审批
@@ -70,7 +74,7 @@ pages/legal-document/                常驻公开法律文本入口
 2. `project.config.json` 可提交，`project.private.config.json` 是本机私有设置并被 Git 忽略；
 3. AppSecret 只允许由服务端环境变量提供，不能写入小程序源码或项目配置；
 4. 调试与验收必须使用合成家庭/账号，不得污染真实家庭数据。
-5. `project.config.json` 的 `urlCheck: false` 只用于本地开发便利，不是发布绕过；发布前仍须在微信后台配置合法的 HTTPS request 域名并开启域名校验。
+5. 已跟踪的 `project.config.json` 必须保持 `urlCheck: true`。被忽略的本机 `project.private.config.json` 也可能覆盖该选项；DevTools/真机烟测前必须人工确认它没有关闭域名校验，并在微信后台配置精确 HTTPS request 与 business 域名。
 
 提交前至少执行：
 

@@ -1105,7 +1105,11 @@ test('privacy mutations retain the same intent on malformed 2xx and accept delet
   let rightsAttempts = 0;
   const childId = 'child_privacy_mutation';
   const app = {
-    globalData: {},
+    globalData: { guardianDataRightsReviewRequired: null },
+    clearDataRightsRecovery() {
+      this.globalData.guardianDataRightsReviewRequired = null;
+      return true;
+    },
     guardianApi: {
       createDataRightsRequest(id, body) {
         rightsAttempts += 1;
@@ -1145,6 +1149,7 @@ test('privacy mutations retain the same intent on malformed 2xx and accept delet
   page.performProtectedAction(rightsIntent);
   await nextTurn();
   assert.equal(page.data.canRetryAction, true);
+  assert.equal(page.data.canAbandonAction, false);
   assert.equal(page._pendingIntent, rightsIntent);
   assert.equal(rightsIntent.body.reauthAssertion, 'temporary-rights-assertion');
   page.retryProtectedAction();
@@ -1163,6 +1168,576 @@ test('privacy mutations retain the same intent on malformed 2xx and accept delet
   await nextTurn();
   assert.equal(page._pendingIntent, null);
   assert.equal(withdrawalIntent.body.reauthAssertion, '');
+  assert.match(page.data.successText, /授权已撤回/);
+});
+
+test('privacy rights write persists and verifies its recovery marker before dispatch', async () => {
+  const events = [];
+  const key = 'miniapp:rights-marker-before-dispatch-0123456789';
+  const childId = 'child_rights_marker';
+  let dispatchedAssertion = '';
+  const app = {
+    globalData: { guardianDataRightsReviewRequired: null },
+    beginDataRightsRecovery(id, requestType, idempotencyKey) {
+      events.push('marker');
+      assert.equal(id, childId);
+      assert.equal(requestType, 'access');
+      assert.equal(idempotencyKey, key);
+      this.globalData.guardianDataRightsReviewRequired = {
+        childId: id, requestType, idempotencyKey, createdAt: 1
+      };
+      return this.globalData.guardianDataRightsReviewRequired;
+    },
+    clearDataRightsRecovery(idempotencyKey) {
+      events.push('clear');
+      assert.equal(idempotencyKey, key);
+      this.globalData.guardianDataRightsReviewRequired = null;
+      return true;
+    },
+    guardianApi: {
+      createReauth: () => Promise.resolve({
+        ok: true, data: { reauthAssertion: 'temporary-rights-assertion' }
+      }),
+      createIdempotencyKey: () => Promise.resolve(key),
+      createDataRightsRequest(id, body, idempotencyKey) {
+        events.push('post');
+        assert.ok(app.globalData.guardianDataRightsReviewRequired, 'marker must exist before POST');
+        assert.equal(id, childId);
+        assert.equal(idempotencyKey, key);
+        dispatchedAssertion = body.reauthAssertion;
+        return Promise.resolve({
+          ok: true,
+          data: rightsMutationPayload({ childId: id, requestType: body.requestType })
+        });
+      }
+    }
+  };
+  const page = pageRuntime('pages/family-privacy/family-privacy.js', app, {});
+  page._alive = true;
+  page._visible = true;
+  page._generation = 4;
+  page.loadChildren = function() { events.push('reload'); };
+  page.setData({
+    selectedChild: {
+      id: childId, alias: '合成孩子', revision: 1,
+      privacyState: { status: 'active' }
+    },
+    rightsPassword: 'synthetic-password',
+    rightsTypeIndex: 0,
+    currentRightsType: 'access'
+  });
+  page.beginProtectedAction('rights');
+  await nextTurn();
+  await nextTurn();
+  assert.deepEqual(events, ['marker', 'post', 'clear', 'reload']);
+  assert.equal(dispatchedAssertion, 'temporary-rights-assertion');
+  assert.equal(app.globalData.guardianDataRightsReviewRequired, null);
+  assert.equal(page.data.rightsReviewRequired, false);
+  assert.match(page.data.successText, /请求已记录/);
+});
+
+test('privacy rights write never dispatches when durable marker storage fails', async () => {
+  let writes = 0;
+  const app = {
+    globalData: { guardianDataRightsReviewRequired: null },
+    beginDataRightsRecovery() {
+      this.globalData.guardianDataRightsReviewRequired = { storageUnavailable: true };
+      throw new Error('synthetic storage failure');
+    },
+    guardianApi: {
+      createReauth: () => Promise.resolve({
+        ok: true, data: { reauthAssertion: 'temporary-rights-assertion' }
+      }),
+      createIdempotencyKey: () => Promise.resolve(
+        'miniapp:rights-storage-failure-0123456789abcdef'
+      ),
+      createDataRightsRequest() {
+        writes += 1;
+        return Promise.resolve({ ok: true });
+      }
+    }
+  };
+  const page = pageRuntime('pages/family-privacy/family-privacy.js', app, {});
+  page._alive = true;
+  page._visible = true;
+  page._generation = 2;
+  page.setData({
+    selectedChild: {
+      id: 'child_storage_failure', alias: '合成孩子', revision: 1,
+      privacyState: { status: 'active' }
+    },
+    rightsPassword: 'synthetic-password',
+    rightsTypeIndex: 0
+  });
+  page.beginProtectedAction('rights');
+  await nextTurn();
+  await nextTurn();
+  assert.equal(writes, 0);
+  assert.equal(page._pendingIntent, null);
+  assert.equal(page.data.rightsReviewRequired, true);
+  assert.match(page.data.rightsReviewText, /恢复标记无法持久化/);
+});
+
+test('first determinate rights failure clears its old scope after hide, but prior unknown does not', async () => {
+  async function scenario(recoveryRequired) {
+    var resolveWrite;
+    var scopedClears = [];
+    const app = {
+      globalData: {},
+      clearDataRightsRecoveryScope(actorId, familyId, key) {
+        scopedClears.push({ actorId, familyId, key });
+        return true;
+      },
+      guardianApi: {
+        createDataRightsRequest: () => new Promise(resolve => { resolveWrite = resolve; })
+      }
+    };
+    const page = pageRuntime('pages/family-privacy/family-privacy.js', app, {});
+    page._alive = true;
+    page._visible = true;
+    page._generation = 5;
+    const intent = {
+      kind: 'rights', childId: 'child_hidden_failure',
+      key: 'miniapp:rights-hidden-failure-0123456789', generation: 5,
+      recoveryActorId: 'adult_hidden_failure',
+      recoveryFamilyId: 'family_hidden_failure',
+      recoveryRequired,
+      body: {
+        requestType: 'access', expectedRevision: 1,
+        reauthAssertion: 'temporary-hidden-assertion'
+      }
+    };
+    page._pendingIntent = intent;
+    page.performProtectedAction(intent);
+    page.onHide();
+    resolveWrite({
+      ok: false,
+      code: 'FEATURE_DISABLED',
+      message: 'synthetic determinate failure',
+      outcomeUnknown: false
+    });
+    await nextTurn();
+    assert.equal(intent.body.reauthAssertion, '');
+    return scopedClears;
+  }
+
+  assert.deepEqual(await scenario(false), [{
+    actorId: 'adult_hidden_failure',
+    familyId: 'family_hidden_failure',
+    key: 'miniapp:rights-hidden-failure-0123456789'
+  }]);
+  assert.deepEqual(await scenario(true), []);
+});
+
+test('data-rights 401 clears the marker before deferred session invalidation', async () => {
+  const values = new Map();
+  const events = [];
+  const wxApi = {
+    getAccountInfoSync() { return { miniProgram: { envVersion: 'release' } }; },
+    getStorageSync(key) { return values.get(key); },
+    setStorageSync(key, value) { values.set(key, value); },
+    request(options) {
+      options.success({
+        statusCode: 401,
+        header: {},
+        data: { success: false, code: 'AUTH_REQUIRED', message: 'synthetic expired session' }
+      });
+    },
+    showToast() {}
+  };
+  const app = appRuntime(wxApi);
+  const token = `hefei.${'7'.repeat(32)}`;
+  const user = {
+    id: 'adult_rights_401', familyId: 'family_rights_401', role: 'parent', name: '合成家长'
+  };
+  app.globalData.token = token;
+  app.globalData.user = user;
+  app._sessionGeneration = 1;
+  app._sessionStore = {
+    getAdultBearer: () => token,
+    clear() { events.push('session-clear-storage'); }
+  };
+
+  const previousWx = global.wx;
+  global.wx = wxApi;
+  try {
+    const key = 'miniapp:rights-auth-failure-0123456789abcdef';
+    app.beginDataRightsRecovery('child_rights_401', 'access', key);
+    const originalClearMarker = app.clearDataRightsRecovery.bind(app);
+    app.clearDataRightsRecovery = function(expectedKey) {
+      events.push('marker-clear');
+      return originalClearMarker(expectedKey);
+    };
+    const originalClearSession = app.clearSession.bind(app);
+    app.clearSession = function() {
+      events.push('session-clear');
+      return originalClearSession();
+    };
+    app._initV2Foundation();
+    const page = pageRuntime('pages/family-privacy/family-privacy.js', app, wxApi);
+    page._alive = true;
+    page._visible = true;
+    page._generation = 8;
+    const intent = {
+      kind: 'rights', childId: 'child_rights_401', key, generation: 8,
+      recoveryActorId: user.id,
+      recoveryFamilyId: user.familyId,
+      body: {
+        requestType: 'access', expectedRevision: 1,
+        reauthAssertion: 'temporary-auth-assertion'
+      }
+    };
+    page._pendingIntent = intent;
+    page.performProtectedAction(intent);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(events.indexOf('marker-clear') >= 0);
+    assert.ok(events.indexOf('session-clear') > events.indexOf('marker-clear'));
+    assert.equal(intent.body.reauthAssertion, '');
+    app.globalData.token = token;
+    app.globalData.user = user;
+    assert.equal(app._restoreDataRightsReview(), null, 'relogin must not restore a rejected write');
+  } finally {
+    global.wx = previousWx;
+  }
+});
+
+test('stale v2 result retains only original failure classification for scoped cleanup', async () => {
+  var pending;
+  const wxApi = {
+    getAccountInfoSync() { return { miniProgram: { envVersion: 'release' } }; },
+    request(options) { pending = options; }
+  };
+  const app = appRuntime(wxApi);
+  app.globalData.token = `hefei.${'1'.repeat(32)}`;
+  app.globalData.user = { id: 'adult_old', familyId: 'family_old', role: 'parent' };
+  app._sessionGeneration = 1;
+  app._sessionStore = { getAdultBearer: () => app.globalData.token };
+  const previousWx = global.wx;
+  global.wx = wxApi;
+  try {
+    const promise = app.requestV2({
+      path: '/api/v2/children/child_old/data-rights-requests',
+      method: 'POST',
+      auth: 'adult',
+      idempotencyKey: 'miniapp:rights-stale-0123456789abcdef',
+      body: { requestType: 'access' }
+    });
+    app.globalData.token = `hefei.${'2'.repeat(32)}`;
+    app.globalData.user = { id: 'adult_new', familyId: 'family_new', role: 'parent' };
+    app._sessionGeneration = 2;
+    pending.success({
+      statusCode: 403,
+      header: {},
+      data: { success: false, code: 'FEATURE_DISABLED', message: 'synthetic closed gate' }
+    });
+    const result = await promise;
+    assert.equal(result.code, 'STALE_SESSION_RESPONSE');
+    assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.staleOriginalOk, false);
+    assert.equal(result.staleOriginalCode, 'FEATURE_DISABLED');
+    assert.equal(result.staleOriginalOutcomeUnknown, false);
+    assert.equal(Object.hasOwn(result, 'data'), false, 'old response body must not cross sessions');
+  } finally {
+    global.wx = previousWx;
+  }
+});
+
+test('privacy rights unknown result survives hide, forbids abandon, and reconciles exact detail', async () => {
+  const requestId = 'data_rights_0123456789abcdef0123456789abcdef';
+  const marker = {
+    childId: 'child_rights_reconcile',
+    requestType: 'access',
+    idempotencyKey: 'miniapp:rights-reconcile-0123456789abcdef',
+    createdAt: 1
+  };
+  let clears = 0;
+  let reloads = 0;
+  let writeAttempts = 0;
+  let operationReads = 0;
+  const detail = rightsMutationPayload({
+    childId: marker.childId, requestType: marker.requestType
+  }).dataRightsRequest;
+  detail.id = requestId;
+  detail.auditTrail = [];
+  const app = {
+    globalData: { guardianDataRightsReviewRequired: marker },
+    clearDataRightsRecovery(idempotencyKey) {
+      clears += 1;
+      assert.equal(idempotencyKey, marker.idempotencyKey);
+      this.globalData.guardianDataRightsReviewRequired = null;
+      return true;
+    },
+    guardianApi: {
+      createDataRightsRequest: () => {
+        writeAttempts += 1;
+        return Promise.resolve(writeAttempts === 1 ? {
+          ok: false,
+          code: 'NETWORK_ERROR',
+          message: 'synthetic network failure',
+          outcomeUnknown: true
+        } : {
+          ok: false,
+          code: 'FEATURE_DISABLED',
+          message: 'synthetic gate closed after unknown result',
+          outcomeUnknown: false
+        });
+      },
+      getDataRightsOperation: () => {
+        operationReads += 1;
+        return Promise.resolve({
+          ok: true,
+          data: {
+            dataRightsOperation: {
+              operation: 'request-create',
+              status: 'completed',
+              completedAt: SYNTHETIC_TIME,
+              dataRightsRequestId: requestId
+            }
+          }
+        });
+      },
+      getDataRightsRequest: () => Promise.resolve({
+        ok: true, data: { success: true, dataRightsRequest: detail }
+      })
+    }
+  };
+  const page = pageRuntime('pages/family-privacy/family-privacy.js', app, {});
+  page._alive = true;
+  page._visible = true;
+  page._generation = 6;
+  const intent = {
+    kind: 'rights', childId: marker.childId, key: marker.idempotencyKey, generation: 6,
+    body: {
+      requestType: marker.requestType,
+      expectedRevision: 1,
+      reauthAssertion: 'temporary-rights-assertion'
+    }
+  };
+  page._pendingIntent = intent;
+  page.performProtectedAction(intent);
+  await nextTurn();
+  assert.equal(page.data.canRetryAction, true);
+  assert.equal(page.data.canAbandonAction, false);
+  page.retryProtectedAction();
+  await nextTurn();
+  assert.equal(writeAttempts, 2);
+  assert.equal(clears, 0, 'a later determinate error cannot erase an earlier unknown outcome');
+  assert.equal(page.data.canRetryAction, true);
+  assert.equal(page._pendingIntent, intent);
+  page.abandonProtectedRetry();
+  assert.equal(page._pendingIntent, intent, 'data-rights retry cannot be abandoned for a new key');
+  page.onHide();
+  assert.equal(intent.body.reauthAssertion, '');
+  assert.equal(page._pendingIntent, null);
+  assert.equal(app.globalData.guardianDataRightsReviewRequired, marker);
+
+  const restored = pageRuntime('pages/family-privacy/family-privacy.js', app, {});
+  restored._alive = true;
+  restored._visible = true;
+  restored._generation = 9;
+  restored.loadChildren = function() { reloads += 1; };
+  restored.reconcileDataRightsOperation(marker, 9);
+  restored.reconcileDataRightsOperation(marker, 9);
+  await nextTurn();
+  await nextTurn();
+  assert.equal(clears, 1);
+  assert.equal(operationReads, 1, 'reconciliation must be single-flight');
+  assert.equal(reloads, 1);
+  assert.equal(restored.data.rightsReviewRequired, false);
+  assert.match(restored.data.successText, /确认上次资料权利请求提交完成/);
+});
+
+test('privacy rights not_found and local clear failure remain blocked without new writes', async () => {
+  const marker = {
+    childId: 'child_rights_blocked', requestType: 'export',
+    idempotencyKey: 'miniapp:rights-blocked-0123456789abcdef', createdAt: 1
+  };
+  let writes = 0;
+  let clears = 0;
+  const app = {
+    globalData: { guardianDataRightsReviewRequired: marker },
+    clearDataRightsRecovery() { clears += 1; return false; },
+    guardianApi: {
+      getDataRightsOperation: () => Promise.resolve({
+        ok: true,
+        data: {
+          dataRightsOperation: { operation: 'request-create', status: 'not_found' }
+        }
+      }),
+      createDataRightsRequest() {
+        writes += 1;
+        return Promise.resolve({
+          ok: true,
+          data: rightsMutationPayload({ childId: marker.childId, requestType: marker.requestType })
+        });
+      }
+    }
+  };
+  const page = pageRuntime('pages/family-privacy/family-privacy.js', app, {});
+  page._alive = true;
+  page._visible = true;
+  page._generation = 7;
+  page.reconcileDataRightsOperation(marker, 7);
+  await nextTurn();
+  assert.equal(page.data.rightsReviewRequired, true);
+  assert.match(page.data.rightsReviewText, /暂未找到/);
+  page.setData({
+    selectedChild: { id: marker.childId, alias: '合成孩子', revision: 1 },
+    rightsPassword: 'synthetic-password'
+  });
+  page.startRightsRequest();
+  assert.equal(writes, 0);
+  assert.equal(clears, 0);
+
+  const intent = {
+    kind: 'rights', childId: marker.childId, key: marker.idempotencyKey, generation: 7,
+    body: {
+      requestType: marker.requestType,
+      expectedRevision: 1,
+      reauthAssertion: 'temporary-rights-assertion'
+    }
+  };
+  page.performProtectedAction(intent);
+  await nextTurn();
+  assert.equal(clears, 1);
+  assert.equal(page.data.rightsReviewRequired, true);
+  assert.equal(page.data.successText, '');
+  assert.match(page.data.errorText, /恢复标记清理失败/);
+});
+
+test('unresolved data-rights marker does not block guardian consent withdrawal', async () => {
+  const marker = {
+    childId: 'child_withdraw_safety', requestType: 'access',
+    idempotencyKey: 'miniapp:rights-before-withdraw-0123456789', createdAt: 1
+  };
+  let withdrawals = 0;
+  const app = {
+    globalData: { guardianDataRightsReviewRequired: marker },
+    guardianApi: {
+      createReauth: () => Promise.resolve({
+        ok: true, data: { reauthAssertion: 'temporary-withdraw-assertion' }
+      }),
+      createIdempotencyKey: () => Promise.resolve(
+        'miniapp:withdraw-safety-0123456789abcdef'
+      ),
+      withdrawConsent(id) {
+        withdrawals += 1;
+        return Promise.resolve({
+          ok: true,
+          data: consentMutationPayload({
+            childId: id,
+            consentStatus: 'withdrawn',
+            privacyStatus: 'processing_blocked',
+            privacyRevision: 2
+          })
+        });
+      }
+    }
+  };
+  const page = pageRuntime('pages/family-privacy/family-privacy.js', app, {});
+  page._alive = true;
+  page._visible = true;
+  page._generation = 3;
+  page.loadChildren = function() {};
+  const abandonedRightsIntent = {
+    kind: 'rights', body: { reauthAssertion: 'temporary-old-rights-assertion' }
+  };
+  page._pendingIntent = abandonedRightsIntent;
+  page.setData({
+    canRetryAction: true,
+    canAbandonAction: false,
+    rightsReviewRequired: true,
+    rightsReviewText: '仍在核对',
+    withdrawPassword: 'synthetic-password',
+    selectedChild: {
+      id: marker.childId,
+      revision: 1,
+      privacyState: { status: 'active' }
+    }
+  });
+  page.beginProtectedAction('withdraw');
+  await nextTurn();
+  await nextTurn();
+  assert.equal(abandonedRightsIntent.body.reauthAssertion, '');
+  assert.equal(withdrawals, 1);
+  assert.equal(app.globalData.guardianDataRightsReviewRequired, marker);
+  assert.equal(page.data.rightsReviewRequired, true);
+  assert.match(page.data.successText, /授权已撤回/);
+});
+
+test('completed rights reconciliation defers reload while consent withdrawal is in flight', async () => {
+  const marker = {
+    childId: 'child_reconcile_withdraw', requestType: 'access',
+    idempotencyKey: 'miniapp:rights-reconcile-withdraw-0123456789', createdAt: 1
+  };
+  const requestId = 'data_rights_fedcba9876543210fedcba9876543210';
+  let resolveDetail;
+  let resolveWithdrawal;
+  let reloads = 0;
+  const detail = rightsMutationPayload({
+    childId: marker.childId, requestType: marker.requestType
+  }).dataRightsRequest;
+  detail.id = requestId;
+  detail.auditTrail = [];
+  const app = {
+    globalData: { guardianDataRightsReviewRequired: marker },
+    clearDataRightsRecovery() {
+      this.globalData.guardianDataRightsReviewRequired = null;
+      return true;
+    },
+    guardianApi: {
+      getDataRightsOperation: () => Promise.resolve({
+        ok: true,
+        data: {
+          dataRightsOperation: {
+            operation: 'request-create', status: 'completed',
+            completedAt: SYNTHETIC_TIME, dataRightsRequestId: requestId
+          }
+        }
+      }),
+      getDataRightsRequest: () => new Promise(resolve => { resolveDetail = resolve; }),
+      withdrawConsent: () => new Promise(resolve => { resolveWithdrawal = resolve; })
+    }
+  };
+  const page = pageRuntime('pages/family-privacy/family-privacy.js', app, {});
+  page._alive = true;
+  page._visible = true;
+  page._generation = 12;
+  page.loadChildren = function() { reloads += 1; };
+  page.reconcileDataRightsOperation(marker, 12);
+  await nextTurn();
+  assert.equal(typeof resolveDetail, 'function');
+
+  const withdrawalIntent = {
+    kind: 'withdraw', childId: marker.childId,
+    key: 'miniapp:withdraw-during-reconcile-0123456789', generation: 12,
+    previousPrivacyStatus: 'active',
+    body: { expectedRevision: 1, reauthAssertion: 'temporary-withdraw-assertion' }
+  };
+  page._pendingIntent = withdrawalIntent;
+  page.performProtectedAction(withdrawalIntent);
+  assert.equal(page.data.operating, true);
+
+  resolveDetail({ ok: true, data: { success: true, dataRightsRequest: detail } });
+  await nextTurn();
+  assert.equal(reloads, 0, 'reconciliation must not invalidate an in-flight withdrawal');
+  assert.equal(page._generation, 12);
+  assert.equal(page._pendingIntent, withdrawalIntent);
+  assert.equal(page._needsReload, true);
+
+  resolveWithdrawal({
+    ok: true,
+    data: consentMutationPayload({
+      childId: marker.childId,
+      consentStatus: 'withdrawn',
+      privacyStatus: 'processing_blocked',
+      privacyRevision: 2
+    })
+  });
+  await nextTurn();
+  assert.equal(withdrawalIntent.body.reauthAssertion, '');
+  assert.equal(page._pendingIntent, null);
+  assert.equal(reloads, 1);
   assert.match(page.data.successText, /授权已撤回/);
 });
 
@@ -1430,6 +2005,7 @@ test('device and session revocation keep their exact mutation key on malformed 2
 test('legacy requests discard old-family responses and stale authorization failures', async () => {
   const requests = [];
   const wxApi = {
+    getAccountInfoSync() { return { miniProgram: { envVersion: 'release' } }; },
     request(options) { requests.push(options); },
     showToast() {}
   };
@@ -1587,5 +2163,8 @@ test('all guardian pages are registered and production navigation exposes privac
   assert.match(mine, /wx:if="\{\{isAdult\}\}" bindtap="goFamilyPrivacy"/);
   assert.match(mine, /wx:if="\{\{isAdult && guardianPreviewEnabled\}\}" bindtap="goFamilyTasks"/);
   assert.match(mine, /wx:if="\{\{isAdult && guardianPreviewEnabled\}\}" bindtap="goDeviceManagement"/);
-  assert.match(fs.readFileSync(path.join(MINIAPP, 'app.js'), 'utf8'), /envVersion === 'develop' \|\| envVersion === 'trial'/);
+  const environment = fresh('utils/runtime-environment.js');
+  assert.equal(environment.resolve('release').guardianPreviewEnabled, false);
+  assert.equal(environment.resolve('develop').guardianPreviewEnabled, false);
+  assert.equal(environment.resolve('trial').guardianPreviewEnabled, false);
 });

@@ -36,7 +36,7 @@
       <view wx:if="{{shortCode}}" class="guardian-alert">只把短码当面告诉正在操作孩子设备的人。不要截图、转发或粘贴到聊天中。</view>
       <view wx:if="{{pairing.claimedDevice}}" class="guardian-meta-grid">
         <view class="guardian-meta"><text class="guardian-meta-label">设备别名</text><text class="guardian-meta-value">{{pairing.claimedDevice.alias}}</text></view>
-        <view class="guardian-meta"><text class="guardian-meta-label">设备公钥指纹</text><text class="guardian-meta-value guardian-mono">{{pairing.deviceFingerprint}}</text></view>
+        <view class="guardian-meta"><text class="guardian-meta-label">完整公钥指纹（SHA-256）</text><text class="guardian-meta-value guardian-mono">{{pairing.deviceFingerprint}}</text></view>
       </view>
       <view class="guardian-actions">
         <button class="btn btn-outline" loading="{{operating}}" disabled="{{operating || canRetryMutation}}" bindtap="refreshPairing">刷新状态</button>
@@ -53,7 +53,7 @@
         <view class="guardian-row">
           <view class="guardian-row-main">
             <text class="guardian-row-title">{{item.alias || '未命名设备'}}</text>
-            <text class="guardian-row-copy">公钥指纹 {{item.fingerprint}}</text>
+            <text class="guardian-row-copy guardian-mono">公钥指纹（SHA-256） {{item.fingerprint}}</text>
           </view>
           <text class="guardian-badge {{item.tone}}">{{item.statusLabel}}</text>
         </view>

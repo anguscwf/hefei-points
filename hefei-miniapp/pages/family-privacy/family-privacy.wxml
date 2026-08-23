@@ -10,6 +10,8 @@
   <view wx:if="{{successText}}" class="guardian-alert guardian-alert-success">{{successText}}</view>
   <view wx:if="{{reviewText}}" class="guardian-alert guardian-alert-danger">{{reviewText}}</view>
   <button wx:if="{{enrollmentReviewRequired}}" class="btn btn-outline guardian-btn-full" loading="{{loading}}" disabled="{{loading || operating}}" bindtap="loadChildren">重新核对服务端状态</button>
+  <view wx:if="{{rightsReviewText}}" class="guardian-alert guardian-alert-danger">{{rightsReviewText}}</view>
+  <button wx:if="{{rightsReviewRequired}}" class="btn btn-outline guardian-btn-full" loading="{{loading || reconcilingRights}}" disabled="{{loading || operating || canRetryAction || reconcilingRights}}" bindtap="loadChildren">重新核对资料权利请求</button>
 
   <block wx:if="{{isAdult}}">
     <view class="card">
@@ -56,8 +58,8 @@
         </view>
         <view wx:if="{{selectedChild.consent.status === 'active'}}" class="guardian-field">
           <text class="guardian-label">撤回前验证成人账号密码</text>
-          <input class="guardian-input" password="true" maxlength="128" disabled="{{operating || canRetryAction}}" value="{{withdrawPassword}}" placeholder="仅用于本次重新认证" bindinput="onWithdrawPasswordInput" />
-          <button class="btn btn-outline guardian-btn-full danger" loading="{{operating}}" disabled="{{operating || canRetryAction}}" bindtap="startWithdrawal">撤回监护授权</button>
+          <input class="guardian-input" password="true" maxlength="128" disabled="{{operating || (canRetryAction && canAbandonAction)}}" value="{{withdrawPassword}}" placeholder="仅用于本次重新认证" bindinput="onWithdrawPasswordInput" />
+          <button class="btn btn-outline guardian-btn-full danger" loading="{{operating}}" disabled="{{operating || (canRetryAction && canAbandonAction)}}" bindtap="startWithdrawal">撤回监护授权</button>
         </view>
       </view>
 
@@ -66,21 +68,23 @@
         <text class="guardian-section-copy">查阅、导出和更正可能受封闭预发布功能门控制；删除和终止服务始终可提交。删除当前仅进入政策审查，不代表已经删除。</text>
         <view class="guardian-field">
           <text class="guardian-label">请求类型</text>
-          <picker range="{{rightsTypes}}" range-key="label" value="{{rightsTypeIndex}}" disabled="{{operating || canRetryAction}}" bindchange="onRightsTypeChange">
+          <picker range="{{rightsTypes}}" range-key="label" value="{{rightsTypeIndex}}" disabled="{{operating || canRetryAction || rightsReviewRequired}}" bindchange="onRightsTypeChange">
             <view class="guardian-picker">{{rightsTypes[rightsTypeIndex].label}} ›</view>
           </picker>
         </view>
         <view wx:if="{{currentRightsType === 'correct'}}" class="guardian-field">
           <text class="guardian-label">新的儿童别名</text>
-          <input class="guardian-input" maxlength="30" disabled="{{operating || canRetryAction}}" value="{{correctionAlias}}" placeholder="历史记录快照不会被改写" bindinput="onCorrectionInput" />
+          <input class="guardian-input" maxlength="30" disabled="{{operating || canRetryAction || rightsReviewRequired}}" value="{{correctionAlias}}" placeholder="历史记录快照不会被改写" bindinput="onCorrectionInput" />
         </view>
         <view class="guardian-field">
           <text class="guardian-label">验证成人账号密码</text>
-          <input class="guardian-input" password="true" maxlength="128" disabled="{{operating || canRetryAction}}" value="{{rightsPassword}}" placeholder="仅用于本次重新认证" bindinput="onRightsPasswordInput" />
+          <input class="guardian-input" password="true" maxlength="128" disabled="{{operating || canRetryAction || rightsReviewRequired}}" value="{{rightsPassword}}" placeholder="仅用于本次重新认证" bindinput="onRightsPasswordInput" />
         </view>
-        <button wx:if="{{canRetryAction}}" class="btn btn-primary guardian-btn-full" loading="{{operating}}" disabled="{{operating}}" bindtap="retryProtectedAction">重试同一次操作</button>
-        <button wx:if="{{canRetryAction}}" class="btn btn-outline guardian-btn-full" disabled="{{operating}}" bindtap="abandonProtectedRetry">放弃重试并刷新状态</button>
-        <button wx:else class="btn {{(currentRightsType === 'delete' || currentRightsType === 'terminate') ? 'btn-outline danger' : 'btn-primary'}} guardian-btn-full" loading="{{operating}}" disabled="{{operating}}" bindtap="startRightsRequest">提交{{rightsTypes[rightsTypeIndex].label}}请求</button>
+        <block wx:if="{{canRetryAction}}">
+          <button class="btn btn-primary guardian-btn-full" loading="{{operating}}" disabled="{{operating || loading || reconcilingRights}}" bindtap="retryProtectedAction">重试同一次操作</button>
+          <button wx:if="{{canAbandonAction}}" class="btn btn-outline guardian-btn-full" disabled="{{operating}}" bindtap="abandonProtectedRetry">放弃重试并刷新状态</button>
+        </block>
+        <button wx:else class="btn {{(currentRightsType === 'delete' || currentRightsType === 'terminate') ? 'btn-outline danger' : 'btn-primary'}} guardian-btn-full" loading="{{operating}}" disabled="{{operating || rightsReviewRequired}}" bindtap="startRightsRequest">提交{{rightsTypes[rightsTypeIndex].label}}请求</button>
       </view>
 
       <view wx:if="{{exportSummary}}" class="card">

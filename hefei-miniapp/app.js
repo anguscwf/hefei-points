@@ -1,12 +1,13 @@
 // 糖罐积分 小程序 v2.6.0
 // 全局状态 · API · 认证
 var VERSION = '2.6.0';
-var API_BASE = 'https://hefeijifen.cn';
+var runtimeEnvironment = require('./utils/runtime-environment.js');
 var sessionUtils = require('./utils/session.js');
 var v2Request = require('./utils/v2-request.js');
 var guardianApiFactory = require('./utils/guardian-api.js');
 var guardianRecovery = require('./utils/guardian-operation-recovery.js');
 var pairingRecovery = require('./utils/device-pairing-recovery.js');
+var dataRightsRecovery = require('./utils/data-rights-recovery.js');
 
 App({
   guardianApi: null,
@@ -25,6 +26,8 @@ App({
     guardianRouteContext: null,
     guardianEnrollmentReviewRequired: null,
     guardianDeviceCreateIntent: null,
+    guardianDataRightsReviewRequired: null,
+    runtimeEnvironment: null,
     sessionStorageUnavailable: false
   },
 
@@ -45,14 +48,7 @@ App({
     var that = this;
     that._initDataReady();
     that.setTheme(wx.getStorageSync('hefei_theme') || 'mint', false);
-    try {
-      var accountInfo = wx.getAccountInfoSync && wx.getAccountInfoSync();
-      var envVersion = accountInfo && accountInfo.miniProgram && accountInfo.miniProgram.envVersion;
-      // 正式版永远关闭可发现的新儿童入口；开发版/体验版仍受服务端全套功能门约束。
-      that.globalData.guardianPreviewEnabled = envVersion === 'develop' || envVersion === 'trial';
-    } catch (error) {
-      that.globalData.guardianPreviewEnabled = false;
-    }
+    that.getRuntimeEnvironment();
 
     that._sessionStore = sessionUtils.createSessionStore({ storage: wx });
     var restored;
@@ -69,6 +65,8 @@ App({
     that._restoreGuardianConsentReview();
     that._initPairingRecovery();
     that._restoreDevicePairingIntent();
+    that._initDataRightsRecovery();
+    that._restoreDataRightsReview();
     that._initV2Foundation();
     // 不再在 onLaunch 预加载（网络模块未就绪会导致 timeout）
     // 配置加载交由 index 页面 onLoad 处理
@@ -76,11 +74,12 @@ App({
 
   _initV2Foundation: function() {
     var that = this;
+    var environment = that.getRuntimeEnvironment();
     if (!that._sessionStore) that._sessionStore = sessionUtils.createSessionStore({ storage: wx });
     if (!that._v2Client) {
       that._v2Client = v2Request.createV2Client({
         wxApi: wx,
-        baseUrl: API_BASE,
+        baseUrl: environment.apiBase,
         getAdultToken: function() {
           return that._sessionStore.getAdultBearer({
             token: that.globalData.token,
@@ -88,7 +87,11 @@ App({
           });
         },
         onAuthInvalid: function(tokenSnapshot) {
-          that._invalidateV2Session(tokenSnapshot);
+          // Let the originating page classify the deterministic 401 and clear any
+          // pre-dispatch recovery marker before session listeners invalidate its generation.
+          setTimeout(function() {
+            that._invalidateV2Session(tokenSnapshot);
+          }, 0);
         }
       });
     }
@@ -100,6 +103,20 @@ App({
         }
       });
     }
+  },
+
+  getRuntimeEnvironment: function() {
+    if (this._runtimeEnvironment) return this._runtimeEnvironment;
+    var envVersion = 'unknown';
+    try {
+      var accountInfo = wx.getAccountInfoSync && wx.getAccountInfoSync();
+      envVersion = accountInfo && accountInfo.miniProgram
+        && accountInfo.miniProgram.envVersion || 'unknown';
+    } catch (error) {}
+    this._runtimeEnvironment = runtimeEnvironment.resolve(envVersion);
+    this.globalData.runtimeEnvironment = this._runtimeEnvironment;
+    this.globalData.guardianPreviewEnabled = this._runtimeEnvironment.guardianPreviewEnabled === true;
+    return this._runtimeEnvironment;
   },
 
   _initGuardianRecovery: function() {
@@ -197,6 +214,82 @@ App({
     }
   },
 
+  _initDataRightsRecovery: function() {
+    var that = this;
+    if (!that._dataRightsRecovery) {
+      that._dataRightsRecovery = dataRightsRecovery.createRecoveryStore({
+        storage: wx,
+        getUser: function() { return that.globalData.user; }
+      });
+    }
+  },
+
+  _restoreDataRightsReview: function() {
+    this._initDataRightsRecovery();
+    try {
+      this.globalData.guardianDataRightsReviewRequired = this._dataRightsRecovery.current();
+    } catch (error) {
+      this.globalData.guardianDataRightsReviewRequired = {
+        childId: '',
+        requestType: '',
+        idempotencyKey: '',
+        createdAt: 0,
+        storageUnavailable: true
+      };
+    }
+    return this.globalData.guardianDataRightsReviewRequired;
+  },
+
+  beginDataRightsRecovery: function(childId, requestType, idempotencyKey) {
+    this._initDataRightsRecovery();
+    var marker;
+    try {
+      marker = this._dataRightsRecovery.begin(childId, requestType, idempotencyKey);
+    } catch (error) {
+      try {
+        this.globalData.guardianDataRightsReviewRequired = this._dataRightsRecovery.current()
+          || { storageUnavailable: true };
+      } catch (readError) {
+        this.globalData.guardianDataRightsReviewRequired = { storageUnavailable: true };
+      }
+      throw error;
+    }
+    if (!marker || marker.childId !== childId || marker.requestType !== requestType
+        || marker.idempotencyKey !== idempotencyKey) {
+      throw new Error('data rights recovery marker was not persisted');
+    }
+    this.globalData.guardianDataRightsReviewRequired = marker;
+    return marker;
+  },
+
+  clearDataRightsRecovery: function(expectedKey) {
+    this._initDataRightsRecovery();
+    try {
+      var cleared = this._dataRightsRecovery.clear(expectedKey);
+      var current = this._dataRightsRecovery.current();
+      var verified = cleared && current === null;
+      this.globalData.guardianDataRightsReviewRequired = verified
+        ? null : (current || { storageUnavailable: true });
+      return verified;
+    } catch (error) {
+      return false;
+    }
+  },
+
+  clearDataRightsRecoveryScope: function(actorId, familyId, expectedKey) {
+    this._initDataRightsRecovery();
+    try {
+      var cleared = this._dataRightsRecovery.clearScope(actorId, familyId, expectedKey);
+      var user = this.globalData.user || {};
+      if (user.id === actorId && user.familyId === familyId) {
+        this._restoreDataRightsReview();
+      }
+      return cleared;
+    } catch (error) {
+      return false;
+    }
+  },
+
   _invalidateV2Session: function(tokenSnapshot) {
     if (!tokenSnapshot || this.globalData.token !== tokenSnapshot) return false;
     this.clearSession();
@@ -221,6 +314,7 @@ App({
       this.globalData.guardianRouteContext = null;
       this.globalData.guardianEnrollmentReviewRequired = null;
       this.globalData.guardianDeviceCreateIntent = null;
+      this.globalData.guardianDataRightsReviewRequired = null;
       this._sessionGeneration = (this._sessionGeneration || 0) + 1;
     }
     this.globalData.token = committed.token;
@@ -231,6 +325,8 @@ App({
       this._restoreGuardianConsentReview();
       this._initPairingRecovery();
       this._restoreDevicePairingIntent();
+      this._initDataRightsRecovery();
+      this._restoreDataRightsReview();
       this._notifyGuardianSessionChanged();
     }
     return committed;
@@ -252,6 +348,7 @@ App({
     this.globalData.guardianRouteContext = null;
     this.globalData.guardianEnrollmentReviewRequired = null;
     this.globalData.guardianDeviceCreateIntent = null;
+    this.globalData.guardianDataRightsReviewRequired = null;
     this.globalData.sessionStorageUnavailable = !storageCleared;
     this._sessionGeneration = (this._sessionGeneration || 0) + 1;
     this._notifyGuardianSessionChanged();
@@ -305,6 +402,20 @@ App({
   },
 
   requestV2: function(options) {
+    var environment = this.getRuntimeEnvironment();
+    if (!environment.environmentReady) {
+      return Promise.resolve({
+        ok: false,
+        success: false,
+        status: 0,
+        code: 'API_ENVIRONMENT_INVALID',
+        message: '当前构建未配置可用的服务环境',
+        requestId: '',
+        headers: {},
+        retryable: false,
+        outcomeUnknown: false
+      });
+    }
     this._initV2Foundation();
     var that = this;
     var protectedRequest = !!options
@@ -323,7 +434,10 @@ App({
         requestId: result && result.requestId || '',
         headers: result && result.headers || {},
         retryable: false,
-        outcomeUnknown: String(options.method || 'GET').toUpperCase() !== 'GET'
+        outcomeUnknown: String(options.method || 'GET').toUpperCase() !== 'GET',
+        staleOriginalOk: !!(result && result.ok),
+        staleOriginalCode: result && result.code || '',
+        staleOriginalOutcomeUnknown: !!(result && result.outcomeUnknown)
       };
     });
   },
@@ -370,6 +484,14 @@ App({
   // ========== API 封装 ==========
   fetchAPI: function(url, opts) {
     var that = this;
+    var environment = that.getRuntimeEnvironment();
+    if (!environment.environmentReady) {
+      return Promise.resolve({
+        success: false,
+        code: 'API_ENVIRONMENT_INVALID',
+        message: '当前构建未配置可用的服务环境'
+      });
+    }
     var sessionSnapshot = that._captureSessionSnapshot();
     var routePath = url.split('?')[0];
     var isLoginRequest = routePath === '/api/auth' || routePath === '/api/wx-login' || routePath === '/api/wx-bind';
@@ -382,7 +504,7 @@ App({
         Object.keys(opts.headers).forEach(function(key) { headers[key] = opts.headers[key]; });
       }
       wx.request({
-        url: API_BASE + url,
+        url: environment.apiBase + url,
         method: (opts && opts.method) || 'GET',
         data: (opts && opts.body) ? JSON.parse(opts.body) : undefined,
         header: headers,

@@ -199,6 +199,15 @@ function createGuardianApi(options) {
       );
     },
 
+    getDataRightsOperation: function(idempotencyKey) {
+      return request({
+        path: '/api/v2/data-rights-operations/request-create',
+        method: 'GET',
+        auth: 'adult',
+        idempotencyKey: requireIdempotencyKey(idempotencyKey)
+      });
+    },
+
     listDataRightsRequests: function(query) {
       return read(
         '/api/v2/data-rights-requests',

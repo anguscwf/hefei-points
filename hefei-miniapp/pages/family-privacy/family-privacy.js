@@ -20,6 +20,22 @@ function consentView(consent) {
   });
 }
 
+function determinateDataRightsFailure(result) {
+  var code = result && result.code;
+  var ok = result && result.ok;
+  var outcomeUnknown = result && result.outcomeUnknown;
+  if (code === 'STALE_SESSION_RESPONSE') {
+    code = result.staleOriginalCode;
+    ok = result.staleOriginalOk;
+    outcomeUnknown = result.staleOriginalOutcomeUnknown;
+  }
+  return ok === false && !outcomeUnknown && [
+    'IDEMPOTENCY_IN_PROGRESS',
+    'IDEMPOTENCY_RESULT_UNAVAILABLE',
+    'IDEMPOTENCY_CONFLICT'
+  ].indexOf(code) < 0;
+}
+
 Page({
   data: {
     themePageStyle: '',
@@ -30,8 +46,12 @@ Page({
     loadingMore: false,
     operating: false,
     canRetryAction: false,
+    canAbandonAction: false,
+    reconcilingRights: false,
     enrollmentReviewRequired: false,
     reviewText: '',
+    rightsReviewRequired: false,
+    rightsReviewText: '',
     errorText: '',
     successText: '',
     children: [],
@@ -114,6 +134,8 @@ Page({
       nextCursor: null,
       enrollmentReviewRequired: false,
       reviewText: '',
+      rightsReviewRequired: false,
+      rightsReviewText: '',
       errorText: isAdult ? '' : '登录状态已变化，请重新使用成人账号登录'
     });
     if (this._alive && this._visible && isAdult) {
@@ -141,6 +163,8 @@ Page({
         rightsPassword: '',
         correctionAlias: '',
         canRetryAction: false,
+        canAbandonAction: false,
+        reconcilingRights: false,
         exportSummary: null,
         exportSections: [],
         rightsDetail: null,
@@ -154,6 +178,12 @@ Page({
   },
 
   loadChildren: function() {
+    if (this.data.operating) {
+      this._needsReload = true;
+      return;
+    }
+    if (this.data.canRetryAction || this._rightsReconcileInFlight) return;
+    this._needsReload = false;
     var that = this;
     var generation = (this._generation || 0) + 1;
     this._generation = generation;
@@ -162,6 +192,7 @@ Page({
       loadingMore: false,
       errorText: '',
       reviewText: '',
+      rightsReviewText: '',
       children: [],
       selectedChild: null,
       consents: [],
@@ -179,6 +210,7 @@ Page({
       }
       var children = ((result.data && result.data.children) || []).map(viewModel.decorateChild);
       var review = app.globalData.guardianEnrollmentReviewRequired;
+      var rightsReview = app.globalData.guardianDataRightsReviewRequired;
       var index = Math.min(that.data.childIndex, Math.max(children.length - 1, 0));
       that.setData({
         loading: false,
@@ -189,6 +221,10 @@ Page({
         reviewText: review
           ? '正在按原幂等请求核对上次授权结果，确认前不要重复建档或更新授权。'
           : '',
+        rightsReviewRequired: !!rightsReview,
+        rightsReviewText: rightsReview
+          ? '正在按原幂等请求核对上次资料权利操作，确认前不能提交新的资料权利请求。'
+          : '',
         successText: that.data.successText
       });
       if (review && review.storageUnavailable) {
@@ -198,7 +234,90 @@ Page({
       } else if (review) {
         that.reconcileConsentOperation(review, generation);
       }
+      if (rightsReview && rightsReview.storageUnavailable) {
+        that.setData({
+          rightsReviewText: '本机安全恢复存储不可用。为防止重复处理证据，当前不能提交新的资料权利请求。'
+        });
+      } else if (rightsReview) {
+        that.reconcileDataRightsOperation(rightsReview, generation);
+      }
       if (children[index]) that.loadChildDetails(children[index], generation);
+    });
+  },
+
+  reconcileDataRightsOperation: function(marker, generation) {
+    if (this.data.canRetryAction || this._rightsReconcileInFlight) return;
+    this._rightsReconcileInFlight = true;
+    this.setData({ reconcilingRights: true });
+    var that = this;
+    app.guardianApi.getDataRightsOperation(marker.idempotencyKey).then(function(result) {
+      if (!that._alive || !that._visible || generation !== that._generation) {
+        that._rightsReconcileInFlight = false;
+        return;
+      }
+      var operation = result.data && result.data.dataRightsOperation;
+      var exactOperation = result.ok && operation
+        && operation.operation === 'request-create'
+        && ['not_found', 'pending', 'completed'].indexOf(operation.status) >= 0;
+      if (!exactOperation || operation.status !== 'completed') {
+        that._rightsReconcileInFlight = false;
+        that.setData({
+          reconcilingRights: false,
+          rightsReviewRequired: true,
+          rightsReviewText: exactOperation && operation.status === 'not_found'
+            ? '服务端暂未找到上次资料权利请求。为防止迟到提交造成重复处理，请稍后再次核对。'
+            : (exactOperation && operation.status === 'pending'
+              ? '上次资料权利请求仍在服务端处理中，请稍后再次核对。'
+              : viewModel.errorMessage(result, '上次资料权利请求结果仍在核对，请稍后刷新'))
+        });
+        return;
+      }
+      if (!operation.dataRightsRequestId
+          || !Number.isFinite(Date.parse(operation.completedAt || ''))) {
+        that._rightsReconcileInFlight = false;
+        that.setData({
+          reconcilingRights: false,
+          rightsReviewRequired: true,
+          rightsReviewText: '服务端对账响应不完整。为防止重复处理，请稍后再次核对。'
+        });
+        return;
+      }
+      app.guardianApi.getDataRightsRequest(operation.dataRightsRequestId).then(function(detailResult) {
+        that._rightsReconcileInFlight = false;
+        if (!that._alive || !that._visible || generation !== that._generation) return;
+        var request = detailResult.data && detailResult.data.dataRightsRequest;
+        var exactRequest = detailResult.ok
+          && viewModel.validRightsDetail(request, operation.dataRightsRequestId)
+          && request.childId === marker.childId
+          && request.requestType === marker.requestType;
+        if (!exactRequest) {
+          that.setData({
+            reconcilingRights: false,
+            rightsReviewRequired: true,
+            rightsReviewText: '服务端处理回执与本机恢复范围不一致。当前继续阻断新请求，请稍后再次核对。'
+          });
+          return;
+        }
+        if (!app.clearDataRightsRecovery(marker.idempotencyKey)) {
+          that.setData({
+            reconcilingRights: false,
+            rightsReviewRequired: true,
+            rightsReviewText: '服务端已确认请求提交完成，但本机恢复标记清理失败。请勿重复提交并稍后重试。'
+          });
+          return;
+        }
+        that.setData({
+          reconcilingRights: false,
+          rightsReviewRequired: false,
+          rightsReviewText: '',
+          successText: '已按原幂等请求从服务端确认上次资料权利请求提交完成'
+        });
+        if (that.data.operating) {
+          that._needsReload = true;
+          return;
+        }
+        that.loadChildren();
+      });
     });
   },
 
@@ -281,7 +400,7 @@ Page({
   },
 
   onRightsTypeChange: function(event) {
-    if (this.data.operating || this.data.canRetryAction) return;
+    if (this.data.operating || this.data.canRetryAction || this.data.rightsReviewRequired) return;
     var index = Number(event.detail.value) || 0;
     this._pendingIntent = null;
     this.setData({
@@ -290,6 +409,7 @@ Page({
       correctionAlias: '',
       rightsPassword: '',
       canRetryAction: false,
+      canAbandonAction: false,
       exportSummary: null,
       exportSections: [],
       rightsDetail: null,
@@ -298,19 +418,31 @@ Page({
   },
 
   onWithdrawPasswordInput: function(event) {
-    if (this.data.operating || this.data.canRetryAction) return;
-    this._pendingIntent = null;
-    this.setData({ withdrawPassword: event.detail.value, canRetryAction: false });
+    if (this.data.operating || (this.data.canRetryAction
+        && this._pendingIntent && this._pendingIntent.kind === 'withdraw')) return;
+    if (this._pendingIntent && this._pendingIntent.kind === 'rights') {
+      if (this._pendingIntent.body) this._pendingIntent.body.reauthAssertion = '';
+      this._pendingIntent = null;
+    }
+    this.setData({
+      withdrawPassword: event.detail.value,
+      canRetryAction: false,
+      canAbandonAction: false
+    });
   },
 
   onRightsPasswordInput: function(event) {
-    if (this.data.operating || this.data.canRetryAction) return;
+    if (this.data.operating || this.data.canRetryAction || this.data.rightsReviewRequired) return;
     this._pendingIntent = null;
-    this.setData({ rightsPassword: event.detail.value, canRetryAction: false });
+    this.setData({
+      rightsPassword: event.detail.value,
+      canRetryAction: false,
+      canAbandonAction: false
+    });
   },
 
   onCorrectionInput: function(event) {
-    if (this.data.operating || this.data.canRetryAction) return;
+    if (this.data.operating || this.data.canRetryAction || this.data.rightsReviewRequired) return;
     this._pendingIntent = null;
     this.setData({ correctionAlias: event.detail.value.slice(0, 30), canRetryAction: false });
   },
@@ -381,7 +513,7 @@ Page({
   startRightsRequest: function() {
     var type = RIGHTS_TYPES[this.data.rightsTypeIndex];
     var child = this.data.selectedChild;
-    if (!type || !child || this.data.operating) return;
+    if (!type || !child || this.data.operating || this.data.rightsReviewRequired) return;
     if (type.value === 'correct') {
       var alias = this.data.correctionAlias.trim();
       if (!alias || alias === child.alias) {
@@ -416,9 +548,16 @@ Page({
   beginProtectedAction: function(kind) {
     if (this.data.operating) return;
     if (this._pendingIntent && this.data.canRetryAction) {
-      this.performProtectedAction(this._pendingIntent);
-      return;
+      if (this._pendingIntent.kind === kind) {
+        this.performProtectedAction(this._pendingIntent);
+        return;
+      }
+      if (kind !== 'withdraw') return;
+      if (this._pendingIntent.body) this._pendingIntent.body.reauthAssertion = '';
+      this._pendingIntent = null;
+      this.setData({ canRetryAction: false, canAbandonAction: false });
     }
+    if (kind === 'rights' && this.data.rightsReviewRequired) return;
     var child = this.data.selectedChild;
     var password = kind === 'withdraw' ? this.data.withdrawPassword : this.data.rightsPassword;
     if (!child || !password) {
@@ -443,6 +582,7 @@ Page({
       withdrawPassword: '',
       rightsPassword: '',
       canRetryAction: false,
+      canAbandonAction: false,
       errorText: '',
       successText: ''
     });
@@ -482,8 +622,29 @@ Page({
           previousPrivacyStatus: child.privacyState && child.privacyState.status,
           body: body,
           key: key,
-          generation: generation
+          generation: generation,
+          recoveryActorId: app.globalData.user && app.globalData.user.id || '',
+          recoveryFamilyId: app.globalData.user && app.globalData.user.familyId || ''
         };
+        if (kind === 'rights') {
+          try {
+            app.beginDataRightsRecovery(child.id, type.value, key);
+          } catch (error) {
+            body.reauthAssertion = '';
+            that._pendingIntent = null;
+            that.setData({
+              operating: false,
+              rightsReviewRequired: true,
+              rightsReviewText: '本机安全恢复标记无法持久化，本次资料权利请求未提交。请清理小程序缓存后重新登录。',
+              errorText: '安全恢复存储不可用，本次操作未提交'
+            });
+            return;
+          }
+          that.setData({
+            rightsReviewRequired: true,
+            rightsReviewText: '已保存本次资料权利请求的安全恢复句柄，正在等待服务端确认。'
+          });
+        }
         that._pendingIntent = intent;
         that.performProtectedAction(intent);
       }).catch(function() {
@@ -495,38 +656,81 @@ Page({
   },
 
   retryProtectedAction: function() {
-    if (this._pendingIntent && this.data.canRetryAction) {
+    if (!this._rightsReconcileInFlight
+        && this._pendingIntent && this.data.canRetryAction) {
       this.performProtectedAction(this._pendingIntent);
     }
   },
 
   abandonProtectedRetry: function() {
-    if (!this.data.canRetryAction) return;
+    if (!this.data.canRetryAction || !this._pendingIntent
+        || this._pendingIntent.kind !== 'withdraw') return;
     if (this._pendingIntent && this._pendingIntent.body) {
       this._pendingIntent.body.reauthAssertion = '';
     }
     this._pendingIntent = null;
-    this.setData({ canRetryAction: false, errorText: '' });
+    this.setData({ canRetryAction: false, canAbandonAction: false, errorText: '' });
     this.loadChildren();
   },
 
   performProtectedAction: function(intent) {
+    if (intent.kind === 'rights' && this._rightsReconcileInFlight) return;
     var that = this;
-    this.setData({ operating: true, canRetryAction: false, errorText: '' });
+    var recoveringUnknownOutcome = intent.kind === 'rights'
+      && intent.recoveryRequired === true;
+    this.setData({
+      operating: true,
+      canRetryAction: false,
+      canAbandonAction: false,
+      errorText: ''
+    });
     var promise = intent.kind === 'withdraw'
       ? app.guardianApi.withdrawConsent(intent.childId, intent.body, intent.key)
       : app.guardianApi.createDataRightsRequest(intent.childId, intent.body, intent.key);
     promise.then(function(result) {
-      if (!that._alive || !that._visible || intent.generation !== that._generation) return;
+      if (!that._alive || !that._visible || intent.generation !== that._generation) {
+        if (intent.kind === 'rights' && !intent.recoveryRequired
+            && determinateDataRightsFailure(result)
+            && typeof app.clearDataRightsRecoveryScope === 'function') {
+          app.clearDataRightsRecoveryScope(
+            intent.recoveryActorId,
+            intent.recoveryFamilyId,
+            intent.key
+          );
+        }
+        if (intent.body) intent.body.reauthAssertion = '';
+        return;
+      }
       if (!result.ok) {
-        var ambiguous = viewModel.isOutcomeUnknown(result);
+        var ambiguous = viewModel.isOutcomeUnknown(result)
+          || recoveringUnknownOutcome
+          || (intent.kind === 'rights' && [
+            'IDEMPOTENCY_IN_PROGRESS',
+            'IDEMPOTENCY_RESULT_UNAVAILABLE',
+            'IDEMPOTENCY_CONFLICT'
+          ].indexOf(result.code) >= 0);
+        if (intent.kind === 'rights' && ambiguous) intent.recoveryRequired = true;
         if (!ambiguous) {
           intent.body.reauthAssertion = '';
           that._pendingIntent = null;
         }
+        var recoveryCleared = true;
+        if (intent.kind === 'rights' && !ambiguous) {
+          recoveryCleared = app.clearDataRightsRecovery(intent.key);
+        }
         that.setData({
           operating: false,
           canRetryAction: ambiguous,
+          canAbandonAction: ambiguous && intent.kind === 'withdraw',
+          rightsReviewRequired: intent.kind === 'rights'
+            ? (ambiguous || !recoveryCleared) : that.data.rightsReviewRequired,
+          rightsReviewText: intent.kind === 'rights'
+            ? (ambiguous
+              ? '本次资料权利请求结果未知，已保留原幂等句柄；可重试同一次操作或稍后自动核对。'
+              : (!recoveryCleared
+                ? '服务端已明确拒绝本次请求，但本机恢复标记清理失败。请勿提交新请求并稍后核对。'
+                : ''))
+            : that.data.rightsReviewText,
           errorText: viewModel.errorMessage(result, '操作未完成')
         });
         if (!ambiguous && result.code === 'REVISION_CONFLICT') that.loadChildren();
@@ -544,9 +748,16 @@ Page({
             { childId: intent.childId, requestType: intent.body.requestType }
           );
       if (!validResponse) {
+        if (intent.kind === 'rights') intent.recoveryRequired = true;
         that.setData({
           operating: false,
           canRetryAction: true,
+          canAbandonAction: intent.kind === 'withdraw',
+          rightsReviewRequired: intent.kind === 'rights'
+            ? true : that.data.rightsReviewRequired,
+          rightsReviewText: intent.kind === 'rights'
+            ? '服务端响应不完整，已保留原幂等句柄；请重试同一次操作或稍后自动核对。'
+            : that.data.rightsReviewText,
           errorText: '服务端响应不完整，结果暂无法确认；请重试同一次操作',
           successText: ''
         });
@@ -554,12 +765,31 @@ Page({
       }
       intent.body.reauthAssertion = '';
       that._pendingIntent = null;
+      var recoveryCleared = intent.kind !== 'rights'
+        || app.clearDataRightsRecovery(intent.key);
+      if (!recoveryCleared) {
+        that.setData({
+          operating: false,
+          canRetryAction: false,
+          canAbandonAction: false,
+          rightsReviewRequired: true,
+          rightsReviewText: '服务端已确认请求提交完成，但本机恢复标记清理失败。请勿重复提交并稍后核对。',
+          errorText: '本机恢复标记清理失败，仍按结果未知处理',
+          successText: ''
+        });
+        return;
+      }
       var request = result.data && result.data.dataRightsRequest;
       var policyPending = request && (request.retentionDecision === 'policy_pending'
         || (request.deletion && request.deletion.status === 'blocked_policy'));
       that.setData({
         operating: false,
         canRetryAction: false,
+        canAbandonAction: false,
+        rightsReviewRequired: intent.kind === 'rights'
+          ? false : that.data.rightsReviewRequired,
+        rightsReviewText: intent.kind === 'rights'
+          ? '' : that.data.rightsReviewText,
         correctionAlias: '',
         successText: intent.kind === 'withdraw'
           ? '授权已撤回，相关处理与设备会话应已被服务端阻断'

@@ -1,5 +1,6 @@
 var app = getApp();
 var viewModel = require('../../utils/guardian-page.js');
+var legalPublicUrl = require('../../utils/legal-public-url.js');
 
 var DOCUMENTS = {
   privacyPolicy: '隐私政策',
@@ -8,13 +9,6 @@ var DOCUMENTS = {
   sensitiveInformationNotice: '敏感个人信息单独告知',
   guardianRelationDeclaration: '监护关系声明'
 };
-
-function safePublicUrl(value) {
-  if (typeof value !== 'string' || !/^https:\/\/[^\s]{1,2038}$/.test(value)) return '';
-  var authority = value.slice('https://'.length).split(/[/?#]/)[0];
-  if (!authority || authority.indexOf('@') >= 0) return '';
-  return value;
-}
 
 Page({
   data: {
@@ -62,12 +56,27 @@ Page({
       var document = that._documentType === 'guardianRelationDeclaration'
         ? body.guardianRelationDeclaration
         : body.texts && body.texts[that._documentType];
-      var url = safePublicUrl(document && document.publicUrl);
+      var environment = typeof app.getRuntimeEnvironment === 'function'
+        ? app.getRuntimeEnvironment() : null;
+      var url = legalPublicUrl.safePublicUrl(document && document.publicUrl, environment, {
+        type: that._documentType,
+        version: document && document.version,
+        sha256: document && document.sha256
+      });
       if (!url) {
         that.setData({ loading: false, errorText: '公开文本地址尚未安全配置' });
         return;
       }
       that.setData({ loading: false, publicUrl: url });
+    });
+  },
+
+  onWebViewError: function() {
+    if (!this._alive) return;
+    this.setData({
+      loading: false,
+      publicUrl: '',
+      errorText: '公开文本打开失败，请稍后重新加载'
     });
   }
 });

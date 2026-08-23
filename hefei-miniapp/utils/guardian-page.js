@@ -70,6 +70,11 @@ function text(value) {
   return typeof value === 'string' ? value : '';
 }
 
+function formatSha256Fingerprint(value) {
+  if (typeof value !== 'string' || !/^[A-Fa-f0-9]{64}$/.test(value)) return '未提供';
+  return value.toLowerCase().match(/.{8}/g).join(' ');
+}
+
 function dateTime(value) {
   var parsed = Date.parse(text(value));
   if (!Number.isFinite(parsed)) return '';
@@ -139,8 +144,7 @@ function decorateDevice(item) {
     statusLabel: item.status === 'active' ? '设备有效'
       : (item.status === 'pending' ? '等待家长确认' : '设备已撤销'),
     tone: tone(item.status),
-    fingerprint: item.publicKey && text(item.publicKey.sha256)
-      ? text(item.publicKey.sha256).slice(0, 12) + '…' : '未提供',
+    fingerprint: formatSha256Fingerprint(item.publicKey && item.publicKey.sha256),
     sessions: sessions
   });
 }
@@ -630,6 +634,7 @@ module.exports = {
   ERROR_MESSAGES: ERROR_MESSAGES,
   RIGHTS_TYPE_LABELS: RIGHTS_TYPE_LABELS,
   dateTime: dateTime,
+  formatSha256Fingerprint: formatSha256Fingerprint,
   errorMessage: errorMessage,
   isOutcomeUnknown: isOutcomeUnknown,
   decorateChild: decorateChild,

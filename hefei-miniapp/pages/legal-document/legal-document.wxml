@@ -7,4 +7,4 @@
     <button wx:if="{{errorText}}" class="btn btn-outline guardian-btn-full" bindtap="loadDocument">重新加载</button>
   </view>
 </view>
-<web-view wx:if="{{publicUrl}}" src="{{publicUrl}}"></web-view>
+<web-view wx:if="{{publicUrl}}" src="{{publicUrl}}" binderror="onWebViewError"></web-view>
