@@ -20,9 +20,8 @@ const token = require('../lib/token');
 
 const TEST_PASSWORD = 'test-password';
 
-function ensureSyntheticConsent(db, { familyId, guardianId, childId, tag }) {
+function ensureSyntheticConsent(db, { familyId, guardianId, childId, tag, createdAt }) {
   const version = 'synthetic-s1-v1';
-  const createdAt = '2026-08-20T00:00:00.000Z';
   const textEvidence = [
     ['privacy_policy', 'a'.repeat(64)],
     ['child_personal_information_rules', 'b'.repeat(64)],
@@ -145,26 +144,40 @@ function resetDatabase() {
     { id: 'child_b1', name: '孩子B1', role: 'child', familyId: 'family_b' }
   ]) upsertUser.run(user.id, user.name, user.role, password, user.familyId);
 
-  // These synthetic S0 fixtures exercise legacy point reads/writes, not the
-  // S1 consent flow. Explicitly activate only their temporary privacy rows.
+  // These synthetic S0 fixtures exercise legacy point reads/writes, but 009
+  // still requires real consent evidence before a privacy row can be active.
   const activatedAt = new Date().toISOString();
+  ensureSyntheticConsent(getDb(), {
+    familyId: 'family_a',
+    guardianId: 'admin_a',
+    childId: 'child_a1',
+    tag: 's0_admin_a_child_a1',
+    createdAt: activatedAt
+  });
+  ensureSyntheticConsent(getDb(), {
+    familyId: 'family_a',
+    guardianId: 'parent_a',
+    childId: 'child_a2',
+    tag: 's0_parent_a_child_a2',
+    createdAt: activatedAt
+  });
+  ensureSyntheticConsent(getDb(), {
+    familyId: 'family_b',
+    guardianId: 'admin_b',
+    childId: 'child_b1',
+    tag: 's0_admin_b_child_b1',
+    createdAt: activatedAt
+  });
   inTransaction(db => db.prepare(`
     UPDATE child_privacy_states
     SET status = 'active',
         revision = revision + 1,
-        reason_code = 'synthetic_legacy_fixture',
+        reason_code = 'guardian_consent_recorded',
         updated_at = ?,
         activated_at = ?
     WHERE status = 'suspended_pending_consent'
       AND child_id IN ('child_a1', 'child_a2', 'child_b1')
   `).run(activatedAt, activatedAt));
-
-  ensureSyntheticConsent(getDb(), {
-    familyId: 'family_a',
-    guardianId: 'admin_a',
-    childId: 'child_a1',
-    tag: 's0_admin_a_child_a1'
-  });
 
   for (const entry of [
     ['family_a', 'child_a1', 11],
@@ -259,7 +272,10 @@ test('家长仍可按用户 ID 登录且配置不暴露未授权儿童或其他�
       headers: { Authorization: `Bearer ${login.body.token}` }
     }));
     assert.equal(config.response.status, 200);
-    assert.deepEqual(config.body.users.map(user => user.id).sort(), ['admin_a', 'parent_a']);
+    assert.deepEqual(
+      config.body.users.map(user => user.id).sort(),
+      ['admin_a', 'child_a2', 'parent_a']
+    );
     assert.deepEqual(Object.keys(config.body.families), ['family_a']);
     assert.equal(JSON.stringify(config.body).includes('child_a1'), false);
     assert.equal(JSON.stringify(config.body).includes('child_b1'), false);

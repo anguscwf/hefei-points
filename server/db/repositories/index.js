@@ -7,5 +7,6 @@ module.exports = {
   guardianConsents: require('./guardian-consents'),
   deviceSessions: require('./device-sessions'),
   childSelf: require('./child-self'),
-  pointRequests: require('./point-requests')
+  pointRequests: require('./point-requests'),
+  dataRights: require('./data-rights')
 };

@@ -5,6 +5,7 @@ const consentConfig = require('../config/guardian-consent');
 const { getDb, inTransaction } = require('../db/connection');
 const repositories = require('../db/repositories');
 const devicePairingSessions = require('./device-pairing-sessions');
+const dataRights = require('./data-rights');
 const { ApiError } = require('../lib/api-error');
 const { verifyPwd } = require('../lib/token');
 const { isPlainObject } = require('../lib/validation');
@@ -574,11 +575,19 @@ function withdrawConsent({ actor, childId, body, idempotencyKey, now = new Date(
       familyId: actor.familyId, childId, guardianId: actor.id
     }, db);
     if (!active) fail(404, 'CHILD_NOT_FOUND', '儿童档案不存在');
-    consumeAssertion(db, {
+    const assertion = consumeAssertion(db, {
       actor, rawToken: rawAssertion, purpose: 'child_consent_withdraw', now
     });
     const idempotencyId = startIdempotency(db, {
       actor, operation: 'child_consent_withdraw', keyHash, requestFingerprint, now
+    });
+    const dataRightsRequest = dataRights.beginWithdrawalAudit(db, {
+      actor,
+      childId,
+      consent: active,
+      assertion,
+      requestFingerprint,
+      now
     });
     const withdrawn = repositories.guardianConsents.withdrawConsent({
       familyId: actor.familyId,
@@ -588,20 +597,33 @@ function withdrawConsent({ actor, childId, body, idempotencyKey, now = new Date(
       updatedAt: iso(now)
     }, db);
     if (!withdrawn) fail(409, 'REVISION_CONFLICT', '授权状态已变化');
-    const blocked = repositories.guardianConsents.blockPrivacyState({
-      familyId: actor.familyId,
-      childId,
-      expectedRevision,
-      reasonCode: 'guardian_consent_withdrawn',
-      updatedAt: iso(now),
-      blockedAt: iso(now)
-    }, db);
-    if (!blocked) fail(409, 'REVISION_CONFLICT', '儿童隐私状态已变化');
+    const blocked = state.status === 'active'
+      ? repositories.guardianConsents.blockPrivacyState({
+          familyId: actor.familyId,
+          childId,
+          expectedRevision,
+          reasonCode: 'guardian_consent_withdrawn',
+          updatedAt: iso(now),
+          blockedAt: iso(now)
+        }, db)
+      : repositories.guardianConsents.getPrivacyState({
+          familyId: actor.familyId, childId
+        }, db);
+    if (!blocked || blocked.revision !== (state.status === 'active'
+      ? expectedRevision + 1
+      : expectedRevision)) {
+      fail(409, 'REVISION_CONFLICT', '儿童隐私状态已变化');
+    }
     devicePairingSessions.revokeForChild(db, {
       familyId: actor.familyId,
       childId,
       revokedAt: iso(now),
       reason: 'guardian_consent_withdrawn'
+    });
+    dataRights.completeWithdrawalAudit(db, {
+      request: dataRightsRequest,
+      privacyState: blocked,
+      now
     });
     completeIdempotency(db, {
       id: idempotencyId,

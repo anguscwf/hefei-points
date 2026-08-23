@@ -104,6 +104,7 @@ function ensureSyntheticConsent(db, { familyId, guardianId, childId, tag }) {
     createdAt,
     createdAt
   );
+  return createdAt;
 }
 
 function rulesFor(prefix, label) {
@@ -167,21 +168,28 @@ function resetDatabase() {
     { id: 'admin_b', name: '管理员 B', role: 'admin', familyId: 'family_b' },
     { id: 'child_b', name: '孩子 B', role: 'child', familyId: 'family_b' }
   ]) upsertUser.run(user.id, user.name, user.role, password, user.familyId);
-  const activatedAt = new Date().toISOString();
-  inTransaction(db => db.prepare(`
-    UPDATE child_privacy_states
-    SET status = 'active',
-        revision = revision + 1,
-        reason_code = 'synthetic_rule_fixture',
-        updated_at = ?,
-        activated_at = ?
-    WHERE status = 'suspended_pending_consent'
-  `).run(activatedAt, activatedAt));
-  ensureSyntheticConsent(getDb(), {
-    familyId: 'family_a',
-    guardianId: 'admin_a',
-    childId: 'child_a',
-    tag: 'rules_admin_a_child_a'
+  inTransaction(db => {
+    const activatedAt = ensureSyntheticConsent(db, {
+      familyId: 'family_a',
+      guardianId: 'admin_a',
+      childId: 'child_a',
+      tag: 'rules_admin_a_child_a'
+    });
+    ensureSyntheticConsent(db, {
+      familyId: 'family_b',
+      guardianId: 'admin_b',
+      childId: 'child_b',
+      tag: 'rules_admin_b_child_b'
+    });
+    db.prepare(`
+      UPDATE child_privacy_states
+      SET status = 'active',
+          revision = revision + 1,
+          reason_code = 'guardian_consent_recorded',
+          updated_at = ?,
+          activated_at = ?
+      WHERE status = 'suspended_pending_consent'
+    `).run(activatedAt, activatedAt);
   });
   repositories.config.setRules('family_a', rulesFor('a', '家庭 A'));
   repositories.config.setRules('family_b', rulesFor('b', '家庭 B'));

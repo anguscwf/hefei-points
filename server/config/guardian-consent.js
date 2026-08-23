@@ -19,7 +19,12 @@ const LEGAL_TEXT_FIELDS = Object.freeze({
 const REAUTH_PURPOSES = Object.freeze(new Set([
   'child_enrollment',
   'child_consent',
-  'child_consent_withdraw'
+  'child_consent_withdraw',
+  'child_data_access',
+  'child_data_export',
+  'child_data_correct',
+  'child_data_delete',
+  'child_service_terminate'
 ]));
 
 const GUARDIAN_RELATIONS = Object.freeze(new Set([
