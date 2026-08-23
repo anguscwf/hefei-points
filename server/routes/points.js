@@ -75,7 +75,9 @@ router.get('/points', (req, res) => {
   const family = repositories.families.findById(familyId);
   res.json({
     success: true,
-    points: repositories.points.getFamilyPoints(familyId),
+    points: user.role === 'child'
+      ? repositories.points.getChildPoints(familyId, user.id)
+      : repositories.points.getFamilyPoints(familyId),
     rules: repositories.config.getRules(familyId),
     family: family ? { id: family.id, name: family.name } : null,
     user: { id: user.id, name: user.name, role: user.role, familyId }

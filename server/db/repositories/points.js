@@ -14,6 +14,12 @@ function setBalance(familyId, kidId, balance, db = getDb()) {
   `).run(familyId || 'default', kidId, Number(balance) || 0);
 }
 
+function getChildPoints(familyId, childId) {
+  const row = getDb().prepare('SELECT balance FROM point_accounts WHERE family_id = ? AND kid_id = ?')
+    .get(familyId || 'default', childId);
+  return row ? { [childId]: Number(row.balance || 0) } : {};
+}
+
 function changePoints({ familyId, kid, kidName, amount, reason, operator, note, ruleId = null, categoryId = null }) {
   return inTransaction(db => {
     const beforeBalance = Number(db.prepare('SELECT balance FROM point_accounts WHERE family_id = ? AND kid_id = ?').get(familyId, kid)?.balance || 0);
@@ -38,4 +44,4 @@ function changePoints({ familyId, kid, kidName, amount, reason, operator, note, 
 
 function listAccounts() { return getDb().prepare('SELECT family_id, kid_id, balance FROM point_accounts ORDER BY family_id, kid_id').all(); }
 
-module.exports = { getFamilyPoints, setBalance, changePoints, listAccounts };
+module.exports = { getFamilyPoints, getChildPoints, setBalance, changePoints, listAccounts };

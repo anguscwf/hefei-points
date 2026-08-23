@@ -5,6 +5,7 @@ const repositories = require('../db/repositories');
 const validation = require('../lib/validation');
 const { signToken, verifyToken, requireRole, getToken, hashPwd } = require('../lib/token');
 const { joinRateLimit } = require('../middleware/rate-limit');
+const features = require('../config/features');
 
 function generateInvite() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -24,8 +25,13 @@ router.get('/family', async (req, res) => {
   const familyId = user.familyId || 'default';
   const family = repositories.families.findById(familyId);
   if (!family) return res.status(404).json({ success: false, message: '家庭不存在' });
-  const members = repositories.users.listByFamily(familyId).map(member => ({ id: member.id, name: member.name, role: member.role }));
-  res.json({ success: true, family: { id: family.id, name: family.name, inviteCode: family.inviteCode, createdAt: family.createdAt }, members });
+  const members = user.role === 'child'
+    ? [{ id: user.id, name: user.name, role: user.role }]
+    : repositories.users.listByFamily(familyId).map(member => ({ id: member.id, name: member.name, role: member.role }));
+  const safeFamily = user.role === 'child'
+    ? { id: family.id, name: family.name, createdAt: family.createdAt }
+    : { id: family.id, name: family.name, inviteCode: family.inviteCode, createdAt: family.createdAt };
+  res.json({ success: true, family: safeFamily, members });
 });
 
 router.post('/family/create', async (req, res) => {
@@ -69,6 +75,7 @@ router.post('/family/leave', async (req, res) => {
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
   const familyId = user.familyId || 'default';
   if (familyId === 'default') return res.status(400).json({ success: false, message: '已在默认家庭，无需离开' });
+  if (user.role === 'child') return res.status(403).json({ success: false, message: '请联系家长操作' });
   if (user.role === 'admin') return res.status(400).json({ success: false, message: '管理员不能直接离开家庭，请先转让或删除家庭' });
   try {
     if (!repositories.families.moveUser(user.id, 'default')) throw new Error('用户不存在');
@@ -84,6 +91,14 @@ router.post('/family/kick', async (req, res) => {
   if (!admin) return res.status(403).json({ success: false, message: '仅管理员可踢出成员' });
   if (!userId) return res.status(400).json({ success: false, message: '请指定要踢出的用户ID' });
   if (userId === admin.id) return res.status(400).json({ success: false, message: '不能踢出自己' });
+  const target = repositories.users.findById(userId);
+  if (target && target.familyId === (admin.familyId || 'default') && target.role === 'child' && !features.isLegacyChildManagementEnabled()) {
+    return res.status(403).json({
+      success: false,
+      code: 'FEATURE_DISABLED',
+      message: '旧版儿童账号管理已停用，请使用儿童数据权利流程'
+    });
+  }
   try {
     const name = repositories.families.kickUser(userId, admin.familyId || 'default');
     res.json({ success: true, message: `已将「${name}」踢出家庭` });
@@ -97,6 +112,14 @@ router.post('/family/delete', async (req, res) => {
   if (!admin) return res.status(403).json({ success: false, message: '仅管理员可删除家庭' });
   const familyId = admin.familyId || 'default';
   if (familyId === 'default') return res.status(400).json({ success: false, message: '不能删除默认家庭' });
+  const hasChildren = repositories.users.listByFamily(familyId).some(member => member.role === 'child');
+  if (hasChildren && !features.isLegacyChildManagementEnabled()) {
+    return res.status(403).json({
+      success: false,
+      code: 'FEATURE_DISABLED',
+      message: '家庭含儿童档案，请先通过儿童数据权利流程处理'
+    });
+  }
   try {
     repositories.families.deleteFamily(familyId);
     res.json({ success: true, token: signToken(admin.id, admin.role, 'default'), message: '家庭已删除，已回到默认家庭' });
@@ -109,14 +132,23 @@ router.post('/family/child/create', async (req, res) => {
   const { id, name, password } = req.body;
   const user = requireRole(getToken(req), ['admin', 'parent']);
   if (!user) return res.status(403).json({ success: false, message: '仅家长或管理员可添加孩子' });
+  if (!features.isLegacyChildManagementEnabled()) {
+    return res.status(403).json({
+      success: false,
+      code: 'FEATURE_DISABLED',
+      message: '旧版儿童账号创建已停用，请使用监护人授权建档流程'
+    });
+  }
   if (!id || !name) return res.status(400).json({ success: false, message: '请输入孩子ID和姓名' });
   if (!/^[a-z0-9_]{2,20}$/.test(id)) return res.status(400).json({ success: false, message: '孩子ID仅限小写字母/数字/下划线，2-20字符' });
   const childNameError = validation.text(name, { field: '孩子姓名', min: 1, max: 30 });
   if (childNameError) return res.status(400).json({ success: false, message: childNameError });
+  const childPasswordError = validation.text(password, { field: '孩子密码', min: 8, max: 128 });
+  if (childPasswordError) return res.status(400).json({ success: false, message: childPasswordError });
   const familyId = user.familyId || 'default';
   try {
     if (repositories.users.findById(id)) throw new Error('该ID已被使用');
-    repositories.users.insert({ id, name: name.trim(), role: 'child', password: hashPwd(password || '123456'), familyId });
+    repositories.users.insert({ id, name: name.trim(), role: 'child', password: hashPwd(password), familyId });
     res.json({ success: true, user: { id, name: name.trim(), role: 'child', familyId }, message: `孩子「${name.trim()}」添加成功！` });
   } catch (e) {
     res.status(e.message === '该ID已被使用' ? 409 : 503).json({ success: false, message: e.message || '创建失败' });

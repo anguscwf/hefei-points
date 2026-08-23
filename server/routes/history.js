@@ -13,7 +13,15 @@ router.get('/history', (req, res) => {
   const user = verifyToken(getToken(req));
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
   const familyId = user.familyId || 'default';
-  const kid = req.query.kid && isFamilyChild(req.query.kid, familyId) ? req.query.kid : undefined;
+  let kid;
+  if (user.role === 'child') {
+    kid = user.id;
+  } else if (req.query.kid !== undefined) {
+    if (typeof req.query.kid !== 'string' || !isFamilyChild(req.query.kid, familyId)) {
+      return res.status(400).json({ success: false, message: '无效的孩子' });
+    }
+    kid = req.query.kid;
+  }
   res.json({ success: true, history: repositories.transactions.listByFamily(familyId, kid, 50) });
 });
 

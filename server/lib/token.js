@@ -4,6 +4,7 @@ const crypto = require('crypto');
 
 const { DATA_DIR } = require('../db/connection');
 const { users } = require('../db/repositories');
+const features = require('../config/features');
 const SECRET_FILE = path.join(DATA_DIR, '.secret');
 let TOKEN_SECRET;
 try {
@@ -26,6 +27,44 @@ function signToken(userId, role, familyId) {
   return `hefei.${payload}.${hmac}`;
 }
 
+function signScopedTicket(scope, value, ttlMs = 5 * 60 * 1000) {
+  if (typeof scope !== 'string' || !scope || typeof value !== 'string' || !value) {
+    throw new TypeError('scope and value are required');
+  }
+  const issuedAt = Date.now();
+  const payload = Buffer.from(JSON.stringify({
+    scope,
+    value,
+    issuedAt,
+    expiresAt: issuedAt + ttlMs,
+    nonce: crypto.randomBytes(16).toString('base64url')
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
+  return `hefei-ticket.${payload}.${signature}`;
+}
+
+function verifyScopedTicket(scope, ticket) {
+  if (typeof ticket !== 'string') return null;
+  const parts = ticket.split('.');
+  if (parts.length !== 3 || parts[0] !== 'hefei-ticket') return null;
+  const payload = parts[1];
+  const signature = parts[2];
+  const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const now = Date.now();
+    if (data.scope !== scope || typeof data.value !== 'string' || !data.value) return null;
+    if (!Number.isSafeInteger(data.issuedAt) || !Number.isSafeInteger(data.expiresAt)) return null;
+    if (data.issuedAt > now + 60_000 || data.expiresAt <= now || data.expiresAt - data.issuedAt > 10 * 60 * 1000) return null;
+    return data;
+  } catch (_) {
+    return null;
+  }
+}
+
 function verifyToken(token) {
   if (!token) return null;
   const parts = token.split('.');
@@ -42,6 +81,7 @@ function verifyToken(token) {
     if (age > 30 * 24 * 60 * 60 * 1000) return null;
     const user = users.findById(userId);
     if (user && issuedAt <= user.tokensValidAfter) return null;
+    if (user && user.role === 'child' && !features.isLegacyChildLoginEnabled()) return null;
     return user ? { ...user, familyId: user.familyId || 'default' } : null;
   } else if (parts.length === 6 && parts[0] === 'hefei') {
     // v4: hefei.userId.role.familyId.ts.sig
@@ -55,6 +95,7 @@ function verifyToken(token) {
     if (age > 30 * 24 * 60 * 60 * 1000) return null;
     const user = users.findById(userId);
     if (user && issuedAt <= user.tokensValidAfter) return null;
+    if (user && user.role === 'child' && !features.isLegacyChildLoginEnabled()) return null;
     // Token 中的 role/familyId 仅参与旧 Token 签名兼容，不作为当前权限来源。
     // 用户被踢出、离开或转移家庭后，立即采用数据库中的最新身份。
     return user ? { ...user, familyId: user.familyId || 'default' } : null;
@@ -96,6 +137,8 @@ function isHashed(pwd) {
 module.exports = {
   TOKEN_SECRET,
   signToken,
+  signScopedTicket,
+  verifyScopedTicket,
   verifyToken,
   requireRole,
   getToken,

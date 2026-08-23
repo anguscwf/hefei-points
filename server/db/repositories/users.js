@@ -1,4 +1,5 @@
 const { getDb, inTransaction } = require('../connection');
+const features = require('../../config/features');
 
 function toUser(row) {
   if (!row) return null;
@@ -53,6 +54,30 @@ function replaceFamily(familyId, users, adminId) {
     const current = new Map(currentRows.map(row => [row.id, toUser(row)]));
     const submittedIds = new Set(users.map(user => user.id));
     if (!submittedIds.has(adminId)) throw new Error('不能删除当前管理员');
+
+    if (!features.isLegacyChildManagementEnabled()) {
+      const nextById = new Map(users.map(user => [user.id, user]));
+      let changesChild = false;
+      for (const existing of current.values()) {
+        if (existing.role !== 'child') continue;
+        const next = nextById.get(existing.id);
+        if (!next || next.role !== 'child' || next.name !== existing.name || next.password !== existing.password) {
+          changesChild = true;
+          break;
+        }
+      }
+      if (!changesChild) {
+        changesChild = users.some(user => {
+          const existing = current.get(user.id);
+          return user.role === 'child' && (!existing || existing.role !== 'child');
+        });
+      }
+      if (changesChild) {
+        const error = new Error('旧版儿童账号增删改已停用，请使用监护人授权建档流程');
+        error.code = 'FEATURE_DISABLED';
+        throw error;
+      }
+    }
 
     for (const input of users) {
       const globalUser = db.prepare('SELECT family_id FROM users WHERE id = ?').get(input.id);

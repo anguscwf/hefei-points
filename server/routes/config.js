@@ -3,6 +3,7 @@ const router = express.Router();
 const repositories = require('../db/repositories');
 const validation = require('../lib/validation');
 const { verifyToken, requireRole, getToken, hashPwd, isHashed } = require('../lib/token');
+const features = require('../config/features');
 
 function safeUser(user) {
   return { id: user.id, name: user.name, role: user.role, familyId: user.familyId || 'default' };
@@ -10,18 +11,23 @@ function safeUser(user) {
 
 router.get('/config', (req, res) => {
   const user = verifyToken(getToken(req));
-  const familyId = user ? (user.familyId || 'default') : 'default';
-  const family = repositories.families.findById(familyId);
-  if (user && !family) return res.status(404).json({ success: false, message: '家庭不存在' });
-  const publicUserList = repositories.users.listAll().map(safeUser);
   if (!user) {
-    return res.json({ success: true, public: true, users: publicUserList });
+    return res.json({ success: true, public: true, users: [] });
   }
+  const familyId = user.familyId || 'default';
+  const family = repositories.families.findById(familyId);
+  if (!family) return res.status(404).json({ success: false, message: '家庭不存在' });
+  const visibleUsers = user.role === 'child'
+    ? [safeUser(user)]
+    : repositories.users.listByFamily(familyId).map(safeUser);
+  const visibleFamily = user.role === 'child'
+    ? { id: family.id, name: family.name, createdAt: family.createdAt }
+    : family;
   return res.json({
     success: true,
     rules: repositories.config.getRules(familyId),
-    families: { [familyId]: family },
-    users: repositories.users.listByFamily(familyId).map(safeUser)
+    families: { [familyId]: visibleFamily },
+    users: visibleUsers
   });
 });
 
@@ -209,7 +215,7 @@ router.post('/config/rules/history/:versionId/restore', (req, res) => {
 router.post('/config/users', async (req, res) => {
   const admin = requireRole(getToken(req), ['admin']);
   if (!admin) return res.status(403).json({ success: false, message: '仅管理员可管理用户' });
-  const inputs = req.body.users;
+  const inputs = req.body && req.body.users;
   if (!Array.isArray(inputs) || inputs.length > 100) return res.status(400).json({ success: false, message: '用户列表格式无效' });
 
   const familyId = admin.familyId || 'default';
@@ -225,15 +231,25 @@ router.post('/config/users', async (req, res) => {
     if (nameError || roleError) return res.status(400).json({ success: false, message: nameError || roleError });
     seen.add(input.id);
     const old = existing.get(input.id);
+    const changesChildCredentials = input.role === 'child' && (!old || old.role !== 'child' || Boolean(input.password));
+    if (changesChildCredentials && features.isLegacyChildManagementEnabled()) {
+      const passwordError = validation.text(input.password, { field: '孩子密码', min: 8, max: 128 });
+      if (passwordError || isHashed(input.password)) {
+        return res.status(400).json({ success: false, message: passwordError || '孩子密码必须以明文提交后由服务端安全哈希' });
+      }
+    }
     let password = input.password || old?.password || '';
     if (password && !isHashed(password)) password = hashPwd(password);
-    prepared.push({ ...input, name: input.name.trim(), password, familyId });
+    prepared.push({ id: input.id, name: input.name.trim(), role: input.role, password, familyId });
   }
 
   try {
     const savedUsers = repositories.users.replaceFamily(familyId, prepared, admin.id);
     res.json({ success: true, users: savedUsers.map(safeUser) });
   } catch (error) {
+    if (error.code === 'FEATURE_DISABLED') {
+      return res.status(403).json({ success: false, code: error.code, message: error.message });
+    }
     const badRequest = ['不能删除当前管理员', '不能修改当前管理员角色', '用户ID已被其他家庭使用'].includes(error.message);
     res.status(badRequest ? 400 : 503).json({ success: false, message: badRequest ? error.message : '保存失败' });
   }
