@@ -11,6 +11,7 @@
     "dev": "cross-env NODE_ENV=development PORT=3002 DATA_DIR=./data-dev node server/index.js",
     "migrate:sqlite": "node scripts/migrate-json-to-sqlite.js",
     "backup": "node scripts/backup-sqlite.js",
+    "backup:pre-migration": "node scripts/pre-migration-backup.js",
     "test": "node --test --test-concurrency=1",
     "pm2:logrotate": "node scripts/configure-pm2-logrotate.js",
     "check": "node scripts/check-rename.js",
