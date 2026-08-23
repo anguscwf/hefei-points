@@ -3,5 +3,6 @@ module.exports = {
   families: require('./families'),
   config: require('./config'),
   points: require('./points'),
-  transactions: require('./transactions')
+  transactions: require('./transactions'),
+  guardianConsents: require('./guardian-consents')
 };

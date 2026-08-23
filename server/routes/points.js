@@ -73,11 +73,24 @@ router.get('/points', (req, res) => {
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
   const familyId = user.familyId || 'default';
   const family = repositories.families.findById(familyId);
+  if (user.role === 'child') {
+    const privacyState = repositories.guardianConsents.getPrivacyState({
+      familyId,
+      childId: user.id
+    });
+    if (!privacyState || privacyState.status !== 'active') {
+      return res.status(409).json({
+        success: false,
+        code: 'CHILD_PROCESSING_BLOCKED',
+        message: '儿童档案当前不可访问'
+      });
+    }
+  }
   res.json({
     success: true,
     points: user.role === 'child'
       ? repositories.points.getChildPoints(familyId, user.id)
-      : repositories.points.getFamilyPoints(familyId),
+      : repositories.points.getGuardianPoints(familyId, user.id),
     rules: repositories.config.getRules(familyId),
     family: family ? { id: family.id, name: family.name } : null,
     user: { id: user.id, name: user.name, role: user.role, familyId }
@@ -91,6 +104,18 @@ router.post('/points/change', async (req, res) => {
   const familyId = user.familyId || 'default';
   const child = repositories.users.findById(kid);
   if (!child || child.role !== 'child' || child.familyId !== familyId) return res.status(400).json({ success: false, message: '无效的孩子' });
+  const guardianConsent = repositories.guardianConsents.findActiveConsent({
+    familyId,
+    childId: child.id,
+    guardianId: user.id
+  });
+  if (!guardianConsent) {
+    return res.status(403).json({
+      success: false,
+      code: 'FORBIDDEN_SCOPE',
+      message: '当前账号未取得该儿童的有效监护授权'
+    });
+  }
   const parsedAmount = validation.amount(amount);
   if (parsedAmount.error) return res.status(400).json({ success: false, message: parsedAmount.error });
   const amountNum = parsedAmount.value;
@@ -111,7 +136,10 @@ router.post('/points/change', async (req, res) => {
         field: error.field
       });
     }
-    (req.log || logger).error({ err: error, familyId }, 'failed to resolve rule reference');
+    (req.log || logger).error({
+      event: 'points.rule-reference.failed',
+      errorCode: error.code || 'UNEXPECTED_ERROR'
+    }, 'failed to resolve rule reference');
     return res.status(503).json({ success: false, message: '规则校验失败，请稍后重试' });
   }
   if (!ruleReference && reason !== undefined && reason !== null && reason !== '') {
@@ -134,21 +162,39 @@ router.post('/points/change', async (req, res) => {
       categoryId: ruleReference && ruleReference.categoryId
     });
     (req.log || logger).info({
-      event: 'audit.points.changed',
-      operatorId: user.id,
-      familyId,
-      targetKidId: kid,
-      amount: amountNum,
-      beforeBalance: result.beforeBalance,
-      afterBalance: result.afterBalance,
-      transactionId: result.record.id,
-      ruleId: result.record.ruleId,
-      categoryId: result.record.categoryId
+      event: 'points.changed',
+      transactionId: result.record.id
     }, 'points changed');
-    const { beforeBalance, afterBalance, ...response } = result;
-    res.json({ success: true, ...response });
+    const { beforeBalance, afterBalance, points: _unscopedPoints, ...response } = result;
+    res.json({
+      success: true,
+      ...response,
+      points: repositories.points.getGuardianPoints(familyId, user.id)
+    });
   } catch (e) {
-    res.status(503).json({ success: false, message: e.message || '操作失败，请稍后重试' });
+    if (e.code === 'FEATURE_DISABLED') {
+      return res.status(403).json({
+        success: false,
+        code: e.code,
+        message: e.message
+      });
+    }
+    if (e.code === 'CHILD_PROCESSING_BLOCKED') {
+      return res.status(409).json({
+        success: false,
+        code: e.code,
+        message: e.message
+      });
+    }
+    (req.log || logger).error({
+      event: 'points.change.failed',
+      errorCode: e.code || 'UNEXPECTED_ERROR'
+    }, 'points change failed');
+    return res.status(503).json({
+      success: false,
+      code: 'POINTS_CHANGE_FAILED',
+      message: '操作失败，请稍后重试'
+    });
   }
 });
 

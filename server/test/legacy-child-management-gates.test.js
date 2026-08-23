@@ -137,19 +137,28 @@ test('旧儿童创建默认拒绝，显式开启后仍要求 8 至 128 位密码
   });
 });
 
-test('门关闭时成人资料可更新，但任何儿童增删改整批原子拒绝', async () => {
+test('门关闭时成人资料可更新、缺失儿童服务端保留，显式儿童改动整批拒绝', async () => {
   await withServer(async baseUrl => {
     const adultOnly = familyPayload();
     adultOnly.find(user => user.id === 'parent_a').name = '家长A已更新';
     adultOnly.push({ id: 'parent_new', name: '新增成人', role: 'parent', password: TEST_PASSWORD });
     const allowed = await post(baseUrl, '/api/config/users', 'admin_a', { users: adultOnly });
     assert.equal(allowed.response.status, 200);
+    assert.equal(allowed.body.users.some(user => user.role === 'child'), false);
     assert.equal(repositories.users.findById('parent_a').name, '家长A已更新');
     assert.equal(repositories.users.findById('parent_new').role, 'parent');
 
+    resetDatabase();
+    const omittedChild = familyPayload().filter(user => user.id !== 'child_a');
+    omittedChild.find(user => user.id === 'parent_a').name = '省略儿童仍可更新成人';
+    const preserved = await post(baseUrl, '/api/config/users', 'admin_a', { users: omittedChild });
+    assert.equal(preserved.response.status, 200);
+    assert.equal(preserved.body.users.some(user => user.role === 'child'), false);
+    assert.equal(repositories.users.findById('parent_a').name, '省略儿童仍可更新成人');
+    assert.equal(repositories.users.findById('child_a').role, 'child');
+
     const mutations = [
       users => users.concat({ id: 'child_new', name: '新增孩子', role: 'child', password: 'strong-password' }),
-      users => users.filter(user => user.id !== 'child_a'),
       users => { users.find(user => user.id === 'child_a').name = '孩子A改名'; return users; },
       users => { users.find(user => user.id === 'child_a').password = 'changed-password'; return users; },
       users => { users.find(user => user.id === 'child_a').role = 'parent'; return users; },
@@ -195,8 +204,8 @@ test('儿童不能自行离家，管理员不能绕过门踢出儿童或删除�
     assert.equal(repositories.users.findById('child_a').familyId, 'family_a');
 
     const kickChild = await post(baseUrl, '/api/family/kick', 'admin_a', { userId: 'child_a' });
-    assert.equal(kickChild.response.status, 403);
-    assert.equal(kickChild.body.code, 'FEATURE_DISABLED');
+    assert.equal(kickChild.response.status, 404);
+    assert.equal(kickChild.body.message, '该用户不在你的家庭中');
 
     const kickAdult = await post(baseUrl, '/api/family/kick', 'admin_a', { userId: 'parent_a' });
     assert.equal(kickAdult.response.status, 200);

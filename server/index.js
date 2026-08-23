@@ -19,7 +19,7 @@ function createApp() {
 
   app.use(require('./routes/health'));
 
-  app.use(['/api/auth', '/api/wx-login', '/api/wx-bind'], authLimiter);
+  app.use(['/api/auth', '/api/wx-login', '/api/wx-bind', '/api/v2/reauth-assertions'], authLimiter);
   app.use('/api', apiLimiter);
 
   require('./config/defaults').initData();
@@ -30,16 +30,43 @@ function createApp() {
   app.use('/api', require('./routes/family'));
   app.use('/api', require('./routes/config'));
   app.use('/api', require('./routes/backup'));
+  app.use('/api', require('./routes/v2-guardian-consents'));
 
   app.use((req, res) => {
-    res.status(404).json({ success: false, message: '接口不存在' });
+    const v2 = req.originalUrl.split('?')[0].startsWith('/api/v2/');
+    const body = { success: false, message: '接口不存在' };
+    if (v2) {
+      body.code = 'NOT_FOUND';
+      if (req.requestId) body.requestId = req.requestId;
+    }
+    res.status(404).json(body);
   });
 
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    (req.log || logger).error({ event: 'http.error', method: req.method, path: req.originalUrl.split('?')[0], error: error.message }, 'request failed');
-    const status = error.type === 'entity.parse.failed' ? 400 : 500;
-    return res.status(status).json({ success: false, message: status === 400 ? '请求 JSON 格式错误' : '服务器内部错误' });
+    const pathOnly = req.originalUrl.split('?')[0];
+    const v2 = pathOnly.startsWith('/api/v2/');
+    const invalidJson = error.type === 'entity.parse.failed';
+    const tooLarge = error.type === 'entity.too.large' || error.status === 413;
+    const status = invalidJson ? 400 : (tooLarge ? 413 : 500);
+    const code = invalidJson
+      ? 'INVALID_JSON'
+      : (tooLarge ? 'PAYLOAD_TOO_LARGE' : 'INTERNAL_ERROR');
+    const message = invalidJson
+      ? '请求 JSON 格式错误'
+      : (tooLarge ? '请求内容过大' : '服务器内部错误');
+    (req.log || logger).error({
+      event: 'http.error',
+      method: req.method,
+      path: pathOnly,
+      errorType: error.type || 'unexpected'
+    }, 'request failed');
+    const body = { success: false, message };
+    if (v2) {
+      body.code = code;
+      if (req.requestId) body.requestId = req.requestId;
+    }
+    return res.status(status).json(body);
   });
   return app;
 }

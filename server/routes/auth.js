@@ -30,10 +30,10 @@ router.post('/auth', (req, res) => {
     return res.status(403).json({ success: false, message: '用户或密码错误' });
   }
   const user = users.findById(userId);
-  if (user && user.role === 'child' && !features.isLegacyChildLoginEnabled()) return disabledChildLogin(res);
   if (!user || !verifyPwd(password, user.password)) {
     return res.status(403).json({ success: false, message: '用户或密码错误' });
   }
+  if (user.role === 'child' && !features.isLegacyChildLoginEnabled()) return disabledChildLogin(res);
   if (user.password && !user.password.includes(':')) {
     user.password = hashPwd(password);
     users.updatePassword(user.id, user.password);
@@ -58,8 +58,11 @@ router.post('/wx-login', async (req, res) => {
     if (user.role === 'child' && !features.isLegacyChildLoginEnabled()) return disabledChildLogin(res);
     return res.json({ success: true, isNew: false, ...loginResponse(user) });
   } catch (e) {
-    (req.log || logger).error({ event: 'auth.wx_login.failed', error: e.message }, 'WeChat login failed');
-    return res.status(500).json({ success: false, message: '微信登录失败：' + e.message });
+    (req.log || logger).error({
+      event: 'auth.wx_login.failed',
+      errorType: e.name || 'unexpected'
+    }, 'WeChat login failed');
+    return res.status(500).json({ success: false, message: '微信登录失败，请稍后重试' });
   }
 });
 
@@ -74,8 +77,8 @@ router.post('/wx-bind', async (req, res) => {
   }
   try {
     const user = users.findById(userId);
-    if (user && user.role === 'child' && !features.isLegacyChildLoginEnabled()) return disabledChildLogin(res);
     if (!user || !verifyPwd(password, user.password)) throw new Error('账号或密码错误');
+    if (user.role === 'child' && !features.isLegacyChildLoginEnabled()) return disabledChildLogin(res);
     const bound = users.bindOpenId(userId, ticket.value, new Date().toISOString());
     if (bound.conflict) throw new Error(`此微信已绑定到「${bound.conflict.name}」账号，如需切换请先解绑`);
     if (!bound.user) throw new Error('用户不存在');

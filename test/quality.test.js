@@ -33,6 +33,16 @@ function resetDatabase() {
   repositories.users.insert({ id: 'child_a', name: '孩子A', role: 'child', password, familyId: 'family_a' });
   repositories.users.insert({ id: 'admin_b', name: '管理员B', role: 'admin', password, familyId: 'family_b' });
   repositories.users.insert({ id: 'child_b', name: '孩子B', role: 'child', password, familyId: 'family_b' });
+  const activatedAt = new Date().toISOString();
+  inTransaction(db => db.prepare(`
+    UPDATE child_privacy_states
+    SET status = 'active',
+        revision = revision + 1,
+        reason_code = 'synthetic_quality_fixture',
+        updated_at = ?,
+        activated_at = ?
+    WHERE status = 'suspended_pending_consent'
+  `).run(activatedAt, activatedAt));
 }
 
 function change(familyId, kid, amount) {

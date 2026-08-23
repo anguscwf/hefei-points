@@ -5,7 +5,21 @@ const logger = pino({
   base: { service: 'hefei-points', version: '2.5.0' },
   timestamp: pino.stdTimeFunctions.isoTime,
   redact: {
-    paths: ['authorization', 'headers.authorization', 'req.headers.authorization', 'password', 'token', '*.password', '*.token'],
+    paths: [
+      'authorization',
+      'headers.authorization',
+      'req.headers.authorization',
+      'password',
+      'token',
+      'reauthAssertion',
+      'tokenHash',
+      'idempotencyKey',
+      '*.password',
+      '*.token',
+      '*.reauthAssertion',
+      '*.tokenHash',
+      '*.idempotencyKey'
+    ],
     censor: '[REDACTED]'
   }
 });

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const { DatabaseSync } = require('node:sqlite');
 
@@ -15,6 +16,95 @@ process.env.SQLITE_FILE = path.join(tempDir, 'transactions.sqlite');
 const { getDb, inTransaction, closeDb } = require('../db/connection');
 const repositories = require('../db/repositories');
 const token = require('../lib/token');
+
+function ensureSyntheticConsent(db, { familyId, guardianId, childId, tag }) {
+  const version = 'synthetic-s1-v1';
+  const createdAt = '2026-08-20T00:00:00.000Z';
+  const textEvidence = [
+    ['privacy_policy', 'a'.repeat(64)],
+    ['child_personal_information_rules', 'b'.repeat(64)],
+    ['child_user_agreement', 'c'.repeat(64)],
+    ['sensitive_information_notice', 'd'.repeat(64)]
+  ];
+  const insertLegalText = db.prepare(`
+    INSERT OR IGNORE INTO legal_text_versions(
+      text_type, version, content_sha256, public_url, effective_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const [textType, contentSha256] of textEvidence) {
+    insertLegalText.run(
+      textType,
+      version,
+      contentSha256,
+      `https://example.test/legal/${textType}/${version}`,
+      createdAt,
+      createdAt
+    );
+  }
+
+  const reauthId = `reauth_${tag}`;
+  db.prepare(`
+    INSERT OR IGNORE INTO reauth_assertions(
+      id, family_id, user_id, purpose, token_hash, verification_method,
+      issued_at, expires_at, consumed_at
+    ) VALUES (?, ?, ?, 'child_consent', ?, 'password', ?, ?, ?)
+  `).run(
+    reauthId,
+    familyId,
+    guardianId,
+    crypto.createHash('sha256').update(`synthetic:${tag}`).digest('hex'),
+    createdAt,
+    '2099-01-01T00:00:00.000Z',
+    createdAt
+  );
+
+  db.prepare(`
+    INSERT OR IGNORE INTO guardian_consents(
+      id, family_id, child_id, guardian_id, consent_version,
+      privacy_version, privacy_sha256, child_rules_version, child_rules_sha256,
+      child_user_agreement_version, child_user_agreement_sha256,
+      sensitive_notice_version, sensitive_notice_sha256,
+      guardian_relation, relation_declaration_version, relation_declaration_sha256,
+      reauth_assertion_id, verification_method, verified_at,
+      consent_scope_json, visibility_scope_json,
+      privacy_consented_at, child_rules_consented_at,
+      child_user_agreement_accepted_at, sensitive_consented_at,
+      audit_data_json, supersedes_consent_id, created_at, updated_at
+    ) VALUES (
+      ?, ?, ?, ?, 1,
+      ?, ?, ?, ?,
+      ?, ?,
+      ?, ?,
+      'legal_guardian', 'synthetic-relation-v1', ?,
+      ?, 'password', ?,
+      '{"legacyPoints":true}', '{"familyAdults":true}',
+      ?, ?, ?, ?,
+      '{"fixture":"transaction-rule-ids"}', NULL, ?, ?
+    )
+  `).run(
+    `consent_${tag}`,
+    familyId,
+    childId,
+    guardianId,
+    version,
+    textEvidence[0][1],
+    version,
+    textEvidence[1][1],
+    version,
+    textEvidence[2][1],
+    version,
+    textEvidence[3][1],
+    'e'.repeat(64),
+    reauthId,
+    createdAt,
+    createdAt,
+    createdAt,
+    createdAt,
+    createdAt,
+    createdAt,
+    createdAt
+  );
+}
 
 function rulesFor(prefix, label) {
   return {
@@ -51,20 +141,48 @@ function resetDatabase() {
   inTransaction(db => {
     db.prepare('DELETE FROM transactions').run();
     db.prepare('DELETE FROM point_accounts').run();
-    db.prepare('DELETE FROM users').run();
     db.prepare('DELETE FROM rule_versions').run();
     db.prepare('DELETE FROM rules').run();
-    db.prepare('DELETE FROM families').run();
   });
   const createdAt = new Date().toISOString();
   repositories.families.ensureDefault({ id: 'default', name: '默认家庭', createdAt });
   repositories.families.ensureDefault({ id: 'family_a', name: '家庭 A', createdAt });
   repositories.families.ensureDefault({ id: 'family_b', name: '家庭 B', createdAt });
   const password = token.hashPwd('test-password');
-  repositories.users.insert({ id: 'admin_a', name: '管理员 A', role: 'admin', password, familyId: 'family_a' });
-  repositories.users.insert({ id: 'child_a', name: '孩子 A', role: 'child', password, familyId: 'family_a' });
-  repositories.users.insert({ id: 'admin_b', name: '管理员 B', role: 'admin', password, familyId: 'family_b' });
-  repositories.users.insert({ id: 'child_b', name: '孩子 B', role: 'child', password, familyId: 'family_b' });
+  const upsertUser = getDb().prepare(`
+    INSERT INTO users(id, name, role, password, family_id, openid, bound_at, tokens_valid_after)
+    VALUES (?, ?, ?, ?, ?, NULL, NULL, 0)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      role = excluded.role,
+      password = excluded.password,
+      family_id = excluded.family_id,
+      openid = NULL,
+      bound_at = NULL,
+      tokens_valid_after = 0
+  `);
+  for (const user of [
+    { id: 'admin_a', name: '管理员 A', role: 'admin', familyId: 'family_a' },
+    { id: 'child_a', name: '孩子 A', role: 'child', familyId: 'family_a' },
+    { id: 'admin_b', name: '管理员 B', role: 'admin', familyId: 'family_b' },
+    { id: 'child_b', name: '孩子 B', role: 'child', familyId: 'family_b' }
+  ]) upsertUser.run(user.id, user.name, user.role, password, user.familyId);
+  const activatedAt = new Date().toISOString();
+  inTransaction(db => db.prepare(`
+    UPDATE child_privacy_states
+    SET status = 'active',
+        revision = revision + 1,
+        reason_code = 'synthetic_rule_fixture',
+        updated_at = ?,
+        activated_at = ?
+    WHERE status = 'suspended_pending_consent'
+  `).run(activatedAt, activatedAt));
+  ensureSyntheticConsent(getDb(), {
+    familyId: 'family_a',
+    guardianId: 'admin_a',
+    childId: 'child_a',
+    tag: 'rules_admin_a_child_a'
+  });
   repositories.config.setRules('family_a', rulesFor('a', '家庭 A'));
   repositories.config.setRules('family_b', rulesFor('b', '家庭 B'));
 }

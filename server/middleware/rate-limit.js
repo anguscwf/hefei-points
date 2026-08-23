@@ -12,7 +12,14 @@ function createLimiter({ windowMs, max, message, key }) {
     res.set('RateLimit-Limit', String(max));
     res.set('RateLimit-Remaining', String(Math.max(0, max - entry.count)));
     res.set('RateLimit-Reset', String(Math.ceil(entry.resetAt / 1000)));
-    if (entry.count > max) return res.status(429).json({ success: false, message });
+    if (entry.count > max) {
+      const body = { success: false, message };
+      if (req.originalUrl.split('?')[0].startsWith('/api/v2/')) {
+        body.code = 'RATE_LIMITED';
+        if (req.requestId) body.requestId = req.requestId;
+      }
+      return res.status(429).json(body);
+    }
 
     if (attempts.size > 1000 || Math.random() < 0.01) {
       for (const [attemptKey, value] of attempts) if (now >= value.resetAt) attempts.delete(attemptKey);

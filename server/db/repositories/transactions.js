@@ -84,4 +84,113 @@ function sumByAccount() {
   return getDb().prepare('SELECT family_id, kid_id, COALESCE(SUM(amount),0) AS total FROM transactions GROUP BY family_id, kid_id').all();
 }
 
-module.exports = { toRecord, insert, listByFamily, updateNote, remove, cleanup, count, sumByAccount };
+function listForGuardian(familyId, guardianId, kid, limit = 50) {
+  const db = getDb();
+  const params = kid
+    ? [familyId, guardianId, kid, limit]
+    : [familyId, guardianId, limit];
+  const childFilter = kid ? 'AND t.kid_id = ?' : '';
+  return db.prepare(`
+    SELECT t.*
+    FROM transactions t
+    WHERE t.family_id = ?
+      AND t.deleted_at IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM guardian_consents gc
+        JOIN child_privacy_states cps
+          ON cps.family_id = gc.family_id AND cps.child_id = gc.child_id
+        WHERE gc.family_id = t.family_id
+          AND gc.child_id = t.kid_id
+          AND gc.guardian_id = ?
+          AND gc.status = 'active'
+          AND cps.status = 'active'
+      )
+      ${childFilter}
+    ORDER BY t.rowid DESC
+    LIMIT ?
+  `).all(...params).map(toRecord);
+}
+
+function updateNoteForGuardian(recordId, familyId, guardianId, note) {
+  return getDb().prepare(`
+    UPDATE transactions
+    SET note = ?
+    WHERE id = ? AND family_id = ? AND deleted_at IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM guardian_consents gc
+        JOIN child_privacy_states cps
+          ON cps.family_id = gc.family_id AND cps.child_id = gc.child_id
+        WHERE gc.family_id = transactions.family_id
+          AND gc.child_id = transactions.kid_id
+          AND gc.guardian_id = ?
+          AND gc.status = 'active'
+          AND cps.status = 'active'
+      )
+  `).run(note || '', String(recordId), familyId, guardianId).changes > 0;
+}
+
+function removeForGuardian(recordId, familyId, guardianId) {
+  return getDb().prepare(`
+    UPDATE transactions
+    SET deleted_at = ?
+    WHERE id = ? AND family_id = ? AND deleted_at IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM guardian_consents gc
+        JOIN child_privacy_states cps
+          ON cps.family_id = gc.family_id AND cps.child_id = gc.child_id
+        WHERE gc.family_id = transactions.family_id
+          AND gc.child_id = transactions.kid_id
+          AND gc.guardian_id = ?
+          AND gc.status = 'active'
+          AND cps.status = 'active'
+      )
+  `).run(new Date().toISOString(), String(recordId), familyId, guardianId).changes > 0;
+}
+
+function cleanupForGuardian(familyId, guardianId, { kid, beforeDate, afterDate }) {
+  return inTransaction(db => {
+    const rows = db.prepare(`
+      SELECT t.id, t.occurred_at, t.kid_id
+      FROM transactions t
+      WHERE t.family_id = ? AND t.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM guardian_consents gc
+          JOIN child_privacy_states cps
+            ON cps.family_id = gc.family_id AND cps.child_id = gc.child_id
+          WHERE gc.family_id = t.family_id
+            AND gc.child_id = t.kid_id
+            AND gc.guardian_id = ?
+            AND gc.status = 'active'
+            AND cps.status = 'active'
+        )
+    `).all(familyId, guardianId);
+    const ids = rows.filter(row => {
+      if (kid && row.kid_id !== kid) return false;
+      const date = row.occurred_at ? row.occurred_at.split(' ')[0].replace(/\//g, '-') : '';
+      return (!beforeDate || date <= beforeDate) && (!afterDate || date >= afterDate);
+    }).map(row => row.id);
+    const removeOne = db.prepare('UPDATE transactions SET deleted_at = ? WHERE id = ? AND family_id = ?');
+    const deletedAt = new Date().toISOString();
+    for (const id of ids) removeOne.run(deletedAt, id, familyId);
+    return ids.length;
+  });
+}
+
+module.exports = {
+  toRecord,
+  insert,
+  listByFamily,
+  listForGuardian,
+  updateNote,
+  updateNoteForGuardian,
+  remove,
+  removeForGuardian,
+  cleanup,
+  cleanupForGuardian,
+  count,
+  sumByAccount
+};

@@ -25,9 +25,27 @@ router.get('/family', async (req, res) => {
   const familyId = user.familyId || 'default';
   const family = repositories.families.findById(familyId);
   if (!family) return res.status(404).json({ success: false, message: '家庭不存在' });
+  if (user.role === 'child') {
+    const state = repositories.guardianConsents.getPrivacyState({ familyId, childId: user.id });
+    if (!state || state.status !== 'active') {
+      return res.status(409).json({
+        success: false,
+        code: 'CHILD_PROCESSING_BLOCKED',
+        message: '儿童档案当前不可访问'
+      });
+    }
+  }
+  const authorizedChildIds = user.role === 'child'
+    ? new Set([user.id])
+    : new Set(repositories.guardianConsents.listActiveGuardianChildIds({
+      familyId,
+      guardianId: user.id
+    }));
   const members = user.role === 'child'
     ? [{ id: user.id, name: user.name, role: user.role }]
-    : repositories.users.listByFamily(familyId).map(member => ({ id: member.id, name: member.name, role: member.role }));
+    : repositories.users.listByFamily(familyId)
+      .filter(member => member.role !== 'child' || authorizedChildIds.has(member.id))
+      .map(member => ({ id: member.id, name: member.name, role: member.role }));
   const safeFamily = user.role === 'child'
     ? { id: family.id, name: family.name, createdAt: family.createdAt }
     : { id: family.id, name: family.name, inviteCode: family.inviteCode, createdAt: family.createdAt };
@@ -92,6 +110,20 @@ router.post('/family/kick', async (req, res) => {
   if (!userId) return res.status(400).json({ success: false, message: '请指定要踢出的用户ID' });
   if (userId === admin.id) return res.status(400).json({ success: false, message: '不能踢出自己' });
   const target = repositories.users.findById(userId);
+  if (target && target.familyId === (admin.familyId || 'default') && target.role === 'child') {
+    const consent = repositories.guardianConsents.findActiveConsent({
+      familyId: admin.familyId || 'default',
+      childId: target.id,
+      guardianId: admin.id
+    });
+    const state = repositories.guardianConsents.getPrivacyState({
+      familyId: admin.familyId || 'default',
+      childId: target.id
+    });
+    if (!consent || !state || state.status !== 'active') {
+      return res.status(404).json({ success: false, message: '该用户不在你的家庭中' });
+    }
+  }
   if (target && target.familyId === (admin.familyId || 'default') && target.role === 'child' && !features.isLegacyChildManagementEnabled()) {
     return res.status(403).json({
       success: false,
@@ -117,7 +149,7 @@ router.post('/family/delete', async (req, res) => {
     return res.status(403).json({
       success: false,
       code: 'FEATURE_DISABLED',
-      message: '家庭含儿童档案，请先通过儿童数据权利流程处理'
+      message: '家庭包含受保护档案，请先通过数据权利流程处理'
     });
   }
   try {

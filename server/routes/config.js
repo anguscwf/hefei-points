@@ -17,9 +17,27 @@ router.get('/config', (req, res) => {
   const familyId = user.familyId || 'default';
   const family = repositories.families.findById(familyId);
   if (!family) return res.status(404).json({ success: false, message: '家庭不存在' });
+  if (user.role === 'child') {
+    const state = repositories.guardianConsents.getPrivacyState({ familyId, childId: user.id });
+    if (!state || state.status !== 'active') {
+      return res.status(409).json({
+        success: false,
+        code: 'CHILD_PROCESSING_BLOCKED',
+        message: '儿童档案当前不可访问'
+      });
+    }
+  }
+  const authorizedChildIds = user.role === 'child'
+    ? new Set([user.id])
+    : new Set(repositories.guardianConsents.listActiveGuardianChildIds({
+      familyId,
+      guardianId: user.id
+    }));
   const visibleUsers = user.role === 'child'
     ? [safeUser(user)]
-    : repositories.users.listByFamily(familyId).map(safeUser);
+    : repositories.users.listByFamily(familyId)
+      .filter(candidate => candidate.role !== 'child' || authorizedChildIds.has(candidate.id))
+      .map(safeUser);
   const visibleFamily = user.role === 'child'
     ? { id: family.id, name: family.name, createdAt: family.createdAt }
     : family;
@@ -220,19 +238,36 @@ router.post('/config/users', async (req, res) => {
 
   const familyId = admin.familyId || 'default';
   const existing = new Map(repositories.users.listByFamily(familyId).map(user => [user.id, user]));
+  const legacyChildManagementEnabled = features.isLegacyChildManagementEnabled();
   const seen = new Set();
   const prepared = [];
   for (const input of inputs) {
     if (!input || typeof input !== 'object' || !/^[a-z0-9_]{2,20}$/.test(input.id || '') || seen.has(input.id)) {
       return res.status(400).json({ success: false, message: '用户ID无效或重复' });
     }
+    const old = existing.get(input.id);
+    seen.add(input.id);
+    if (!legacyChildManagementEnabled && old && old.role === 'child') {
+      // A stale client may still submit a child it saw before consent was
+      // withdrawn. Preserve an unchanged record, but reject any attempted
+      // mutation of the protected child.
+      const changesProtectedChild = input.role !== old.role
+        || input.name !== old.name
+        || (Boolean(input.password) && input.password !== old.password);
+      if (changesProtectedChild) {
+        return res.status(403).json({
+          success: false,
+          code: 'FEATURE_DISABLED',
+          message: '旧版儿童账号管理已停用，请使用监护人授权建档流程'
+        });
+      }
+      continue;
+    }
     const nameError = validation.text(input.name, { field: '用户姓名', min: 1, max: 30 });
     const roleError = validation.role(input.role);
     if (nameError || roleError) return res.status(400).json({ success: false, message: nameError || roleError });
-    seen.add(input.id);
-    const old = existing.get(input.id);
     const changesChildCredentials = input.role === 'child' && (!old || old.role !== 'child' || Boolean(input.password));
-    if (changesChildCredentials && features.isLegacyChildManagementEnabled()) {
+    if (changesChildCredentials && legacyChildManagementEnabled) {
       const passwordError = validation.text(input.password, { field: '孩子密码', min: 8, max: 128 });
       if (passwordError || isHashed(input.password)) {
         return res.status(400).json({ success: false, message: passwordError || '孩子密码必须以明文提交后由服务端安全哈希' });
@@ -242,10 +277,32 @@ router.post('/config/users', async (req, res) => {
     if (password && !isHashed(password)) password = hashPwd(password);
     prepared.push({ id: input.id, name: input.name.trim(), role: input.role, password, familyId });
   }
+  if (!legacyChildManagementEnabled) {
+    for (const old of existing.values()) {
+      if (old.role === 'child') {
+        prepared.push({
+          id: old.id,
+          name: old.name,
+          role: old.role,
+          password: old.password,
+          familyId
+        });
+      }
+    }
+  }
 
   try {
     const savedUsers = repositories.users.replaceFamily(familyId, prepared, admin.id);
-    res.json({ success: true, users: savedUsers.map(safeUser) });
+    const authorizedChildIds = new Set(repositories.guardianConsents.listActiveGuardianChildIds({
+      familyId,
+      guardianId: admin.id
+    }));
+    res.json({
+      success: true,
+      users: savedUsers
+        .filter(user => user.role !== 'child' || authorizedChildIds.has(user.id))
+        .map(safeUser)
+    });
   } catch (error) {
     if (error.code === 'FEATURE_DISABLED') {
       return res.status(403).json({ success: false, code: error.code, message: error.message });

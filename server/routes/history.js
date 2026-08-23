@@ -9,6 +9,25 @@ function isFamilyChild(kid, familyId) {
   return Boolean(user && user.role === 'child' && user.familyId === familyId);
 }
 
+function hasGuardianAccess(user, childId) {
+  const familyId = user.familyId || 'default';
+  const consent = repositories.guardianConsents.findActiveConsent({
+    familyId,
+    childId,
+    guardianId: user.id
+  });
+  const state = repositories.guardianConsents.getPrivacyState({ familyId, childId });
+  return Boolean(consent && state && state.status === 'active');
+}
+
+function blockedChildResponse(res) {
+  return res.status(409).json({
+    success: false,
+    code: 'CHILD_PROCESSING_BLOCKED',
+    message: '儿童档案当前不可访问'
+  });
+}
+
 router.get('/history', (req, res) => {
   const user = verifyToken(getToken(req));
   if (!user) return res.status(403).json({ success: false, message: '请先登录' });
@@ -16,13 +35,25 @@ router.get('/history', (req, res) => {
   let kid;
   if (user.role === 'child') {
     kid = user.id;
+    const state = repositories.guardianConsents.getPrivacyState({ familyId, childId: kid });
+    if (!state || state.status !== 'active') return blockedChildResponse(res);
   } else if (req.query.kid !== undefined) {
     if (typeof req.query.kid !== 'string' || !isFamilyChild(req.query.kid, familyId)) {
       return res.status(400).json({ success: false, message: '无效的孩子' });
     }
     kid = req.query.kid;
+    if (!hasGuardianAccess(user, kid)) {
+      return res.status(403).json({
+        success: false,
+        code: 'FORBIDDEN_SCOPE',
+        message: '当前账号未取得该儿童的有效监护授权'
+      });
+    }
   }
-  res.json({ success: true, history: repositories.transactions.listByFamily(familyId, kid, 50) });
+  const history = user.role === 'child'
+    ? repositories.transactions.listByFamily(familyId, kid, 50)
+    : repositories.transactions.listForGuardian(familyId, user.id, kid, 50);
+  return res.json({ success: true, history });
 });
 
 router.post('/history/note', async (req, res) => {
@@ -30,7 +61,12 @@ router.post('/history/note', async (req, res) => {
   const user = requireRole(getToken(req), ['admin', 'parent']);
   if (!user) return res.status(403).json({ success: false, message: '无操作权限' });
   try {
-    if (!repositories.transactions.updateNote(recordId, user.familyId || 'default', note)) throw new Error('记录不存在');
+    if (!repositories.transactions.updateNoteForGuardian(
+      recordId,
+      user.familyId || 'default',
+      user.id,
+      note
+    )) throw new Error('记录不存在');
     res.json({ success: true });
   } catch (e) {
     res.status(e.message === '记录不存在' ? 404 : 503).json({ success: false, message: e.message || '操作失败' });
@@ -42,7 +78,11 @@ router.post('/history/delete', async (req, res) => {
   const user = requireRole(getToken(req), ['admin', 'parent']);
   if (!user) return res.status(403).json({ success: false, message: '无操作权限' });
   try {
-    if (!repositories.transactions.remove(recordId, user.familyId || 'default')) throw new Error('记录不存在');
+    if (!repositories.transactions.removeForGuardian(
+      recordId,
+      user.familyId || 'default',
+      user.id
+    )) throw new Error('记录不存在');
     res.json({ success: true });
   } catch (e) {
     res.status(e.message === '记录不存在' ? 404 : 503).json({ success: false, message: e.message || '删除失败' });
@@ -58,11 +98,22 @@ router.post('/history/cleanup', async (req, res) => {
   if (kid && !isFamilyChild(kid, admin.familyId || 'default')) {
     return res.status(400).json({ success: false, message: '无效的孩子' });
   }
+  if (kid && !hasGuardianAccess(admin, kid)) {
+    return res.status(403).json({
+      success: false,
+      code: 'FORBIDDEN_SCOPE',
+      message: '当前账号未取得该儿童的有效监护授权'
+    });
+  }
   try {
-    const deletedCount = repositories.transactions.cleanup(admin.familyId || 'default', { kid, beforeDate, afterDate });
+    const deletedCount = repositories.transactions.cleanupForGuardian(
+      admin.familyId || 'default',
+      admin.id,
+      { kid, beforeDate, afterDate }
+    );
     return res.json({ success: true, deletedCount, message: `已清理 ${deletedCount} 条记录` });
   } catch (e) {
-    return res.status(503).json({ success: false, message: '清理失败：' + e.message });
+    return res.status(503).json({ success: false, message: '清理失败，请稍后重试' });
   }
 });
 
