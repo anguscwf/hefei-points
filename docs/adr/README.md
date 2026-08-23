@@ -13,3 +13,4 @@
 - [ADR-0005：生产迁移必须先取得可验证的旧库快照](0005-pre-migration-backup-gate.md)
 - [ADR-0006：设备配对、设备身份与会话轮换边界](0006-device-pairing-session-security-boundary.md)
 - [ADR-0007：积分申报、审批与来源流水边界](0007-point-request-approval-ledger-boundary.md)
+- [ADR-0008：儿童数据权利、撤回与留存阻断边界](0008-child-data-rights-retention-boundary.md)
