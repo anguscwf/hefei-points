@@ -159,6 +159,22 @@ function idempotencyKey(fixture, label) {
   return `gc-${fixture.suffix}-${label}-0123456789abcdef`;
 }
 
+async function recordFixtureConsent(baseUrl, fixture, {
+  userId = fixture.adminId,
+  expectedRevision = 0,
+  label = 'read-model-consent'
+} = {}) {
+  const reauth = await issueReauth(baseUrl, userId, 'child_consent');
+  const result = await request(baseUrl, `/api/v2/children/${fixture.childId}/consents`, {
+    method: 'POST',
+    userId,
+    headers: { 'Idempotency-Key': idempotencyKey(fixture, label) },
+    body: consentBody(reauth.body.reauthAssertion, expectedRevision)
+  });
+  assert.equal(result.response.status, 201);
+  return result;
+}
+
 function countFamilyRows(table, familyId) {
   return getDb().prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE family_id = ?`).get(familyId).count;
 }
@@ -472,6 +488,53 @@ test('enrollment 幂等重放返回同一结果，冲突请求与已消费断言
   setEnrollmentGates(false);
 });
 
+test('授权操作恢复查询按成人与幂等键精确隔离且不受创建功能门影响', async () => {
+  ensureLegalTexts();
+  setEnrollmentGates(true);
+  const fixture = createFixture();
+  const key = idempotencyKey(fixture, 'operation-recovery');
+  await withServer(async baseUrl => {
+    const missing = await request(
+      baseUrl,
+      '/api/v2/guardian-consent-operations/child-enrollment',
+      { userId: fixture.adminId, headers: { 'Idempotency-Key': key } }
+    );
+    assert.equal(missing.response.status, 200);
+    assert.deepEqual(missing.body.guardianConsentOperation, {
+      operation: 'child-enrollment', status: 'not_found'
+    });
+
+    const reauth = await issueReauth(baseUrl, fixture.adminId, 'child_enrollment');
+    const enrolled = await request(baseUrl, '/api/v2/child-enrollments', {
+      method: 'POST', userId: fixture.adminId,
+      headers: { 'Idempotency-Key': key },
+      body: enrollmentBody(reauth.body.reauthAssertion, '恢复查询合成孩子')
+    });
+    assert.equal(enrolled.response.status, 201);
+
+    setEnrollmentGates(false);
+    const completed = await request(
+      baseUrl,
+      '/api/v2/guardian-consent-operations/child-enrollment',
+      { userId: fixture.adminId, headers: { 'Idempotency-Key': key } }
+    );
+    assert.equal(completed.response.status, 200);
+    assert.equal(completed.body.guardianConsentOperation.operation, 'child-enrollment');
+    assert.equal(completed.body.guardianConsentOperation.status, 'completed');
+    assert.equal(typeof completed.body.guardianConsentOperation.completedAt, 'string');
+    assert.equal(Object.hasOwn(completed.body.guardianConsentOperation, 'resourceId'), false);
+
+    const otherAdult = await request(
+      baseUrl,
+      '/api/v2/guardian-consent-operations/child-enrollment',
+      { userId: fixture.parentId, headers: { 'Idempotency-Key': key } }
+    );
+    assert.equal(otherAdult.response.status, 200);
+    assert.equal(otherAdult.body.guardianConsentOperation.status, 'not_found');
+  });
+  setEnrollmentGates(false);
+});
+
 test('家庭与监护身份从 Bearer 推导，跨家庭 child ID 不能查询或授权', async () => {
   ensureLegalTexts();
   setEnrollmentGates(true);
@@ -515,6 +578,185 @@ test('家庭与监护身份从 Bearer 推导，跨家庭 child ID 不能查询�
     assert.equal(countFamilyRows('guardian_consents', familyB.familyId), 0);
   });
   setEnrollmentGates(false);
+});
+
+test('监护儿童读取模型只返回本人历史 verified consent 范围与最小字段', async () => {
+  ensureLegalTexts();
+  setEnrollmentGates(true);
+  const fixture = createFixture({ existingChild: true });
+  const foreign = createFixture({ existingChild: true });
+  const unconsentedChildId = `child_unconsented_${fixture.suffix}`;
+  repositories.users.insert({
+    id: unconsentedChildId,
+    name: `合成未授权孩子 ${fixture.suffix}`,
+    role: 'child',
+    password: '',
+    familyId: fixture.familyId
+  });
+
+  try {
+    await withServer(async baseUrl => {
+      const unauthenticated = await request(baseUrl, '/api/v2/children');
+      assert.equal(unauthenticated.response.status, 401);
+      assert.equal(unauthenticated.body.code, 'AUTH_REQUIRED');
+
+      const active = await recordFixtureConsent(baseUrl, fixture);
+      await recordFixtureConsent(baseUrl, foreign, { label: 'foreign-read-model-consent' });
+
+      const forgedScope = await request(
+        baseUrl,
+        `/api/v2/children?familyId=${encodeURIComponent(foreign.familyId)}&guardianId=${encodeURIComponent(foreign.adminId)}`,
+        { userId: fixture.adminId }
+      );
+      assert.equal(forgedScope.response.status, 400);
+      assert.equal(forgedScope.body.code, 'VALIDATION_ERROR');
+      assert.equal(forgedScope.body.field, 'familyId');
+
+      const visible = await request(baseUrl, '/api/v2/children', {
+        userId: fixture.adminId
+      });
+      assert.equal(visible.response.status, 200);
+      assert.deepEqual(Object.keys(visible.body).sort(), ['children', 'success']);
+      assert.equal(visible.body.success, true);
+      assert.equal(visible.body.children.length, 1);
+      const entry = visible.body.children[0];
+      assert.deepEqual(Object.keys(entry).sort(), ['child', 'latestConsent', 'privacyState']);
+      assert.deepEqual(entry.child, {
+        id: fixture.childId,
+        alias: `合成存量孩子 ${fixture.suffix}`
+      });
+      assert.deepEqual(entry.privacyState, {
+        status: 'active',
+        revision: 1,
+        updatedAt: entry.privacyState.updatedAt
+      });
+      assert.deepEqual(Object.keys(entry.latestConsent).sort(), [
+        'id', 'status', 'updatedAt', 'verifiedAt', 'version'
+      ]);
+      assert.equal(entry.latestConsent.id, active.body.consent.id);
+      assert.equal(entry.latestConsent.version, 1);
+      assert.equal(entry.latestConsent.status, 'active');
+
+      const noOwnHistory = await request(baseUrl, '/api/v2/children', {
+        userId: fixture.parentId
+      });
+      assert.equal(noOwnHistory.response.status, 200);
+      assert.deepEqual(noOwnHistory.body.children, []);
+
+      const serialized = JSON.stringify(visible.body);
+      for (const hiddenValue of [
+        fixture.familyId,
+        fixture.adminId,
+        fixture.parentId,
+        foreign.familyId,
+        foreign.adminId,
+        foreign.childId,
+        unconsentedChildId
+      ]) assert.equal(serialized.includes(hiddenValue), false);
+      for (const hiddenField of [
+        'familyId',
+        'guardianId',
+        'guardianRelation',
+        'legalTexts',
+        'consentScope',
+        'visibilityScope'
+      ]) assert.equal(serialized.includes(`\"${hiddenField}\"`), false);
+      assertNoSensitiveResponse(visible.body);
+
+      process.env.LEGACY_CHILD_LOGIN_ENABLED = 'true';
+      try {
+        const childDenied = await request(baseUrl, '/api/v2/children', {
+          userId: fixture.childId
+        });
+        assert.equal(childDenied.response.status, 403);
+        assert.equal(childDenied.body.code, 'FORBIDDEN_SCOPE');
+      } finally {
+        process.env.LEGACY_CHILD_LOGIN_ENABLED = 'false';
+      }
+    });
+  } finally {
+    process.env.LEGACY_CHILD_LOGIN_ENABLED = 'false';
+    setEnrollmentGates(false);
+  }
+});
+
+test('撤回和 superseded 后仍可按本人严格最新授权发现儿童', async () => {
+  ensureLegalTexts();
+  setEnrollmentGates(true);
+  const withdrawnFixture = createFixture({ existingChild: true });
+  const supersededFixture = createFixture({ existingChild: true });
+
+  try {
+    await withServer(async baseUrl => {
+      await recordFixtureConsent(baseUrl, withdrawnFixture, {
+        label: 'withdrawn-read-model-consent'
+      });
+      const withdrawReauth = await issueReauth(
+        baseUrl,
+        withdrawnFixture.adminId,
+        'child_consent_withdraw'
+      );
+      const withdrawn = await request(
+        baseUrl,
+        `/api/v2/children/${withdrawnFixture.childId}/consents/withdraw`,
+        {
+          method: 'POST',
+          userId: withdrawnFixture.adminId,
+          headers: {
+            'Idempotency-Key': idempotencyKey(withdrawnFixture, 'read-model-withdraw')
+          },
+          body: {
+            reauthAssertion: withdrawReauth.body.reauthAssertion,
+            expectedRevision: 1
+          }
+        }
+      );
+      assert.equal(withdrawn.response.status, 200);
+
+      setEnrollmentGates(false);
+      const afterWithdrawal = await request(baseUrl, '/api/v2/children', {
+        userId: withdrawnFixture.adminId
+      });
+      assert.equal(afterWithdrawal.response.status, 200);
+      assert.equal(afterWithdrawal.body.children.length, 1);
+      assert.equal(afterWithdrawal.body.children[0].latestConsent.status, 'withdrawn');
+      assert.deepEqual(afterWithdrawal.body.children[0].privacyState, {
+        status: 'processing_blocked',
+        revision: 2,
+        updatedAt: afterWithdrawal.body.children[0].privacyState.updatedAt
+      });
+
+      setEnrollmentGates(true);
+      await recordFixtureConsent(baseUrl, supersededFixture, {
+        label: 'superseded-read-model-consent'
+      });
+      const active = repositories.guardianConsents.findActiveConsent({
+        familyId: supersededFixture.familyId,
+        childId: supersededFixture.childId,
+        guardianId: supersededFixture.adminId
+      });
+      const supersededAt = new Date(Date.parse(active.updatedAt) + 1).toISOString();
+      const superseded = repositories.guardianConsents.supersedeConsent({
+        familyId: supersededFixture.familyId,
+        consentId: active.id,
+        expectedLifecycleRevision: active.lifecycleRevision,
+        supersededAt,
+        updatedAt: supersededAt
+      });
+      assert.equal(superseded.status, 'superseded');
+
+      const afterSuperseded = await request(baseUrl, '/api/v2/children', {
+        userId: supersededFixture.adminId
+      });
+      assert.equal(afterSuperseded.response.status, 200);
+      assert.equal(afterSuperseded.body.children.length, 1);
+      assert.equal(afterSuperseded.body.children[0].latestConsent.id, active.id);
+      assert.equal(afterSuperseded.body.children[0].latestConsent.status, 'superseded');
+      assert.equal(afterSuperseded.body.children[0].latestConsent.version, 1);
+    });
+  } finally {
+    setEnrollmentGates(false);
+  }
 });
 
 test('存量 child 只有完整重新同意后才从 suspended 激活且不重复创建用户', async () => {

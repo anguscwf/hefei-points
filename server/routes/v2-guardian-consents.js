@@ -66,6 +66,20 @@ router.post('/v2/child-enrollments', endpoint(req => {
   });
 }));
 
+router.get('/v2/guardian-consent-operations/:operation', endpoint(req => service.getOperationStatus({
+  actor: requireAdultV2(req),
+  operation: String(req.params.operation || ''),
+  idempotencyKey: req.get('Idempotency-Key'),
+  query: req.query,
+  body: req.body
+})));
+
+router.get('/v2/children', endpoint(req => service.listChildren({
+  actor: requireAdultV2(req),
+  query: req.query,
+  body: req.body
+})));
+
 router.get('/v2/children/:id/consents', endpoint(req => service.listConsents({
   actor: requireAdultV2(req),
   childId: childId(req)

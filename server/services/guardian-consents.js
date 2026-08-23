@@ -13,6 +13,10 @@ const { isPlainObject } = require('../lib/validation');
 const REAUTH_TTL_MS = 5 * 60 * 1000;
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{16,128}$/;
 const CHILD_ALIAS_CONTROL = /[\u0000-\u001f\u007f]/;
+const RECOVERABLE_OPERATIONS = new Map([
+  ['child-enrollment', 'child_enrollment'],
+  ['child-consent', 'child_consent']
+]);
 
 function sha256(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
@@ -325,6 +329,65 @@ function serializeConsent(row) {
 
 function serializePrivacyState(row) {
   return { status: row.status, revision: row.revision, updatedAt: row.updatedAt };
+}
+
+function validateEmptyRead({ query, body }) {
+  if (body !== undefined) {
+    if (!isPlainObject(body)) fail(400, 'VALIDATION_ERROR', '请求体格式错误');
+    const bodyField = Object.keys(body)[0];
+    if (bodyField) fail(400, 'VALIDATION_ERROR', '只读接口不接受请求体', bodyField);
+  }
+  if (!isPlainObject(query || {})) fail(400, 'VALIDATION_ERROR', '查询参数格式错误');
+  const queryField = Object.keys(query || {})[0];
+  if (queryField) fail(400, 'VALIDATION_ERROR', '查询参数不受支持', queryField);
+}
+
+function listChildren({ actor, query, body }) {
+  validateEmptyRead({ query, body });
+  const children = repositories.guardianConsents.listHistoricalGuardianChildren({
+    familyId: actor.familyId,
+    guardianId: actor.id
+  });
+  return {
+    success: true,
+    children: children.map(entry => ({
+      child: {
+        id: entry.child.id,
+        alias: entry.child.alias
+      },
+      privacyState: serializePrivacyState(entry.privacyState),
+      latestConsent: {
+        id: entry.latestConsent.id,
+        version: entry.latestConsent.version,
+        status: entry.latestConsent.status,
+        verifiedAt: entry.latestConsent.verifiedAt,
+        updatedAt: entry.latestConsent.updatedAt
+      }
+    }))
+  };
+}
+
+function getOperationStatus({ actor, operation, idempotencyKey, query, body }) {
+  validateEmptyRead({ query, body });
+  const storedOperation = RECOVERABLE_OPERATIONS.get(operation);
+  if (!storedOperation) {
+    fail(404, 'GUARDIAN_OPERATION_NOT_FOUND', '监护授权操作不存在');
+  }
+  const keyHash = normalizeIdempotencyKey(idempotencyKey);
+  const record = repositories.guardianConsents.findIdempotency({
+    familyId: actor.familyId,
+    actorUserId: actor.id,
+    operation: storedOperation,
+    idempotencyKey: keyHash
+  });
+  return {
+    success: true,
+    guardianConsentOperation: {
+      operation,
+      status: record ? record.status : 'not_found',
+      ...(record && record.completedAt ? { completedAt: record.completedAt } : {})
+    }
+  };
 }
 
 function buildConsentResult(db, familyId, consentId, {
@@ -640,6 +703,8 @@ module.exports = {
   publicLegalTexts,
   issueReauthAssertion,
   enrollChild,
+  getOperationStatus,
+  listChildren,
   listConsents,
   recordConsent,
   withdrawConsent,

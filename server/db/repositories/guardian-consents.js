@@ -449,6 +449,68 @@ function listActiveGuardianChildIds(input, db = getDb()) {
   `).all(input.familyId, input.guardianId).map(row => row.child_id);
 }
 
+function listHistoricalGuardianChildren(input, db = getDb()) {
+  return db.prepare(`
+    SELECT child.id AS child_id,
+           child.name AS child_alias,
+           privacy.status AS privacy_status,
+           privacy.revision AS privacy_revision,
+           privacy.updated_at AS privacy_updated_at,
+           consent.id AS consent_id,
+           consent.consent_version,
+           consent.status AS consent_status,
+           consent.verified_at AS consent_verified_at,
+           consent.updated_at AS consent_updated_at
+    FROM guardian_consents AS consent
+    JOIN users AS guardian
+      ON guardian.family_id = consent.family_id
+     AND guardian.id = consent.guardian_id
+     AND guardian.role IN ('admin', 'parent')
+    JOIN users AS child
+      ON child.family_id = consent.family_id
+     AND child.id = consent.child_id
+     AND child.role = 'child'
+    JOIN child_privacy_states AS privacy
+      ON privacy.family_id = consent.family_id
+     AND privacy.child_id = consent.child_id
+    WHERE guardian.family_id = ?
+      AND guardian.id = ?
+      AND consent.status IN ('active', 'withdrawn', 'superseded')
+      AND consent.verified_at IS NOT NULL
+      AND consent.verified_at <> ''
+      AND json_extract(consent.consent_scope_json, '$.childProfile') = 1
+      AND json_extract(consent.visibility_scope_json, '$.guardian') = 'full'
+      AND consent.consent_version = (
+        SELECT MAX(latest.consent_version)
+        FROM guardian_consents AS latest
+        WHERE latest.family_id = consent.family_id
+          AND latest.child_id = consent.child_id
+          AND latest.guardian_id = consent.guardian_id
+          AND latest.status IN ('active', 'withdrawn', 'superseded')
+          AND latest.verified_at IS NOT NULL
+          AND latest.verified_at <> ''
+      )
+    ORDER BY child.id
+  `).all(input.familyId, input.guardianId).map(row => ({
+    child: {
+      id: row.child_id,
+      alias: row.child_alias
+    },
+    privacyState: {
+      status: row.privacy_status,
+      revision: Number(row.privacy_revision),
+      updatedAt: row.privacy_updated_at
+    },
+    latestConsent: {
+      id: row.consent_id,
+      version: Number(row.consent_version),
+      status: row.consent_status,
+      verifiedAt: row.consent_verified_at,
+      updatedAt: row.consent_updated_at
+    }
+  }));
+}
+
 function hasOutstandingWithdrawalHold(input, db = getDb()) {
   return Boolean(db.prepare(`
     SELECT 1
@@ -493,6 +555,7 @@ module.exports = {
   findActiveConsent,
   listGuardianConsents,
   listActiveGuardianChildIds,
+  listHistoricalGuardianChildren,
   hasOutstandingWithdrawalHold,
   findChildInFamily
 };

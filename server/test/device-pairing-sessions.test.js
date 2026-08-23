@@ -407,6 +407,21 @@ test('设备配对要求 Harmony 与 device 双门，且不会开启 legacy 儿�
   enableAllGates();
   const created = await createPairing(fixture);
   assert.equal(created.pairing.childId, fixture.children[0].id);
+  process.env.DEVICE_PAIRING_ENABLED = 'false';
+  const replayWhileClosed = await request('/api/v2/device-pairings', {
+    method: 'POST', userId: fixture.adminId, idempotency: created.idempotency,
+    body: { childId: fixture.children[0].id }
+  });
+  assert.equal(replayWhileClosed.response.status, 200);
+  assert.equal(replayWhileClosed.body.pairing.id, created.pairing.id);
+  assert.equal(replayWhileClosed.body.shortCode, created.shortCode);
+  const newWhileClosed = await request('/api/v2/device-pairings', {
+    method: 'POST', userId: fixture.adminId,
+    idempotency: idempotencyKey('gate-new-while-closed'),
+    body: { childId: fixture.children[0].id }
+  });
+  assertApiError(newWhileClosed, 403, 'FEATURE_DISABLED');
+  enableAllGates();
 });
 
 test('完整配对只持久化摘要，幂等重放不增行且设备 Access 固定作用域', async () => {
@@ -425,6 +440,15 @@ test('完整配对只持久化摘要，幂等重放不增行且设备 Access 固
   const device = createDevice('hashes');
   const claimKey = idempotencyKey('hash-claim');
   const claimed = await claimPairing(created, device, claimKey);
+  const createReplayAfterClaim = await request('/api/v2/device-pairings', {
+    method: 'POST', userId: fixture.adminId, idempotency: createKey,
+    body: { childId: fixture.children[0].id }
+  });
+  assert.equal(createReplayAfterClaim.response.status, 200);
+  assert.equal(createReplayAfterClaim.body.pairing.status, 'claimed');
+  assert.equal(createReplayAfterClaim.body.pairing.claimedDevice.alias, device.alias);
+  assert.equal(createReplayAfterClaim.body.shortCode, created.shortCode);
+  assert.equal(createReplayAfterClaim.body.pairingChallenge, created.pairingChallenge);
   const claimReplay = await request('/api/v2/device-pairings/claim-by-code', {
     method: 'POST', idempotency: claimKey, body: claimed.requestBody
   });
@@ -1159,6 +1183,47 @@ test('功能门关闭仍可撤销设备，旧 Access/Refresh 立即失效且响�
   assert.deepEqual(repositories.deviceSessions.listSessionsForBinding({
     bindingId: completed.device.id
   }).map(item => item.status), ['revoked']);
+});
+
+test('撤销未完成绑定会原子取消配对，同键恢复不返秘密且旧 challenge 不能确认', async () => {
+  const fixture = await createAuthorizedFamily();
+  const device = createDevice('pending-revoke');
+  const created = await createPairing(fixture);
+  await claimPairing(created, device);
+  const current = await request(`/api/v2/device-pairings/${created.pairing.id}`, {
+    userId: fixture.adminId
+  });
+  assert.equal(current.body.pairing.status, 'claimed');
+  const binding = current.body.pairing.claimedDevice;
+  const revoked = await request(`/api/v2/devices/${binding.id}`, {
+    method: 'DELETE', userId: fixture.adminId,
+    idempotency: idempotencyKey('pending-binding-revoke'),
+    body: { expectedRevision: binding.revision }
+  });
+  assert.equal(revoked.response.status, 200);
+  assert.equal(revoked.body.device.status, 'revoked');
+  assert.equal(repositories.deviceSessions.findPairingById({
+    pairingId: created.pairing.id
+  }).status, 'cancelled');
+
+  const replay = await request('/api/v2/device-pairings', {
+    method: 'POST', userId: fixture.adminId, idempotency: created.idempotency,
+    body: { childId: fixture.children[0].id }
+  });
+  assert.equal(replay.response.status, 200);
+  assert.equal(replay.body.pairing.status, 'cancelled');
+  assert.equal(Object.hasOwn(replay.body, 'shortCode'), false);
+  assert.equal(Object.hasOwn(replay.body, 'pairingChallenge'), false);
+
+  const confirm = await request(`/api/v2/device-pairings/${created.pairing.id}/confirm`, {
+    method: 'POST', userId: fixture.adminId,
+    idempotency: idempotencyKey('cancelled-pairing-confirm'),
+    body: {
+      expectedRevision: current.body.pairing.revision,
+      pairingChallenge: created.pairingChallenge
+    }
+  });
+  assertApiError(confirm, 409, 'REVISION_CONFLICT');
 });
 
 test('会话撤销按家庭与授权隔离、幂等撤销整组且不影响兄弟姐妹', async () => {

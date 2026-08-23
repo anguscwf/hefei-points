@@ -191,8 +191,23 @@ function parentPairingResult(pairing, { includeSecrets = false } = {}) {
   return result;
 }
 
+function expireParentPairingIfNeeded(db, pairing, now) {
+  const nowIso = iso(now);
+  if (pairing && ['pending', 'claimed', 'confirmed'].includes(pairing.status)
+      && pairing.expiresAt <= nowIso) {
+    repositories.deviceSessions.expirePairing({
+      pairingId: pairing.id,
+      updatedAt: nowIso
+    }, db);
+    return repositories.deviceSessions.findPairingById({
+      pairingId: pairing.id,
+      familyId: pairing.familyId
+    }, db);
+  }
+  return pairing;
+}
+
 function createPairing({ actor, body, idempotencyKey, now = new Date() }) {
-  assertPairingEnabled();
   requireObject(body);
   const childId = requireText(body.childId, { field: 'childId', pattern: CHILD_ID, max: 64 });
   const keyHash = normalizeIdempotencyKey(idempotencyKey);
@@ -202,15 +217,26 @@ function createPairing({ actor, body, idempotencyKey, now = new Date() }) {
       actor, operation: 'device_pairing_create', keyHash, requestFingerprint
     });
     if (replay) {
-      const pairing = repositories.deviceSessions.findPairingById({
+      let pairing = repositories.deviceSessions.findPairingById({
         pairingId: replay.resourceId,
         familyId: actor.familyId
       }, db);
-      if (!pairing || pairing.revision !== replay.resultRevision) {
-        fail(409, 'IDEMPOTENCY_REPLAY_STALE', '幂等结果对应的配对状态已经变化');
+      if (!pairing || pairing.childId !== childId) {
+        fail(409, 'IDEMPOTENCY_REPLAY_STALE', '幂等结果对应的配对记录已经变化');
       }
-      return { status: 200, body: parentPairingResult(pairing, { includeSecrets: true }) };
+      pairing = expireParentPairingIfNeeded(db, pairing, now);
+      const claimedBinding = pairing.status === 'claimed'
+        ? repositories.deviceSessions.findBindingByPairingId({ pairingId: pairing.id }, db)
+        : null;
+      const recoverable = pairing.status === 'pending'
+        || (pairing.status === 'claimed' && claimedBinding && claimedBinding.status === 'pending');
+      if (recoverable) activeGuardianChild(db, actor, childId);
+      return {
+        status: 200,
+        body: parentPairingResult(pairing, { includeSecrets: recoverable })
+      };
     }
+    assertPairingEnabled();
     const { consent } = activeGuardianChild(db, actor, childId);
     const idempotencyId = startParentIdempotency(db, {
       actor, operation: 'device_pairing_create', keyHash, requestFingerprint, now
@@ -252,21 +278,23 @@ function createPairing({ actor, body, idempotencyKey, now = new Date() }) {
   });
 }
 
-function getPairing({ actor, pairingId }) {
+function getPairing({ actor, pairingId, now = new Date() }) {
   const id = requireText(pairingId, { field: 'pairingId', pattern: RESOURCE_ID, max: 128 });
-  const db = getDb();
-  const pairing = repositories.deviceSessions.findPairingById({
-    pairingId: id,
-    familyId: actor.familyId
-  }, db);
-  if (!pairing || pairing.issuedByGuardianId !== actor.id) {
-    fail(404, 'PAIRING_NOT_FOUND', '设备配对不存在');
-  }
-  activeGuardianChild(db, actor, pairing.childId);
-  const binding = pairing.claimedDeviceBindingId
-    ? repositories.deviceSessions.findBindingById({ bindingId: pairing.claimedDeviceBindingId }, db)
-    : null;
-  return { success: true, pairing: serializePairing(pairing, binding) };
+  return inTransaction(db => {
+    let pairing = repositories.deviceSessions.findPairingById({
+      pairingId: id,
+      familyId: actor.familyId
+    }, db);
+    if (!pairing || pairing.issuedByGuardianId !== actor.id) {
+      fail(404, 'PAIRING_NOT_FOUND', '设备配对不存在');
+    }
+    pairing = expireParentPairingIfNeeded(db, pairing, now);
+    activeGuardianChild(db, actor, pairing.childId);
+    const binding = pairing.claimedDeviceBindingId
+      ? repositories.deviceSessions.findBindingById({ bindingId: pairing.claimedDeviceBindingId }, db)
+      : null;
+    return { success: true, pairing: serializePairing(pairing, binding) };
+  });
 }
 
 function proofResult(challenge, binding, claimToken) {
@@ -572,6 +600,10 @@ function confirmPairing({ actor, pairingId, body, idempotencyKey, now = new Date
     }
     if (pairing.status !== 'claimed' || pairing.revision !== expectedRevision) {
       fail(409, 'REVISION_CONFLICT', '配对状态已变化');
+    }
+    const claimedBinding = repositories.deviceSessions.findBindingByPairingId({ pairingId: id }, db);
+    if (!claimedBinding || claimedBinding.status !== 'pending') {
+      fail(409, 'REVISION_CONFLICT', '设备绑定状态已变化');
     }
     const idempotencyId = startParentIdempotency(db, {
       actor, operation: 'device_pairing_confirm', keyHash, requestFingerprint, now
