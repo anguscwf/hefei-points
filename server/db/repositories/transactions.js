@@ -22,14 +22,16 @@ function insert(record, db = getDb()) {
     ...record,
     note: record.note || '',
     ruleId: record.ruleId || null,
-    categoryId: record.categoryId || null
+    categoryId: record.categoryId || null,
+    sourceType: record.sourceType || null,
+    sourceId: record.sourceId || null
   };
   db.prepare(`
     INSERT INTO transactions(
       id, family_id, occurred_at, kid_id, kid_name, amount, reason, operator, note,
-      rule_id, category_id
+      rule_id, category_id, source_type, source_id
     )
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     stored.id,
     stored.familyId,
@@ -41,9 +43,23 @@ function insert(record, db = getDb()) {
     stored.operator,
     stored.note,
     stored.ruleId,
-    stored.categoryId
+    stored.categoryId,
+    stored.sourceType,
+    stored.sourceId
   );
-  return stored;
+  return {
+    id: stored.id,
+    familyId: stored.familyId,
+    time: stored.time,
+    kid: stored.kid,
+    kidName: stored.kidName,
+    amount: stored.amount,
+    reason: stored.reason,
+    operator: stored.operator,
+    note: stored.note,
+    ruleId: stored.ruleId,
+    categoryId: stored.categoryId
+  };
 }
 
 function listByFamily(familyId, kid, limit = 50) {

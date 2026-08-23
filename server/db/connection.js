@@ -121,6 +121,10 @@ function getDb() {
   fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
   database = new DatabaseSync(DB_FILE);
   database.exec('PRAGMA foreign_keys = ON');
+  // INSERT OR REPLACE internally deletes conflicting rows. Recursive trigger
+  // delivery is required so immutable consent/session/request/ledger evidence
+  // cannot bypass their no-delete guards through REPLACE.
+  database.exec('PRAGMA recursive_triggers = ON');
   database.exec('PRAGMA journal_mode = WAL');
   database.exec('PRAGMA synchronous = FULL');
   database.exec('PRAGMA busy_timeout = 5000');
@@ -148,11 +152,27 @@ function inTransaction(work) {
   }
 }
 
+function inReadTransaction(work) {
+  const db = getDb();
+  // DEFERRED pins a consistent snapshot on the first read without taking the
+  // reserved writer lock used by state-changing operations.
+  db.exec('BEGIN DEFERRED');
+  try {
+    const result = work(db);
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 module.exports = {
   DATA_DIR,
   DB_FILE,
   getDb,
   closeDb,
   inTransaction,
+  inReadTransaction,
   validateProductionMigrationBackup
 };

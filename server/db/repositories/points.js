@@ -54,27 +54,72 @@ function getChildPoints(familyId, childId) {
   return row ? { [childId]: Number(row.balance || 0) } : {};
 }
 
-function changePoints({ familyId, kid, kidName, amount, reason, operator, note, ruleId = null, categoryId = null }) {
-  return inTransaction(db => {
-    assertChildProcessingAllowed(db, familyId, kid);
-    const beforeBalance = Number(db.prepare('SELECT balance FROM point_accounts WHERE family_id = ? AND kid_id = ?').get(familyId, kid)?.balance || 0);
+function changePointsInTransaction(db, {
+  familyId,
+  kid,
+  kidName,
+  amount,
+  reason,
+  operator,
+  note,
+  ruleId = null,
+  categoryId = null,
+  transactionId = crypto.randomUUID(),
+  occurredAt = new Date().toLocaleString('zh-CN', { hour12: false }),
+  sourceType = null,
+  sourceId = null,
+  requireExistingAccount = false
+}) {
+  assertChildProcessingAllowed(db, familyId, kid);
+  const account = db.prepare(`
+    SELECT balance FROM point_accounts WHERE family_id = ? AND kid_id = ?
+  `).get(familyId, kid);
+  if (requireExistingAccount && !account) {
+    const error = new Error('儿童积分账户不完整');
+    error.code = 'CHILD_DATA_INCOMPLETE';
+    throw error;
+  }
+  const beforeBalance = Number(account && account.balance || 0);
+  if (requireExistingAccount) {
+    const updated = db.prepare(`
+      UPDATE point_accounts SET balance = balance + ?
+      WHERE family_id = ? AND kid_id = ?
+    `).run(amount, familyId, kid);
+    if (updated.changes !== 1) {
+      const error = new Error('儿童积分账户不完整');
+      error.code = 'CHILD_DATA_INCOMPLETE';
+      throw error;
+    }
+  } else {
     db.prepare(`
       INSERT INTO point_accounts(family_id, kid_id, balance) VALUES (?, ?, ?)
       ON CONFLICT(family_id, kid_id) DO UPDATE SET balance = point_accounts.balance + excluded.balance
     `).run(familyId, kid, amount);
+  }
 
-    const record = transactions.insert({
-      id: crypto.randomUUID(), familyId,
-      time: new Date().toLocaleString('zh-CN', { hour12: false }),
-      kid, kidName, amount, reason, operator, note: note || '',
-      ruleId: ruleId || null,
-      categoryId: categoryId || null
-    }, db);
+  const record = transactions.insert({
+    id: transactionId,
+    familyId,
+    time: occurredAt,
+    kid,
+    kidName,
+    amount,
+    reason,
+    operator,
+    note: note || '',
+    ruleId: ruleId || null,
+    categoryId: categoryId || null,
+    sourceType,
+    sourceId
+  }, db);
 
-    const rows = db.prepare('SELECT kid_id, balance FROM point_accounts WHERE family_id = ?').all(familyId);
-    const points = Object.fromEntries(rows.map(row => [row.kid_id, row.balance]));
-    return { points, record, beforeBalance, afterBalance: points[kid] };
-  });
+  const rows = db.prepare('SELECT kid_id, balance FROM point_accounts WHERE family_id = ?').all(familyId);
+  const points = Object.fromEntries(rows.map(row => [row.kid_id, row.balance]));
+  return { points, record, beforeBalance, afterBalance: points[kid] };
+}
+
+function changePoints(input) {
+  return inTransaction(db => changePointsInTransaction(db, input));
 }
 
 function listAccounts() { return getDb().prepare('SELECT family_id, kid_id, balance FROM point_accounts ORDER BY family_id, kid_id').all(); }
@@ -84,6 +129,7 @@ module.exports = {
   getGuardianPoints,
   getChildPoints,
   setBalance,
+  changePointsInTransaction,
   changePoints,
   listAccounts,
   assertChildProcessingAllowed

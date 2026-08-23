@@ -6,5 +6,6 @@ module.exports = {
   transactions: require('./transactions'),
   guardianConsents: require('./guardian-consents'),
   deviceSessions: require('./device-sessions'),
-  childSelf: require('./child-self')
+  childSelf: require('./child-self'),
+  pointRequests: require('./point-requests')
 };

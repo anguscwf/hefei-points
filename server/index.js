@@ -35,6 +35,7 @@ function createApp() {
   app.use('/api', require('./routes/v2-guardian-consents'));
   app.use('/api', require('./routes/v2-device-pairing-sessions'));
   app.use('/api', require('./routes/v2-child-self'));
+  app.use('/api', require('./routes/v2-point-requests'));
 
   app.use((req, res) => {
     const v2 = req.originalUrl.split('?')[0].startsWith('/api/v2/');
