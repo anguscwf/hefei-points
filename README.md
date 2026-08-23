@@ -9,6 +9,7 @@
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
 - HarmonyOS `0.1.0` 是技术诊断版本，只验证 ArkTS、HTTPS、存储、生命周期及签名链，不包含完整业务闭环。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
+- 阶段 1 已完成现有后端与小程序的代码级复用审计；下一项实施任务是先关闭旧接口的儿童数据暴露，再进入授权建档，详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
 - 本轮只建立本地 canonical 基线，不代表已部署、已上架或已清理远端历史。
 
 ## 目录
@@ -50,6 +51,7 @@ HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harm
 - [仓库工作规范](AGENTS.md)
 - [最新开发交接](docs/handoff/Codex-糖罐积分开发交接指令-20260820.md)
 - [HarmonyOS MVP 方案与推进计划](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)
+- [阶段 1 现有能力审计与首批实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)
 - [架构决策记录](docs/adr/README.md)
 - [2026-08-20 canonical 仓库基线记录](docs/baseline/2026-08-20-repository-baseline.md)
 - [历史规则界面优化方案](docs/product/规则界面优化方案-历史.md)

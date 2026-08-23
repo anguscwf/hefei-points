@@ -8,4 +8,4 @@
 
 - [ADR-0001：以 hefei-points 独立仓库作为唯一真源](0001-canonical-standalone-repository.md)
 - [ADR-0002：敏感数据与本地构建材料边界](0002-sensitive-data-and-build-boundaries.md)
-
+- [ADR-0003：阶段 1 采用安全前置的纵向切片](0003-stage1-security-first-vertical-slices.md)
