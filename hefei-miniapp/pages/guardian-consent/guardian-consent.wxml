@@ -1,0 +1,72 @@
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view class="page-container guardian-page {{themeClass}}">
+  <view class="card guardian-hero">
+    <text class="guardian-hero-title">{{mode === 'enroll' ? '监护授权与儿童建档' : '更新监护授权'}}</text>
+    <text class="guardian-hero-copy">先阅读四份独立文本，再完成账号验证与监护关系声明。儿童别名在最终同意前只保留于本页内存。</text>
+  </view>
+
+  <view wx:if="{{!previewEnabled}}" class="guardian-alert">新儿童流程仍处于合成家庭封闭预发布，普通用户入口尚未开放。你仍可阅读公开文本。</view>
+  <view wx:if="{{!isAdult}}" class="guardian-alert guardian-alert-danger">提交授权前请先使用成人账号登录。</view>
+  <view wx:if="{{errorText}}" class="guardian-alert guardian-alert-danger">{{errorText}}</view>
+  <view wx:if="{{successText}}" class="guardian-alert guardian-alert-success">{{successText}}</view>
+  <button wx:if="{{reconcileRequired}}" class="btn btn-outline guardian-btn-full" bindtap="goReview">返回家庭与隐私核对</button>
+
+  <view class="card">
+    <text class="guardian-section-title">1. 儿童与监护关系</text>
+    <text class="guardian-section-copy">MVP 不采集身份证件影像；别名不是身份主键。</text>
+    <view class="guardian-field" wx:if="{{mode === 'enroll'}}">
+      <text class="guardian-label">儿童别名</text>
+      <input class="guardian-input" maxlength="30" disabled="{{submitting || canRetry || reconcileRequired}}" value="{{alias}}" placeholder="仅填写家庭内使用的别名" bindinput="onAliasInput" />
+    </view>
+    <view class="guardian-field" wx:else>
+      <text class="guardian-label">儿童</text>
+      <view class="guardian-input">{{childAlias}}</view>
+    </view>
+    <view class="guardian-field">
+      <text class="guardian-label">监护关系</text>
+      <picker range="{{relations}}" range-key="label" value="{{relationIndex}}" disabled="{{submitting || canRetry || reconcileRequired}}" bindchange="onRelationChange">
+        <view class="guardian-picker">{{relations[relationIndex].label}} ›</view>
+      </picker>
+    </view>
+    <checkbox-group bindchange="onRelationAccepted">
+      <label class="guardian-check-row">
+        <checkbox class="guardian-check" value="accepted" checked="{{relationAccepted}}" disabled="{{submitting || canRetry || reconcileRequired}}" color="#B86932" />
+        <view class="guardian-check-copy">
+          <text class="guardian-check-title">我确认具备代表该儿童作出决定的法定监护关系</text>
+          <text class="guardian-check-meta">版本 {{relationVersion || '待加载'}}</text>
+          <text class="guardian-link" data-key="guardianRelationDeclaration" catchtap="openLegal">查看关系声明</text>
+        </view>
+      </label>
+    </checkbox-group>
+  </view>
+
+  <view class="card">
+    <text class="guardian-section-title">2. 分别阅读并明确同意</text>
+    <text class="guardian-section-copy">四项必须分别确认；版本与摘要直接采用服务端当前公开证据。</text>
+    <view wx:if="{{loading}}" class="guardian-empty">正在读取公开法律文本…</view>
+    <block wx:else>
+      <checkbox-group wx:for="{{legalItems}}" wx:key="key" data-key="{{item.key}}" bindchange="onLegalAccepted">
+        <label class="guardian-check-row">
+          <checkbox class="guardian-check" value="accepted" checked="{{item.accepted}}" disabled="{{submitting || canRetry || reconcileRequired}}" color="#B86932" />
+          <view class="guardian-check-copy">
+            <text class="guardian-check-title">我已阅读并同意《{{item.title}}》</text>
+            <text class="guardian-check-meta">版本 {{item.version || '待加载'}} · 摘要 {{item.shaShort}}</text>
+            <text class="guardian-link" data-key="{{item.key}}" catchtap="openLegal">查看公开文本</text>
+          </view>
+        </label>
+      </checkbox-group>
+    </block>
+  </view>
+
+  <view class="card">
+    <text class="guardian-section-title">3. 验证账号并提交</text>
+    <text class="guardian-section-copy">密码仅用于本次重新认证，不会保存在本机。</text>
+    <view class="guardian-field">
+      <text class="guardian-label">当前成人账号密码</text>
+      <input class="guardian-input" password="true" maxlength="128" disabled="{{submitting || canRetry || reconcileRequired}}" value="{{password}}" placeholder="输入后立即用于本次验证" bindinput="onPasswordInput" />
+    </view>
+    <button class="btn btn-primary guardian-btn-full {{(!canSubmit && !canRetry) ? 'guardian-btn-disabled' : ''}}" disabled="{{reconcileRequired || submitting || (!canSubmit && !canRetry)}}" loading="{{submitting}}" bindtap="submit">{{submitting ? '正在安全提交' : (canRetry ? '重试同一次提交' : (mode === 'enroll' ? '同意并创建儿童档案' : '同意并更新授权'))}}</button>
+  </view>
+
+  <text class="guardian-footer-note">正式法律文本、PIPIA 与存量数据整改完成前，儿童生产功能门保持关闭。</text>
+</view>

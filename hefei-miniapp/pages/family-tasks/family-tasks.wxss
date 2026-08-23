@@ -1,0 +1,2 @@
+@import "../../guardian.wxss";
+.modal-box { box-sizing: border-box; }

@@ -94,6 +94,37 @@
     </view>
 
     <!-- 管理后台入口 -->
+    <view class="card menu-card" wx:if="{{isAdult}}" bindtap="goFamilyPrivacy">
+      <view class="menu-row">
+        <view class="menu-icon"><ui-icon name="family-heart" size="38" theme="{{theme}}" /></view>
+        <text class="menu-text">家庭与隐私</text>
+        <text class="menu-arrow">→</text>
+      </view>
+      <text class="menu-desc">监护授权 · 儿童资料权利 · 处理回执</text>
+    </view>
+
+    <view class="guardian-preview-note" wx:if="{{isAdult && guardianPreviewEnabled}}">合成家庭封闭预发布</view>
+
+    <view class="card menu-card" wx:if="{{isAdult && guardianPreviewEnabled}}" bindtap="goFamilyTasks">
+      <view class="menu-row">
+        <view class="menu-icon"><ui-icon name="clipboard" size="38" theme="{{theme}}" /></view>
+        <text class="menu-text">家庭待办箱</text>
+        <text wx:if="{{guardianTaskCount}}" class="guardian-task-count">{{guardianTaskCount}}</text>
+        <text class="menu-arrow">→</text>
+      </view>
+      <text class="menu-desc">退回补充 · 调分通过 · 驳回</text>
+    </view>
+
+    <view class="card menu-card" wx:if="{{isAdult && guardianPreviewEnabled}}" bindtap="goDeviceManagement">
+      <view class="menu-row">
+        <view class="menu-icon"><ui-icon name="settings" size="38" theme="{{theme}}" /></view>
+        <text class="menu-text">儿童设备</text>
+        <text class="menu-arrow">→</text>
+      </view>
+      <text class="menu-desc">一次性配对码 · 家长二次确认 · 会话撤销</text>
+    </view>
+
+    <!-- 管理后台入口 -->
     <view class="card menu-card" wx:if="{{isAdmin}}" bindtap="goAdmin">
       <view class="menu-row">
         <view class="menu-icon"><ui-icon name="settings" size="38" theme="{{theme}}" /></view>
@@ -104,6 +135,21 @@
     </view>
 
   </block>
+
+  <view class="card menu-card">
+    <view class="menu-row">
+      <view class="menu-icon"><ui-icon name="clipboard" size="38" theme="{{theme}}" /></view>
+      <text class="menu-text">公开法律与隐私文本</text>
+    </view>
+    <text class="menu-desc">无需登录，随时查阅当前公开版本</text>
+    <view class="guardian-legal-links">
+      <text class="hint-link" data-type="privacyPolicy" bindtap="openLegal">隐私政策</text>
+      <text class="hint-link" data-type="childPersonalInformationRules" bindtap="openLegal">儿童个人信息保护规则</text>
+      <text class="hint-link" data-type="childUserAgreement" bindtap="openLegal">儿童用户协议</text>
+      <text class="hint-link" data-type="sensitiveInformationNotice" bindtap="openLegal">敏感信息告知</text>
+      <text class="hint-link" data-type="guardianRelationDeclaration" bindtap="openLegal">监护关系声明</text>
+    </view>
+  </view>
 
   <!-- 版本与备案信息始终位于页面底部 -->
   <view class="app-footer">

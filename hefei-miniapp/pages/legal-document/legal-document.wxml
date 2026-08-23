@@ -1,0 +1,10 @@
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view wx:if="{{loading || errorText}}" class="page-container guardian-page {{themeClass}}">
+  <view class="card">
+    <text class="guardian-section-title">{{title}}</text>
+    <view wx:if="{{loading}}" class="guardian-empty">正在读取服务端当前公开版本…</view>
+    <view wx:if="{{errorText}}" class="guardian-alert guardian-alert-danger">{{errorText}}</view>
+    <button wx:if="{{errorText}}" class="btn btn-outline guardian-btn-full" bindtap="loadDocument">重新加载</button>
+  </view>
+</view>
+<web-view wx:if="{{publicUrl}}" src="{{publicUrl}}"></web-view>

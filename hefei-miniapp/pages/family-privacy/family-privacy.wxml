@@ -1,0 +1,156 @@
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view class="page-container guardian-page {{themeClass}}">
+  <view class="card guardian-hero">
+    <text class="guardian-hero-title">家庭与隐私</text>
+    <text class="guardian-hero-copy">查看本人监护授权、儿童隐私状态与处理回执。撤回、删除和终止服务入口不会因普通功能门关闭而隐藏。</text>
+  </view>
+
+  <view wx:if="{{!isAdult}}" class="guardian-alert guardian-alert-danger">请先使用成人账号登录。客户端角色仅控制界面，最终范围由服务端校验。</view>
+  <view wx:if="{{errorText}}" class="guardian-alert guardian-alert-danger">{{errorText}}</view>
+  <view wx:if="{{successText}}" class="guardian-alert guardian-alert-success">{{successText}}</view>
+  <view wx:if="{{reviewText}}" class="guardian-alert guardian-alert-danger">{{reviewText}}</view>
+  <button wx:if="{{enrollmentReviewRequired}}" class="btn btn-outline guardian-btn-full" loading="{{loading}}" disabled="{{loading || operating}}" bindtap="loadChildren">重新核对服务端状态</button>
+
+  <block wx:if="{{isAdult}}">
+    <view class="card">
+      <view class="guardian-row">
+        <view class="guardian-row-main">
+          <text class="guardian-section-title">本人可行权儿童</text>
+          <text class="guardian-section-copy">包含本人曾完成授权、后来撤回或更新过授权的儿童。</text>
+        </view>
+        <button wx:if="{{previewEnabled}}" class="btn btn-outline btn-sm" disabled="{{operating || canRetryAction || enrollmentReviewRequired}}" bindtap="goNewEnrollment">新增</button>
+      </view>
+      <view wx:if="{{loading && !children.length}}" class="guardian-empty">正在加载服务端状态…</view>
+      <view wx:elif="{{!children.length}}" class="guardian-empty">没有本人历史监护授权记录。新儿童流程尚未向普通用户开放。</view>
+      <picker wx:else range="{{children}}" range-key="alias" value="{{childIndex}}" disabled="{{operating || canRetryAction}}" bindchange="onChildChange">
+        <view class="guardian-picker mt-md">{{selectedChild.alias}} ›</view>
+      </picker>
+    </view>
+
+    <block wx:if="{{selectedChild}}">
+      <view class="card">
+        <view class="guardian-row">
+          <view class="guardian-row-main">
+            <text class="guardian-row-title">{{selectedChild.alias}}</text>
+            <text class="guardian-row-copy">服务端隐私状态版本 {{selectedChild.revision}} · {{selectedChild.updatedText}}</text>
+          </view>
+          <text class="guardian-badge {{selectedChild.privacyTone}}">{{selectedChild.privacyLabel}}</text>
+        </view>
+        <view class="guardian-actions">
+          <button wx:if="{{previewEnabled && selectedChild.canReconsent}}" class="btn btn-outline" disabled="{{operating || canRetryAction || enrollmentReviewRequired}}" bindtap="goReconsent">{{selectedChild.privacyState.status === 'active' ? '更新授权' : '重新授权'}}</button>
+          <button wx:if="{{previewEnabled && selectedChild.privacyState.status === 'active'}}" class="btn btn-outline" disabled="{{operating || canRetryAction}}" bindtap="goDevices">管理设备</button>
+        </view>
+      </view>
+
+      <view class="card">
+        <text class="guardian-section-title">本人授权记录</text>
+        <view wx:if="{{!consents.length && !loading}}" class="guardian-empty">没有可见授权记录。</view>
+        <view wx:for="{{consents}}" wx:key="id" class="guardian-list-item">
+          <view class="guardian-row">
+            <view class="guardian-row-main">
+              <text class="guardian-row-title">第 {{item.version}} 版监护授权</text>
+              <text class="guardian-row-copy">验证于 {{item.verifiedText}}</text>
+            </view>
+            <text class="guardian-badge {{item.tone}}">{{item.statusLabel}}</text>
+          </view>
+        </view>
+        <view wx:if="{{selectedChild.consent.status === 'active'}}" class="guardian-field">
+          <text class="guardian-label">撤回前验证成人账号密码</text>
+          <input class="guardian-input" password="true" maxlength="128" disabled="{{operating || canRetryAction}}" value="{{withdrawPassword}}" placeholder="仅用于本次重新认证" bindinput="onWithdrawPasswordInput" />
+          <button class="btn btn-outline guardian-btn-full danger" loading="{{operating}}" disabled="{{operating || canRetryAction}}" bindtap="startWithdrawal">撤回监护授权</button>
+        </view>
+      </view>
+
+      <view class="card">
+        <text class="guardian-section-title">儿童资料权利</text>
+        <text class="guardian-section-copy">查阅、导出和更正可能受封闭预发布功能门控制；删除和终止服务始终可提交。删除当前仅进入政策审查，不代表已经删除。</text>
+        <view class="guardian-field">
+          <text class="guardian-label">请求类型</text>
+          <picker range="{{rightsTypes}}" range-key="label" value="{{rightsTypeIndex}}" disabled="{{operating || canRetryAction}}" bindchange="onRightsTypeChange">
+            <view class="guardian-picker">{{rightsTypes[rightsTypeIndex].label}} ›</view>
+          </picker>
+        </view>
+        <view wx:if="{{currentRightsType === 'correct'}}" class="guardian-field">
+          <text class="guardian-label">新的儿童别名</text>
+          <input class="guardian-input" maxlength="30" disabled="{{operating || canRetryAction}}" value="{{correctionAlias}}" placeholder="历史记录快照不会被改写" bindinput="onCorrectionInput" />
+        </view>
+        <view class="guardian-field">
+          <text class="guardian-label">验证成人账号密码</text>
+          <input class="guardian-input" password="true" maxlength="128" disabled="{{operating || canRetryAction}}" value="{{rightsPassword}}" placeholder="仅用于本次重新认证" bindinput="onRightsPasswordInput" />
+        </view>
+        <button wx:if="{{canRetryAction}}" class="btn btn-primary guardian-btn-full" loading="{{operating}}" disabled="{{operating}}" bindtap="retryProtectedAction">重试同一次操作</button>
+        <button wx:if="{{canRetryAction}}" class="btn btn-outline guardian-btn-full" disabled="{{operating}}" bindtap="abandonProtectedRetry">放弃重试并刷新状态</button>
+        <button wx:else class="btn {{(currentRightsType === 'delete' || currentRightsType === 'terminate') ? 'btn-outline danger' : 'btn-primary'}} guardian-btn-full" loading="{{operating}}" disabled="{{operating}}" bindtap="startRightsRequest">提交{{rightsTypes[rightsTypeIndex].label}}请求</button>
+      </view>
+
+      <view wx:if="{{exportSummary}}" class="card">
+        <text class="guardian-section-title">本次完整资料快照</text>
+        <text class="guardian-section-copy">生成于 {{exportSummary.generatedText}}；以下按服务端导出契约逐字段展示，离开页面即清除。</text>
+        <view class="guardian-meta-grid">
+          <view class="guardian-meta"><text class="guardian-meta-label">儿童别名</text><text class="guardian-meta-value">{{exportSummary.childAlias}}</text></view>
+          <view class="guardian-meta"><text class="guardian-meta-label">隐私状态</text><text class="guardian-meta-value">{{exportSummary.privacyLabel}}</text></view>
+          <view class="guardian-meta"><text class="guardian-meta-label">积分余额</text><text class="guardian-meta-value">{{exportSummary.balance}}</text></view>
+          <view class="guardian-meta"><text class="guardian-meta-label">流水条数</text><text class="guardian-meta-value">{{exportSummary.transactionCount}}</text></view>
+          <view class="guardian-meta"><text class="guardian-meta-label">积分申请</text><text class="guardian-meta-value">{{exportSummary.requestCount}}</text></view>
+          <view class="guardian-meta"><text class="guardian-meta-label">设备绑定</text><text class="guardian-meta-value">{{exportSummary.deviceCount}}</text></view>
+        </view>
+        <view wx:for="{{exportSections}}" wx:key="key" class="guardian-export-section">
+          <text class="guardian-label">{{item.title}}</text>
+          <text class="guardian-export-json" space="nbsp">{{item.json}}</text>
+        </view>
+      </view>
+
+      <view wx:if="{{rightsDetail}}" class="card">
+        <view class="guardian-row">
+          <view class="guardian-row-main">
+            <text class="guardian-section-title">{{rightsDetail.typeLabel}}处理详情</text>
+            <text class="guardian-row-copy">{{rightsDetail.statusLabel}} · {{rightsDetail.completedText}}</text>
+          </view>
+          <button class="btn btn-outline btn-xs" disabled="{{operating}}" bindtap="closeRightsDetail">关闭</button>
+        </view>
+        <view class="guardian-meta-grid">
+          <view class="guardian-meta"><text class="guardian-meta-label">留存决定</text><text class="guardian-meta-value">{{rightsDetail.retentionLabel}}</text></view>
+          <view wx:if="{{rightsDetail.receipt}}" class="guardian-meta"><text class="guardian-meta-label">回执代码</text><text class="guardian-meta-value guardian-mono">{{rightsDetail.receipt.code}}</text></view>
+          <view wx:if="{{rightsDetail.receipt}}" class="guardian-meta"><text class="guardian-meta-label">回执说明</text><text class="guardian-meta-value">{{rightsDetail.receipt.message}}</text></view>
+          <view wx:if="{{rightsDetail.deletion}}" class="guardian-meta"><text class="guardian-meta-label">删除处理状态</text><text class="guardian-meta-value">{{rightsDetail.deletion.status}} · {{rightsDetail.deletion.blockedReason || '无阻断原因'}}</text></view>
+        </view>
+        <view wx:for="{{rightsDetail.auditTrail}}" wx:key="revision" class="guardian-list-item">
+          <text class="guardian-row-title">{{item.eventType}}</text>
+          <text class="guardian-row-copy">{{item.statusText}} · 版本 {{item.revision}} · {{item.createdText}}</text>
+          <text class="guardian-row-copy guardian-mono">{{item.resultText}}</text>
+        </view>
+      </view>
+
+      <view class="card">
+        <text class="guardian-section-title">处理回执</text>
+        <view wx:if="{{!rightsRequests.length && !loading}}" class="guardian-empty">还没有本人提交的处理请求。</view>
+        <view wx:for="{{rightsRequests}}" wx:key="id" class="guardian-list-item">
+          <view class="guardian-row">
+            <view class="guardian-row-main">
+              <text class="guardian-row-title">{{item.typeLabel}}</text>
+              <text class="guardian-row-copy">{{item.requestedText}}</text>
+            </view>
+            <text class="guardian-badge {{item.tone}}">{{item.statusLabel}}</text>
+          </view>
+          <button class="btn btn-outline btn-sm guardian-btn-full" data-request-id="{{item.id}}" bindtap="openRightsDetail">查看处理详情</button>
+          <button wx:if="{{item.canReadExport}}" class="btn btn-outline btn-sm guardian-btn-full" data-request-id="{{item.id}}" data-child-id="{{item.childId}}" bindtap="readExport">{{item.readActionLabel}}</button>
+        </view>
+        <view wx:if="{{loadingMore}}" class="guardian-empty">正在加载更多…</view>
+        <button wx:if="{{nextCursor && !loadingMore}}" class="btn btn-outline guardian-btn-full" disabled="{{operating}}" bindtap="loadMoreRights">加载更多回执</button>
+      </view>
+    </block>
+
+  </block>
+
+  <view class="card">
+    <text class="guardian-section-title">公开文本</text>
+    <text class="guardian-section-copy">无需登录，可随时查阅当前公开版本。</text>
+    <view class="guardian-list-item"><text class="guardian-link" data-type="privacyPolicy" bindtap="openLegal">隐私政策</text></view>
+    <view class="guardian-list-item"><text class="guardian-link" data-type="childPersonalInformationRules" bindtap="openLegal">儿童个人信息保护规则</text></view>
+    <view class="guardian-list-item"><text class="guardian-link" data-type="childUserAgreement" bindtap="openLegal">儿童用户协议</text></view>
+    <view class="guardian-list-item"><text class="guardian-link" data-type="sensitiveInformationNotice" bindtap="openLegal">敏感个人信息单独告知</text></view>
+    <view class="guardian-list-item"><text class="guardian-link" data-type="guardianRelationDeclaration" bindtap="openLegal">监护关系声明</text></view>
+  </view>
+
+  <text class="guardian-footer-note">正式法律文本、PIPIA、逐类留存/删除策略、存量数据整改和发布审查完成前，不开启儿童生产功能门。</text>
+</view>

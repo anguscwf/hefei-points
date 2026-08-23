@@ -5,7 +5,12 @@
     "pages/report/report",
     "pages/mine/mine",
     "pages/admin/admin",
-    "pages/rule-history/rule-history"
+    "pages/rule-history/rule-history",
+    "pages/family-privacy/family-privacy",
+    "pages/guardian-consent/guardian-consent",
+    "pages/device-management/device-management",
+    "pages/family-tasks/family-tasks",
+    "pages/legal-document/legal-document"
   ],
   "darkmode": false,
   "window": {

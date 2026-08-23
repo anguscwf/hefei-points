@@ -163,7 +163,6 @@ Page({
     app.fetchAPI('/api/history/note', {
       method: 'POST',
       body: JSON.stringify({
-        token: app.globalData.token,
         recordId: detail.recordId,
         note: detail.note
       })

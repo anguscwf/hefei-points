@@ -220,7 +220,7 @@ Page({
     this.setData({ restoringId: selected.versionId });
     app.fetchAPI('/api/config/rules/history/' + encodeURIComponent(selected.versionId) + '/restore', {
       method: 'POST',
-      body: JSON.stringify({ token: app.globalData.token, revision: this.data.currentRevision })
+      body: JSON.stringify({ revision: this.data.currentRevision })
     }).then(function(result) {
       that.setData({ restoringId: '' });
       if (result.success) {

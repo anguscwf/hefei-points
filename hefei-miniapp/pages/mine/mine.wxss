@@ -271,6 +271,34 @@
   font-size: var(--font-sm);
   color: var(--muted);
 }
+.guardian-preview-note {
+  display: inline-block;
+  margin: 8rpx 0 16rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  background: var(--amber-light);
+  color: var(--amber-dark);
+  font-size: var(--font-xs);
+}
+.guardian-task-count {
+  min-width: 38rpx;
+  height: 38rpx;
+  padding: 0 10rpx;
+  border-radius: 999rpx;
+  background: var(--red);
+  color: #fff;
+  font-size: var(--font-xs);
+  font-weight: 800;
+  line-height: 38rpx;
+  text-align: center;
+}
+
+.guardian-legal-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18rpx 26rpx;
+  margin-top: 20rpx;
+}
 
 .app-footer {
   text-align: center;

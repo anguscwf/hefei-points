@@ -24,7 +24,7 @@
     <view class="welcome-logo"><ui-icon name="brand" size="112" theme="{{iconTheme}}" /></view>
     <text class="welcome-title">糖罐育儿积分</text>
     <text class="welcome-subtitle">把每一次好习惯，装进成长糖罐</text>
-    <button class="btn btn-primary wx-login-btn" loading="{{wxLoginLoading}}" disabled="{{wxLoginLoading}}" bindtap="onWxLogin">{{wxLoginLoading ? '登录中...' : '微信一键登录'}}</button>
+    <button class="btn btn-primary wx-login-btn" loading="{{wxLoginLoading}}" disabled="{{wxLoginLoading || credentialSubmitting}}" bindtap="onWxLogin">{{wxLoginLoading ? '登录中...' : '微信一键登录'}}</button>
     <text class="login-guide-link" bindtap="onOpenLoginGuide">第一次使用？查看 3 步登录说明</text>
   </view>
 
@@ -43,12 +43,12 @@
       <text class="bind-cancel" bindtap="onCancelWxBind">取消绑定</text>
     </view>
     <view class="login-bar">
-      <picker wx:if="{{userOptions.length > 0}}" class="user-picker" range="{{userOptions}}" range-key="name" value="{{selectedUserIdx}}" bindchange="onSelectUser">
+      <picker wx:if="{{userOptions.length > 0}}" class="user-picker" range="{{userOptions}}" range-key="name" value="{{selectedUserIdx}}" disabled="{{credentialSubmitting || wxLoginLoading}}" bindchange="onSelectUser">
         <view class="picker-display">{{selectedUserName || '选择用户'}}</view>
       </picker>
-      <input wx:else class="uid-input" placeholder="用户ID" value="{{manualUserId}}" bindinput="onUserIdInput" />
-      <input class="pwd-input" password="{{true}}" placeholder="密码" value="{{password}}" bindinput="onPwdInput" />
-      <button class="btn btn-outline btn-sm" bindtap="onLogin">登录</button>
+      <input wx:else class="uid-input" placeholder="用户ID" disabled="{{credentialSubmitting || wxLoginLoading}}" value="{{manualUserId}}" bindinput="onUserIdInput" />
+      <input class="pwd-input" password="{{true}}" placeholder="密码" disabled="{{credentialSubmitting || wxLoginLoading}}" value="{{password}}" bindinput="onPwdInput" />
+      <button class="btn btn-outline btn-sm" loading="{{credentialSubmitting}}" disabled="{{credentialSubmitting || wxLoginLoading}}" bindtap="onLogin">登录</button>
     </view>
   </view>
 

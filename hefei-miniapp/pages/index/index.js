@@ -22,6 +22,7 @@ Page({
     wxBindingTicket: '',
     showBind: false,
     wxLoginLoading: false,
+    credentialSubmitting: false,
     showLoginGuide: false,
 
     // 积分卡片
@@ -85,6 +86,8 @@ Page({
   },
 
   onLoad: function() {
+    this._alive = true;
+    this._credentialEpoch = 0;
     var savedPreference = wx.getStorageSync(RULE_CENTER_PREF_KEY) || {};
     var savedFilter = ['all', 'reward', 'punish', 'special'].indexOf(savedPreference.filter) >= 0
       ? savedPreference.filter
@@ -120,6 +123,29 @@ Page({
         }
       });
     }
+  },
+
+  onHide: function() {
+    this._credentialEpoch += 1;
+    this._clearLoginSecrets();
+  },
+
+  onUnload: function() {
+    this._alive = false;
+    this._credentialEpoch += 1;
+    this._clearLoginSecrets();
+  },
+
+  _clearLoginSecrets: function() {
+    if (!this.data) return;
+    this.setData({
+      password: '',
+      manualUserId: '',
+      wxBindingTicket: '',
+      showBind: false,
+      wxLoginLoading: false,
+      credentialSubmitting: false
+    });
   },
 
   // ========== 配置加载（带重试 · 页面级） ==========
@@ -383,11 +409,13 @@ Page({
 
   // ========== 登录 ==========
   onWxLogin: function() {
-    if (this.data.wxLoginLoading) return;
+    if (this.data.wxLoginLoading || this.data.credentialSubmitting) return;
     var that = this;
+    var credentialEpoch = this._credentialEpoch;
     this.setData({ wxLoginLoading: true });
     wx.login({
       success: function(loginRes) {
+        if (!that._alive || credentialEpoch !== that._credentialEpoch) return;
         if (!loginRes.code) {
           that.setData({ wxLoginLoading: false });
           wx.showToast({ title: '微信登录失败', icon: 'none' });
@@ -398,15 +426,13 @@ Page({
           method: 'POST',
           body: JSON.stringify({ code: loginRes.code })
         }).then(function(res) {
+          if (!that._alive || credentialEpoch !== that._credentialEpoch) return;
           wx.hideLoading();
           that.setData({ wxLoginLoading: false });
           if (res && res.success && res.token && res.user) {
             // 已绑定 → 直接登录
-            app.globalData.token = res.token;
-            app.globalData.user = res.user;
-            wx.setStorageSync('hefei_token', res.token);
-            wx.setStorageSync('hefei_user', JSON.stringify(res.user));
-            that.setData({ wxBindingTicket: '', showBind: false });
+            app.commitSession(res.token, res.user);
+            that.setData({ wxBindingTicket: '', showBind: false, password: '', manualUserId: '' });
             that.showToast('欢迎，' + res.user.name);
             app.loadData().then(function() { that._doRefreshState(); });
           } else if (res && res.success && res.isNew) {
@@ -421,12 +447,14 @@ Page({
             wx.showToast({ title: (res && res.message) || '登录失败', icon: 'none' });
           }
         }).catch(function() {
+          if (!that._alive || credentialEpoch !== that._credentialEpoch) return;
           wx.hideLoading();
           that.setData({ wxLoginLoading: false });
           wx.showToast({ title: '网络错误', icon: 'none' });
         });
       },
       fail: function() {
+        if (!that._alive || credentialEpoch !== that._credentialEpoch) return;
         that.setData({ wxLoginLoading: false });
         wx.showToast({ title: 'wx.login 调用失败', icon: 'none' });
       }
@@ -465,15 +493,19 @@ Page({
   },
 
   onPwdInput: function(e) {
+    if (this.data.wxLoginLoading || this.data.credentialSubmitting) return;
     this.setData({ password: e.detail.value });
   },
 
   onUserIdInput: function(e) {
+    if (this.data.wxLoginLoading || this.data.credentialSubmitting) return;
     this.setData({ manualUserId: String(e.detail.value || '').trim() });
   },
 
   onLogin: function() {
+    if (this.data.credentialSubmitting || this.data.wxLoginLoading) return;
     var that = this;
+    var credentialEpoch = this._credentialEpoch;
     var opts = this.data.userOptions;
     var selected = opts && opts[this.data.selectedUserIdx];
     var uid = selected ? selected.id : this.data.manualUserId;
@@ -486,18 +518,27 @@ Page({
       wx.showToast({ title: '请输入密码', icon: 'none' });
       return;
     }
-    var loginFn = this.data.wxBindingTicket
-      ? app.fetchAPI('/api/wx-bind', { method: 'POST', body: JSON.stringify({ bindingTicket: this.data.wxBindingTicket, userId: uid, password: pwd }) })
-      : app.login(uid, pwd);
+    var bindingTicket = this.data.wxBindingTicket;
+    var loginFn = bindingTicket
+      ? app.fetchAPI('/api/wx-bind', { method: 'POST', body: JSON.stringify({ bindingTicket: bindingTicket, userId: uid, password: pwd }) })
+      : app.fetchAPI('/api/auth', { method: 'POST', body: JSON.stringify({ userId: uid, password: pwd }) });
+    pwd = '';
+    bindingTicket = '';
+    this.setData({
+      credentialSubmitting: true,
+      password: '',
+      manualUserId: '',
+      wxBindingTicket: '',
+      showBind: false
+    });
     loginFn.then(function(res) {
+      if (!that._alive || credentialEpoch !== that._credentialEpoch) return;
+      that.setData({ credentialSubmitting: false });
       if (res && res.success && res.token) {
         // 保存登录态
-        app.globalData.token = res.token;
-        app.globalData.user = res.user;
-        wx.setStorageSync('hefei_token', res.token);
-        wx.setStorageSync('hefei_user', JSON.stringify(res.user));
+        app.commitSession(res.token, res.user);
         that.showToast('欢迎，' + res.user.name);
-        that.setData({ wxBindingTicket: '', showBind: false }); // 清除绑定状态
+        that.setData({ wxBindingTicket: '', showBind: false, password: '', manualUserId: '' });
         app.loadData().then(function() {
           that._doRefreshState();
         });
@@ -509,6 +550,8 @@ Page({
         wx.showToast({ title: msg, icon: 'none', duration: 2500 });
       }
     }).catch(function() {
+      if (!that._alive || credentialEpoch !== that._credentialEpoch) return;
+      that.setData({ credentialSubmitting: false });
       wx.showToast({ title: '登录异常，请重试', icon: 'none' });
     });
   },

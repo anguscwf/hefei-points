@@ -1,0 +1,72 @@
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view class="page-container guardian-page {{themeClass}}">
+  <view class="card guardian-hero">
+    <text class="guardian-hero-title">家庭待办箱</text>
+    <text class="guardian-hero-copy">集中查看孩子申报，按服务端当前状态退回补充、通过或驳回。另一位家长先处理时，本页不会覆盖结果。</text>
+  </view>
+
+  <view wx:if="{{!previewEnabled}}" class="guardian-alert">家庭待办仍处于合成家庭封闭预发布，普通用户入口尚未开放。</view>
+  <view wx:if="{{!isAdult}}" class="guardian-alert guardian-alert-danger">请先使用成人账号登录。</view>
+  <view wx:if="{{errorText}}" class="guardian-alert guardian-alert-danger">{{errorText}}</view>
+
+  <block wx:if="{{isAdult && previewEnabled}}">
+    <view class="card">
+      <text class="guardian-section-title">待处理概览</text>
+      <view class="guardian-meta-grid">
+        <view class="guardian-meta"><text class="guardian-meta-label">待确认</text><text class="guardian-meta-value">{{summary.pending}}</text></view>
+        <view class="guardian-meta"><text class="guardian-meta-label">待补充</text><text class="guardian-meta-value">{{summary.needsInfo}}</text></view>
+      </view>
+    </view>
+
+    <scroll-view class="guardian-tabs" scroll-x="true" enable-flex="true">
+      <view wx:for="{{filters}}" wx:key="value" class="guardian-tab {{activeStatus === item.value ? 'active' : ''}}" data-status="{{item.value}}" bindtap="changeFilter">{{item.label}}</view>
+    </scroll-view>
+
+    <view wx:if="{{loading}}" class="card guardian-empty">正在加载申请…</view>
+    <view wx:elif="{{!requests.length}}" class="card guardian-empty">当前筛选下没有申请。</view>
+    <view wx:for="{{requests}}" wx:key="id" class="card" data-id="{{item.id}}" bindtap="openRequest">
+      <view class="guardian-row">
+        <view class="guardian-row-main">
+          <text class="guardian-row-title">{{item.child.alias}} · {{item.rule.label}}</text>
+          <text class="guardian-row-copy">申请 {{item.requestedPoints}} 分 · {{item.submittedText}}</text>
+        </view>
+        <text class="guardian-badge {{item.tone}}">{{item.statusLabel}}</text>
+      </view>
+      <text wx:if="{{item.description}}" class="guardian-row-copy">{{item.description}}</text>
+      <text wx:if="{{item.duplicateSuspected}}" class="guardian-risk">疑似重复，请由家长判断</text>
+    </view>
+    <view wx:if="{{loadingMore}}" class="guardian-empty">正在加载更多…</view>
+    <button wx:if="{{nextCursor && !loadingMore}}" class="btn btn-outline guardian-btn-full" bindtap="loadMore">加载更多</button>
+  </block>
+</view>
+
+<view wx:if="{{selected}}" class="modal-overlay" catchtouchmove="noop">
+  <view class="modal-box">
+    <text class="modal-title">申请详情</text>
+    <view class="guardian-row"><text class="guardian-label">儿童</text><text>{{selected.child.alias}}</text></view>
+    <view class="guardian-row"><text class="guardian-label">规则</text><text>{{selected.rule.label}}</text></view>
+    <view class="guardian-row"><text class="guardian-label">申请分值</text><text>{{selected.requestedPoints}}</text></view>
+    <view class="guardian-row"><text class="guardian-label">服务端状态</text><text class="guardian-badge {{selected.tone}}">{{selected.statusLabel}}</text></view>
+    <text class="guardian-row-copy">{{selected.description}}</text>
+    <text wx:if="{{selected.duplicateSuspected}}" class="guardian-risk">疑似重复仅作提示，不会自动驳回</text>
+
+    <block wx:if="{{selected.canDecide}}">
+      <view wx:if="{{selected.canApprove}}" class="guardian-field">
+        <text class="guardian-label">通过分值（规则范围 {{selected.ruleRange}}）</text>
+        <input class="guardian-input" type="number" disabled="{{operating || canRetryAction}}" value="{{approvedPoints}}" bindinput="onPointsInput" />
+      </view>
+      <view class="guardian-field">
+        <text class="guardian-label">说明 / 反馈</text>
+        <textarea class="guardian-textarea" maxlength="300" disabled="{{operating || canRetryAction}}" value="{{actionNote}}" placeholder="退回或驳回时必填" bindinput="onNoteInput"></textarea>
+      </view>
+      <button wx:if="{{canRetryAction}}" class="btn btn-primary guardian-btn-full" loading="{{operating}}" disabled="{{operating}}" bindtap="retryAction">重试同一次操作</button>
+      <button wx:if="{{canRetryAction}}" class="btn btn-outline guardian-btn-full" disabled="{{operating}}" bindtap="abandonActionRetry">放弃重试并刷新状态</button>
+      <view wx:else class="guardian-actions">
+        <button wx:if="{{selected.canRequestInfo}}" class="btn btn-outline" loading="{{operating}}" disabled="{{operating}}" data-action="request_info" bindtap="decide">退回补充</button>
+        <button wx:if="{{selected.canReject}}" class="btn btn-outline danger" loading="{{operating}}" disabled="{{operating}}" data-action="reject" bindtap="decide">驳回</button>
+        <button wx:if="{{selected.canApprove}}" class="btn btn-primary" loading="{{operating}}" disabled="{{operating}}" data-action="approve" bindtap="decide">通过</button>
+      </view>
+    </block>
+    <button class="btn btn-outline guardian-btn-full" disabled="{{operating || canRetryAction}}" bindtap="closeRequest">关闭</button>
+  </view>
+</view>

@@ -7,6 +7,9 @@ Page({
     isLoggedIn: false,
     isAdmin: false,
     isChild: false,
+    isAdult: false,
+    guardianPreviewEnabled: false,
+    guardianTaskCount: 0,
     userName: '未登录',
     userIcon: 'person',
     userAvatar: '',
@@ -32,7 +35,7 @@ Page({
     themeClass: '',
     cropVisible: false,
     cropSource: '',
-    version: '2.5.0'
+    version: '2.6.0'
   },
 
   onShow: function() {
@@ -82,6 +85,7 @@ Page({
     var isLoggedIn = !!(g.token && g.user);
     var isAdmin = isLoggedIn && g.user && g.user.role === 'admin';
     var isChild = isLoggedIn && g.user && g.user.role === 'child';
+    var isAdult = isLoggedIn && !isChild;
     var userName = isLoggedIn ? g.user.name : '未登录';
     var roleMap = { admin: '管理员', parent: '家长', child: '孩子' };
     var roleText = isLoggedIn ? roleMap[g.user.role] || '' : '';
@@ -110,6 +114,9 @@ Page({
       isLoggedIn: isLoggedIn,
       isAdmin: isAdmin,
       isChild: isChild,
+      isAdult: isAdult,
+      guardianPreviewEnabled: g.guardianPreviewEnabled === true,
+      guardianTaskCount: 0,
       userName: userName,
       userIcon: userIcon,
       userAvatar: isLoggedIn ? app.getLocalAvatar(g.user.id) : '',
@@ -122,7 +129,7 @@ Page({
       ruleSummaryIntro: isChild
         ? '看看怎样赚糖、怎样护住糖，有疑问就和家长一起读'
         : '用简单清楚的约定，帮助孩子理解努力与边界',
-      version: g.version || '2.5.0'
+      version: g.version || '2.6.0'
     });
 
     // 加载记录数
@@ -130,6 +137,16 @@ Page({
       var that = this;
       app.fetchAPI('/api/history').then(function(data) {
         that.setData({ recordCount: (data.history || []).length });
+      });
+    }
+
+    if (isAdult && g.guardianPreviewEnabled === true && app.guardianApi) {
+      var summaryGeneration = (this._guardianSummaryGeneration || 0) + 1;
+      this._guardianSummaryGeneration = summaryGeneration;
+      app.guardianApi.taskSummary().then(function(result) {
+        if (summaryGeneration !== that._guardianSummaryGeneration || !result.ok) return;
+        var summary = result.data && result.data.pointRequests;
+        that.setData({ guardianTaskCount: summary ? Number(summary.total) || 0 : 0 });
       });
     }
   },
@@ -148,6 +165,38 @@ Page({
 
   goAdmin: function() {
     wx.navigateTo({ url: '/pages/admin/admin' });
+  },
+
+  goFamilyPrivacy: function() {
+    wx.navigateTo({ url: '/pages/family-privacy/family-privacy' });
+  },
+
+  goFamilyTasks: function() {
+    if (!this.data.guardianPreviewEnabled) return;
+    wx.navigateTo({ url: '/pages/family-tasks/family-tasks' });
+  },
+
+  goDeviceManagement: function() {
+    if (!this.data.guardianPreviewEnabled) return;
+    wx.navigateTo({ url: '/pages/device-management/device-management' });
+  },
+
+  openLegal: function(event) {
+    var type = event.currentTarget.dataset.type;
+    var allowed = [
+      'privacyPolicy', 'childPersonalInformationRules', 'childUserAgreement',
+      'sensitiveInformationNotice', 'guardianRelationDeclaration'
+    ];
+    if (allowed.indexOf(type) < 0) return;
+    wx.navigateTo({ url: '/pages/legal-document/legal-document?type=' + encodeURIComponent(type) });
+  },
+
+  onHide: function() {
+    this._guardianSummaryGeneration = (this._guardianSummaryGeneration || 0) + 1;
+  },
+
+  onUnload: function() {
+    this._guardianSummaryGeneration = (this._guardianSummaryGeneration || 0) + 1;
   },
 
   onChooseAvatar: function() {

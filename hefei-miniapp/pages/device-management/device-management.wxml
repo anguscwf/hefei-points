@@ -1,0 +1,75 @@
+<page-meta page-style="{{themePageStyle}}"></page-meta>
+<view class="page-container guardian-page {{themeClass}}">
+  <view class="card guardian-hero">
+    <text class="guardian-hero-title">儿童设备</text>
+    <text class="guardian-hero-copy">手工短码只用于孩子端发起配对。家长确认前，请当面核对设备别名与公钥指纹。</text>
+  </view>
+
+  <view wx:if="{{!previewEnabled}}" class="guardian-alert">设备配对仍处于合成家庭封闭预发布，普通用户入口尚未开放。</view>
+  <view wx:if="{{!isAdult}}" class="guardian-alert guardian-alert-danger">请先使用成人账号登录。</view>
+  <view wx:if="{{errorText}}" class="guardian-alert guardian-alert-danger">{{errorText}}</view>
+  <button wx:if="{{canRetryMutation}}" class="btn btn-primary guardian-btn-full" loading="{{operating}}" disabled="{{operating}}" bindtap="retryMutation">重试同一次设备操作</button>
+
+  <block wx:if="{{isAdult && previewEnabled}}">
+    <view class="card">
+      <text class="guardian-section-title">生成一次性配对码</text>
+      <text class="guardian-section-copy">短码约 10 分钟有效；本页不申请相机权限，也不会保存短码或家长确认凭据。</text>
+      <view wx:if="{{children.length}}" class="guardian-field">
+        <text class="guardian-label">选择已授权儿童</text>
+        <picker range="{{children}}" range-key="alias" value="{{childIndex}}" disabled="{{operating || canRetryCreate || canRetryMutation || pairingRecoveryUnavailable || pairing.status === 'pending' || pairing.status === 'claimed'}}" bindchange="onChildChange">
+          <view class="guardian-picker">{{children[childIndex].alias}} ›</view>
+        </picker>
+      </view>
+      <view wx:else class="guardian-empty">没有当前授权有效的儿童，不能生成配对码。</view>
+      <button wx:if="{{children.length}}" class="btn btn-primary guardian-btn-full" loading="{{operating}}" disabled="{{operating || canRetryMutation || pairingRecoveryUnavailable || pairing.status === 'pending' || pairing.status === 'claimed'}}" bindtap="createPairing">{{canRetryCreate ? '重试同一次生成请求' : '生成 6 位配对码'}}</button>
+    </view>
+
+    <view wx:if="{{pairing}}" class="card">
+      <view class="guardian-row">
+        <view class="guardian-row-main">
+          <text class="guardian-section-title">当前配对</text>
+          <text class="guardian-row-copy">{{pairing.statusLabel}} · 有效至 {{pairing.expiresText}}</text>
+        </view>
+        <text class="guardian-badge {{pairing.status === 'completed' ? 'success' : 'warning'}}">{{pairing.statusLabel}}</text>
+      </view>
+      <text wx:if="{{shortCode}}" class="guardian-code">{{shortCode}}</text>
+      <view wx:if="{{shortCode}}" class="guardian-alert">只把短码当面告诉正在操作孩子设备的人。不要截图、转发或粘贴到聊天中。</view>
+      <view wx:if="{{pairing.claimedDevice}}" class="guardian-meta-grid">
+        <view class="guardian-meta"><text class="guardian-meta-label">设备别名</text><text class="guardian-meta-value">{{pairing.claimedDevice.alias}}</text></view>
+        <view class="guardian-meta"><text class="guardian-meta-label">设备公钥指纹</text><text class="guardian-meta-value guardian-mono">{{pairing.deviceFingerprint}}</text></view>
+      </view>
+      <view class="guardian-actions">
+        <button class="btn btn-outline" loading="{{operating}}" disabled="{{operating || canRetryMutation}}" bindtap="refreshPairing">刷新状态</button>
+        <button wx:if="{{pairing.status === 'claimed'}}" class="btn btn-primary" loading="{{operating}}" disabled="{{operating || canRetryMutation}}" bindtap="confirmPairing">核对后确认绑定</button>
+      </view>
+    </view>
+
+    <view class="card">
+      <text class="guardian-section-title">已绑定设备与会话</text>
+      <text class="guardian-section-copy">撤销由服务端即时执行；页面不会接触孩子设备的访问或刷新凭据。</text>
+      <view wx:if="{{loading}}" class="guardian-empty">正在加载…</view>
+      <view wx:elif="{{!devices.length}}" class="guardian-empty">还没有可见的设备绑定。</view>
+      <view wx:for="{{devices}}" wx:key="id" class="guardian-list-item">
+        <view class="guardian-row">
+          <view class="guardian-row-main">
+            <text class="guardian-row-title">{{item.alias || '未命名设备'}}</text>
+            <text class="guardian-row-copy">公钥指纹 {{item.fingerprint}}</text>
+          </view>
+          <text class="guardian-badge {{item.tone}}">{{item.statusLabel}}</text>
+        </view>
+        <view wx:for="{{item.sessions}}" wx:for-item="session" wx:key="id" class="guardian-meta mt-sm">
+          <view class="guardian-row">
+            <view class="guardian-row-main">
+              <text class="guardian-meta-value">{{session.statusLabel}}</text>
+              <text class="guardian-meta-label">刷新有效期 {{session.expiresText}}</text>
+            </view>
+            <button wx:if="{{session.status === 'active'}}" class="btn btn-outline btn-xs danger" disabled="{{operating || canRetryMutation}}" data-id="{{session.id}}" data-revision="{{session.revision}}" bindtap="revokeSession">撤销会话</button>
+          </view>
+        </view>
+        <button wx:if="{{item.status === 'active' || item.status === 'pending'}}" class="btn btn-outline btn-sm guardian-btn-full danger" disabled="{{operating || canRetryMutation || (item.status === 'pending' && canRetryCreate)}}" data-id="{{item.id}}" data-revision="{{item.revision}}" bindtap="revokeDevice">{{item.status === 'pending' ? '撤销未完成绑定' : '撤销整台设备'}}</button>
+      </view>
+    </view>
+  </block>
+
+  <text class="guardian-footer-note">设备丢失、转让或监护授权撤回后，相关设备会话必须立即失效。</text>
+</view>

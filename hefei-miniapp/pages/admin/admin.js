@@ -540,7 +540,7 @@ Page({
 
     app.fetchAPI('/api/config/users', {
       method: 'POST',
-      body: JSON.stringify({ token: app.globalData.token, users: users })
+      body: JSON.stringify({ users: users })
     }).then(function(res) {
       if (res.success) {
         that.showToast('「' + updatedUser.name + '」已保存');
@@ -566,7 +566,7 @@ Page({
             .map(function(u) { return { id: u.id, name: u.editName, role: roleMap[u.roleIdx], password: u.editPwd || u.password }; });
           app.fetchAPI('/api/config/users', {
             method: 'POST',
-            body: JSON.stringify({ token: app.globalData.token, users: users })
+            body: JSON.stringify({ users: users })
           }).then(function(res) {
             if (res.success) {
               that.showToast('已删除');
@@ -603,7 +603,7 @@ Page({
 
     app.fetchAPI('/api/config/users', {
       method: 'POST',
-      body: JSON.stringify({ token: app.globalData.token, users: users })
+      body: JSON.stringify({ users: users })
     }).then(function(res) {
       if (res.success) {
         app.globalData.allUsers = res.users;
@@ -1378,7 +1378,7 @@ Page({
     this.setData({ rulesSaving: true, ruleValidationMessage: '' });
     app.fetchAPI('/api/config/rules', {
       method: 'POST',
-      body: JSON.stringify({ token: app.globalData.token, rules: rules, revision: this._rulesBaseRevision })
+      body: JSON.stringify({ rules: rules, revision: this._rulesBaseRevision })
     }).then(function(res) {
       that.setData({ rulesSaving: false });
       if (res.success) {
@@ -1533,7 +1533,6 @@ Page({
         app.fetchAPI('/api/history/cleanup', {
           method: 'POST',
           body: JSON.stringify({
-            token: app.globalData.token,
             kid: kidId || undefined,
             beforeDate: that.data.cleanupBefore || undefined,
             afterDate: that.data.cleanupAfter || undefined
