@@ -8,7 +8,9 @@ const { authLimiter, apiLimiter } = require('./middleware/rate-limit');
 function createApp() {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1);
+  // Forwarded addresses affect authentication throttles and pairing lockouts.
+  // Trust none by default; deployments must name their actual proxy CIDRs/IPs.
+  app.set('trust proxy', env.trustedProxies);
 
   // 现有 Web 页面使用内联脚本；暂不启用默认 CSP，其余 Helmet 安全头正常生效。
   app.use(helmet({ contentSecurityPolicy: false }));
@@ -31,6 +33,7 @@ function createApp() {
   app.use('/api', require('./routes/config'));
   app.use('/api', require('./routes/backup'));
   app.use('/api', require('./routes/v2-guardian-consents'));
+  app.use('/api', require('./routes/v2-device-pairing-sessions'));
 
   app.use((req, res) => {
     const v2 = req.originalUrl.split('?')[0].startsWith('/api/v2/');

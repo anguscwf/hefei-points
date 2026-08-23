@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hefei-v2-http-errors-'));
 process.env.NODE_ENV = 'test';
@@ -31,6 +32,47 @@ async function json(response) {
 after(() => {
   closeDb();
   fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('默认不信任可伪造的代理地址头', () => {
+  assert.equal(createApp().get('trust proxy'), false);
+});
+
+test('生产开启设备配对时必须显式声明客户端地址信任边界', () => {
+  const baseEnv = {
+    ...process.env,
+    NODE_ENV: 'production',
+    DATA_DIR: tempDir,
+    WX_APPSECRET: 'synthetic-app-secret',
+    DEVICE_PAIRING_ENABLED: '1',
+    PAIRING_CLIENT_IP_MODE: '',
+    TRUSTED_PROXIES: ''
+  };
+  const blocked = spawnSync(process.execPath, ['-e', "require('./server/config/env')"], {
+    cwd: path.join(__dirname, '..', '..'),
+    env: baseEnv,
+    encoding: 'utf8'
+  });
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, /PAIRING_CLIENT_IP_MODE/);
+
+  const direct = spawnSync(process.execPath, ['-e', "require('./server/config/env')"], {
+    cwd: path.join(__dirname, '..', '..'),
+    env: { ...baseEnv, PAIRING_CLIENT_IP_MODE: 'direct' },
+    encoding: 'utf8'
+  });
+  assert.equal(direct.status, 0, direct.stderr);
+
+  const proxied = spawnSync(process.execPath, ['-e', "require('./server/config/env')"], {
+    cwd: path.join(__dirname, '..', '..'),
+    env: {
+      ...baseEnv,
+      PAIRING_CLIENT_IP_MODE: 'trusted_proxy',
+      TRUSTED_PROXIES: '127.0.0.1/32'
+    },
+    encoding: 'utf8'
+  });
+  assert.equal(proxied.status, 0, proxied.stderr);
 });
 
 test('v2 外围 404、JSON、体积和限流错误使用稳定 code 与 requestId', async () => {

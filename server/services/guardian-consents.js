@@ -4,6 +4,7 @@ const features = require('../config/features');
 const consentConfig = require('../config/guardian-consent');
 const { getDb, inTransaction } = require('../db/connection');
 const repositories = require('../db/repositories');
+const devicePairingSessions = require('./device-pairing-sessions');
 const { ApiError } = require('../lib/api-error');
 const { verifyPwd } = require('../lib/token');
 const { isPlainObject } = require('../lib/validation');
@@ -596,6 +597,12 @@ function withdrawConsent({ actor, childId, body, idempotencyKey, now = new Date(
       blockedAt: iso(now)
     }, db);
     if (!blocked) fail(409, 'REVISION_CONFLICT', '儿童隐私状态已变化');
+    devicePairingSessions.revokeForChild(db, {
+      familyId: actor.familyId,
+      childId,
+      revokedAt: iso(now),
+      reason: 'guardian_consent_withdrawn'
+    });
     completeIdempotency(db, {
       id: idempotencyId,
       resourceId: active.id,

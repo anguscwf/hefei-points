@@ -4,5 +4,6 @@ module.exports = {
   config: require('./config'),
   points: require('./points'),
   transactions: require('./transactions'),
-  guardianConsents: require('./guardian-consents')
+  guardianConsents: require('./guardian-consents'),
+  deviceSessions: require('./device-sessions')
 };
