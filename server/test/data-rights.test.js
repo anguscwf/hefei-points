@@ -15,9 +15,11 @@ process.env.CHILD_ENROLLMENT_ENABLED = 'false';
 process.env.CHILD_DATA_RIGHTS_ENABLED = 'false';
 process.env.LEGACY_CHILD_LOGIN_ENABLED = 'false';
 process.env.LEGACY_CHILD_MANAGEMENT_ENABLED = 'false';
+process.env.LEGAL_PUBLIC_ORIGIN = 'https://example.invalid';
 process.env.GUARDIAN_RELATION_DECLARATION_VERSION = 'guardian-relation-v1';
 process.env.GUARDIAN_RELATION_DECLARATION_SHA256 = 'e'.repeat(64);
-process.env.GUARDIAN_RELATION_DECLARATION_PUBLIC_URL = 'https://example.invalid/guardian-relation';
+process.env.GUARDIAN_RELATION_DECLARATION_PUBLIC_URL =
+  `https://example.invalid/legal/guardian-relation-declaration/guardian-relation-v1/${'e'.repeat(64)}.html`;
 
 const { getDb, closeDb } = require('../db/connection');
 const repositories = require('../db/repositories');
@@ -28,19 +30,19 @@ const TEST_PASSWORD = 'synthetic-data-rights-password';
 const legalTexts = Object.freeze({
   privacyPolicy: {
     type: 'privacy_policy', version: 'privacy-v1', sha256: 'a'.repeat(64),
-    publicUrl: 'https://example.invalid/privacy'
+    publicUrl: `https://example.invalid/legal/privacy-policy/privacy-v1/${'a'.repeat(64)}.html`
   },
   childPersonalInformationRules: {
     type: 'child_personal_information_rules', version: 'child-rules-v1', sha256: 'b'.repeat(64),
-    publicUrl: 'https://example.invalid/child-rules'
+    publicUrl: `https://example.invalid/legal/child-personal-information-rules/child-rules-v1/${'b'.repeat(64)}.html`
   },
   childUserAgreement: {
     type: 'child_user_agreement', version: 'child-agreement-v1', sha256: 'c'.repeat(64),
-    publicUrl: 'https://example.invalid/child-agreement'
+    publicUrl: `https://example.invalid/legal/child-user-agreement/child-agreement-v1/${'c'.repeat(64)}.html`
   },
   sensitiveInformationNotice: {
     type: 'sensitive_information_notice', version: 'sensitive-notice-v1', sha256: 'd'.repeat(64),
-    publicUrl: 'https://example.invalid/sensitive-notice'
+    publicUrl: `https://example.invalid/legal/sensitive-information-notice/sensitive-notice-v1/${'d'.repeat(64)}.html`
   }
 });
 let fixtureSequence = 0;
@@ -662,4 +664,150 @@ test('并发幂等只生成一份证据，冲突载荷与中途失败均不消�
     `).get(fixture.familyId).count, 0);
   });
   setDataRightsGate(false);
+});
+
+test('资料权利操作按原幂等键跨重启式读取并隔离家庭与成人', async () => {
+  ensureLegalTexts();
+  const fixture = createFixture();
+  const foreign = createFixture();
+  await withServer(async baseUrl => {
+    const child = await enroll(baseUrl, fixture, '合成恢复核对孩子');
+    const key = rightsKey(fixture, 'operation-recovery');
+    const pathname = '/api/v2/data-rights-operations/request-create';
+
+    const before = await request(baseUrl, pathname, {
+      userId: fixture.adminId,
+      headers: { 'Idempotency-Key': key }
+    });
+    assert.equal(before.response.status, 200);
+    assert.deepEqual(before.body.dataRightsOperation, {
+      operation: 'request-create', status: 'not_found'
+    });
+
+    setDataRightsGate(true);
+    const assertion = await issueReauth(baseUrl, fixture.adminId, 'child_data_access');
+    const created = await createRight(baseUrl, {
+      fixture,
+      childId: child.id,
+      requestType: 'access',
+      expectedRevision: 1,
+      reauthAssertion: assertion,
+      label: 'operation-recovery'
+    });
+    assert.equal(created.response.status, 201);
+    setDataRightsGate(false);
+
+    const completed = await request(baseUrl, pathname, {
+      userId: fixture.adminId,
+      headers: { 'Idempotency-Key': key }
+    });
+    assert.equal(completed.response.status, 200);
+    assert.deepEqual(Object.keys(completed.body.dataRightsOperation).sort(), [
+      'completedAt', 'dataRightsRequestId', 'operation', 'status'
+    ]);
+    assert.equal(completed.body.dataRightsOperation.operation, 'request-create');
+    assert.equal(completed.body.dataRightsOperation.status, 'completed');
+    assert.equal(
+      completed.body.dataRightsOperation.dataRightsRequestId,
+      created.body.dataRightsRequest.id
+    );
+    assert.ok(Number.isFinite(Date.parse(completed.body.dataRightsOperation.completedAt)));
+    assertNoCredentialLeak(completed.body, [assertion, TEST_PASSWORD]);
+
+    const detail = await request(
+      baseUrl,
+      `/api/v2/data-rights-requests/${completed.body.dataRightsOperation.dataRightsRequestId}`,
+      { userId: fixture.adminId }
+    );
+    assert.equal(detail.response.status, 200);
+    assert.equal(detail.body.dataRightsRequest.childId, child.id);
+    assert.equal(detail.body.dataRightsRequest.requestType, 'access');
+
+    for (const userId of [fixture.parentId, foreign.adminId]) {
+      const hidden = await request(baseUrl, pathname, {
+        userId,
+        headers: { 'Idempotency-Key': key }
+      });
+      assert.equal(hidden.response.status, 200);
+      assert.deepEqual(hidden.body.dataRightsOperation, {
+        operation: 'request-create', status: 'not_found'
+      });
+    }
+    process.env.LEGACY_CHILD_LOGIN_ENABLED = 'true';
+    let childForbidden;
+    try {
+      childForbidden = await request(baseUrl, pathname, {
+        userId: child.id,
+        headers: { 'Idempotency-Key': key }
+      });
+    } finally {
+      process.env.LEGACY_CHILD_LOGIN_ENABLED = 'false';
+    }
+    assert.equal(childForbidden.response.status, 403);
+    assert.equal(childForbidden.body.code, 'FORBIDDEN_SCOPE');
+  });
+  setDataRightsGate(false);
+});
+
+test('资料权利操作对 pending、非法输入和不可用幂等结果保持稳定失败', async () => {
+  const fixture = createFixture();
+  const key = rightsKey(fixture, 'operation-pending');
+  repositories.guardianConsents.startIdempotency({
+    id: `synthetic-pending-${fixture.suffix}`,
+    familyId: fixture.familyId,
+    actorUserId: fixture.adminId,
+    operation: 'data_rights_request_create',
+    idempotencyKey: dataRightsService.normalizeIdempotencyKey(key),
+    requestFingerprint: 'f'.repeat(64),
+    createdAt: '2026-08-24T00:00:00.000Z'
+  });
+
+  await withServer(async baseUrl => {
+    const pathname = '/api/v2/data-rights-operations/request-create';
+    const pending = await request(baseUrl, pathname, {
+      userId: fixture.adminId,
+      headers: { 'Idempotency-Key': key }
+    });
+    assert.equal(pending.response.status, 200);
+    assert.deepEqual(pending.body.dataRightsOperation, {
+      operation: 'request-create', status: 'pending'
+    });
+
+    const invalidKey = await request(baseUrl, pathname, { userId: fixture.adminId });
+    assert.equal(invalidKey.response.status, 400);
+    assert.equal(invalidKey.body.code, 'IDEMPOTENCY_REQUIRED');
+    const invalidQuery = await request(baseUrl, `${pathname}?childId=synthetic`, {
+      userId: fixture.adminId,
+      headers: { 'Idempotency-Key': key }
+    });
+    assert.equal(invalidQuery.response.status, 400);
+    assert.equal(invalidQuery.body.code, 'VALIDATION_ERROR');
+
+    getDb().prepare(`
+      UPDATE v2_idempotency_records
+      SET status = 'completed', resource_type = 'wrong_resource',
+          resource_id = 'data_rights_0123456789abcdef0123456789abcdef',
+          response_status = 201, completed_at = ?
+      WHERE family_id = ? AND actor_user_id = ? AND idempotency_key = ?
+    `).run(
+      '2026-08-24T00:00:01.000Z', fixture.familyId, fixture.adminId,
+      dataRightsService.normalizeIdempotencyKey(key)
+    );
+    const unavailable = await request(baseUrl, pathname, {
+      userId: fixture.adminId,
+      headers: { 'Idempotency-Key': key }
+    });
+    assert.equal(unavailable.response.status, 409);
+    assert.equal(unavailable.body.code, 'IDEMPOTENCY_RESULT_UNAVAILABLE');
+  });
+
+  assert.throws(
+    () => dataRightsService.getOperationStatus({
+      actor: repositories.users.findById(fixture.adminId),
+      idempotencyKey: key,
+      query: {},
+      body: { unexpected: true }
+    }),
+    error => error.status === 400 && error.code === 'VALIDATION_ERROR'
+  );
 });

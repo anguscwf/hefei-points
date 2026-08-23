@@ -570,6 +570,66 @@ function resultForRequest(db, request, status) {
   };
 }
 
+function getOperationStatus({ actor, idempotencyKey, query, body }) {
+  validateEmptyBody(body);
+  validateQuery(query, new Set());
+  const keyHash = normalizeIdempotencyKey(idempotencyKey);
+  return inReadTransaction(db => {
+    const record = repositories.guardianConsents.findIdempotency({
+      familyId: actor.familyId,
+      actorUserId: actor.id,
+      operation: 'data_rights_request_create',
+      idempotencyKey: keyHash
+    }, db);
+    if (!record) {
+      return {
+        success: true,
+        dataRightsOperation: {
+          operation: 'request-create',
+          status: 'not_found'
+        }
+      };
+    }
+    if (record.status === 'pending') {
+      return {
+        success: true,
+        dataRightsOperation: {
+          operation: 'request-create',
+          status: 'pending'
+        }
+      };
+    }
+    if (record.status !== 'completed'
+        || record.resourceType !== 'data_rights_request'
+        || !REQUEST_ID.test(String(record.resourceId || ''))
+        || !Number.isFinite(Date.parse(record.completedAt || ''))) {
+      fail(409, 'IDEMPOTENCY_RESULT_UNAVAILABLE', '数据权利请求幂等结果不可用');
+    }
+    const request = repositories.dataRights.findOwnRequest({
+      familyId: actor.familyId,
+      guardianId: actor.id,
+      requestId: record.resourceId
+    }, db);
+    if (!request) {
+      fail(409, 'IDEMPOTENCY_RESULT_UNAVAILABLE', '数据权利请求幂等结果不可用');
+    }
+    const expectedResponseStatus = DESTRUCTIVE_TYPES.has(request.requestType) ? 202 : 201;
+    if (!Number.isSafeInteger(record.resultRevision) || record.resultRevision < 0
+        || record.responseStatus !== expectedResponseStatus) {
+      fail(409, 'IDEMPOTENCY_RESULT_UNAVAILABLE', '数据权利请求幂等结果不可用');
+    }
+    return {
+      success: true,
+      dataRightsOperation: {
+        operation: 'request-create',
+        status: 'completed',
+        completedAt: record.completedAt,
+        dataRightsRequestId: request.id
+      }
+    };
+  });
+}
+
 function createRequest({ actor, childId, body, idempotencyKey, now = new Date() }) {
   const input = parseCreateBody(body);
   assertCreationEnabled(input.requestType);
@@ -803,6 +863,7 @@ function completeWithdrawalAudit(db, {
 
 module.exports = {
   createRequest,
+  getOperationStatus,
   listRequests,
   getRequest,
   exportChildData,

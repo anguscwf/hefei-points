@@ -131,7 +131,16 @@ function currentLegalEvidence(nowIso, db = getDb()) {
   const rows = repositories.guardianConsents.currentLegalTexts(nowIso, db);
   const byType = new Map(rows.map(row => [row.textType, row]));
   const declaration = consentConfig.guardianRelationDeclaration();
-  if (!declaration || consentConfig.LEGAL_TEXT_TYPES.some(type => !byType.has(type))) {
+  const incomplete = consentConfig.LEGAL_TEXT_TYPES.some(type => {
+    const row = byType.get(type);
+    return !row || !consentConfig.isExpectedLegalPublicUrl({
+      type,
+      version: row.version,
+      sha256: row.contentSha256,
+      publicUrl: row.publicUrl
+    });
+  });
+  if (!declaration || incomplete) {
     fail(503, 'LEGAL_TEXTS_UNAVAILABLE', '当前法律文本尚未完整发布');
   }
   return { byType, declaration };

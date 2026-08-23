@@ -60,6 +60,13 @@ router.post('/v2/children/:id/data-rights-requests', endpoint(req => service.cre
   now: new Date()
 })));
 
+router.get('/v2/data-rights-operations/request-create', endpoint(req => service.getOperationStatus({
+  actor: requireAdultV2(req),
+  idempotencyKey: req.get('Idempotency-Key'),
+  query: req.query,
+  body: req.body
+})));
+
 router.get('/v2/data-rights-requests', endpoint(req => service.listRequests({
   actor: requireAdultV2(req),
   query: req.query,

@@ -17,9 +17,11 @@ process.env.DEVICE_PAIRING_ENABLED = 'true';
 process.env.POINT_REQUESTS_ENABLED = 'true';
 process.env.LEGACY_CHILD_LOGIN_ENABLED = 'false';
 process.env.LEGACY_CHILD_MANAGEMENT_ENABLED = 'false';
+process.env.LEGAL_PUBLIC_ORIGIN = 'https://example.invalid';
 process.env.GUARDIAN_RELATION_DECLARATION_VERSION = 'guardian-relation-v1';
 process.env.GUARDIAN_RELATION_DECLARATION_SHA256 = 'e'.repeat(64);
-process.env.GUARDIAN_RELATION_DECLARATION_PUBLIC_URL = 'https://example.invalid/guardian-relation';
+process.env.GUARDIAN_RELATION_DECLARATION_PUBLIC_URL =
+  `https://example.invalid/legal/guardian-relation-declaration/guardian-relation-v1/${'e'.repeat(64)}.html`;
 
 const { getDb, closeDb } = require('../db/connection');
 const repositories = require('../db/repositories');
@@ -29,19 +31,19 @@ const TEST_PASSWORD = 'synthetic-point-request-password';
 const legalTexts = Object.freeze({
   privacyPolicy: {
     type: 'privacy_policy', version: 'privacy-v1', sha256: 'a'.repeat(64),
-    publicUrl: 'https://example.invalid/privacy'
+    publicUrl: `https://example.invalid/legal/privacy-policy/privacy-v1/${'a'.repeat(64)}.html`
   },
   childPersonalInformationRules: {
     type: 'child_personal_information_rules', version: 'child-rules-v1', sha256: 'b'.repeat(64),
-    publicUrl: 'https://example.invalid/child-rules'
+    publicUrl: `https://example.invalid/legal/child-personal-information-rules/child-rules-v1/${'b'.repeat(64)}.html`
   },
   childUserAgreement: {
     type: 'child_user_agreement', version: 'child-agreement-v1', sha256: 'c'.repeat(64),
-    publicUrl: 'https://example.invalid/child-agreement'
+    publicUrl: `https://example.invalid/legal/child-user-agreement/child-agreement-v1/${'c'.repeat(64)}.html`
   },
   sensitiveInformationNotice: {
     type: 'sensitive_information_notice', version: 'sensitive-notice-v1', sha256: 'd'.repeat(64),
-    publicUrl: 'https://example.invalid/sensitive-notice'
+    publicUrl: `https://example.invalid/legal/sensitive-information-notice/sensitive-notice-v1/${'d'.repeat(64)}.html`
   }
 });
 
