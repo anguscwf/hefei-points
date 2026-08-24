@@ -2,11 +2,11 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "糖罐积分鸿蒙版阶段 0 诊断"
+      "value": "糖罐积分鸿蒙版儿童端"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "验证 HarmonyOS 真机兼容、HTTPS、本地存储与生命周期"
+      "value": "通过家长确认的设备配对查看本人的积分"
     },
     {
       "name": "EntryAbility_label",
@@ -14,7 +14,7 @@
     },
     {
       "name": "internet_permission_reason",
-      "value": "用于验证糖罐积分 HTTPS 服务是否可连接"
+      "value": "用于在家长授权后安全同步本人的积分数据"
     }
   ]
 }
