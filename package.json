@@ -14,7 +14,7 @@
     "backup:pre-migration": "node scripts/pre-migration-backup.js",
     "test": "node --test --test-concurrency=1",
     "pm2:logrotate": "node scripts/configure-pm2-logrotate.js",
-    "check": "node scripts/check-rename.js && node scripts/check-miniapp.js",
+    "check": "node scripts/check-rename.js && node scripts/check-miniapp.js && node scripts/check-harmonyos.js",
     "audit": "npm audit --omit=dev",
     "audit:fix": "npm audit fix"
   },
