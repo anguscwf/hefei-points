@@ -1,7 +1,8 @@
 import { ApiEnvironment } from '../config/ApiEnvironment';
 import { ChildApiClient, HarmonyHttpTransport } from '../network/ApiClient';
-import { TransactionDto } from '../network/ApiContracts';
+import { PointRequestDto, RewardRuleDto, TransactionDto } from '../network/ApiContracts';
 import { DeviceIdentity } from '../security/DeviceIdentity';
+import { PointRequestVault } from '../security/PointRequestVault';
 import { SessionVault } from '../security/SessionVault';
 import {
   ChildSessionCoordinator,
@@ -17,6 +18,7 @@ struct Index {
     new ChildApiClient(new HarmonyHttpTransport()),
     new DeviceIdentity(),
     new SessionVault(),
+    new PointRequestVault(),
     new StrictDeviceProofVerifier(),
     new StrictSecureIdGenerator()
   );
@@ -31,12 +33,28 @@ struct Index {
   @State hasSummary: boolean = false;
   @State transactions: Array<TransactionDto> = [];
   @State hasMore: boolean = false;
+  @State rewardRules: Array<RewardRuleDto> = [];
+  @State hasMoreRewardRules: boolean = false;
+  @State selectedRuleId: string = '';
+  @State requestedPoints: string = '';
+  @State description: string = '';
+  @State pointRequests: Array<PointRequestDto> = [];
+  @State hasMorePointRequests: boolean = false;
+  @State pointRequestPending: boolean = false;
 
   aboutToAppear(): void {
     this.initialize();
   }
 
+  private clearPointDraft(): void {
+    this.selectedRuleId = '';
+    this.requestedPoints = '';
+    this.description = '';
+  }
+
   onPageHide(): void {
+    this.shortCode = '';
+    this.clearPointDraft();
     this.coordinator.lockForBackground();
     this.syncView();
   }
@@ -60,6 +78,19 @@ struct Index {
     this.hasSummary = this.coordinator.hasSummary;
     this.transactions = this.coordinator.transactions;
     this.hasMore = this.coordinator.hasMoreTransactions;
+    this.rewardRules = this.coordinator.rewardRules;
+    this.hasMoreRewardRules = this.coordinator.hasMoreRewardRules;
+    this.pointRequests = this.coordinator.pointRequests;
+    this.hasMorePointRequests = this.coordinator.hasMorePointRequests;
+    this.pointRequestPending = this.coordinator.pointRequestPending;
+    if (this.locked || this.phase !== EnvelopePhase.ACTIVE || !this.hasSummary) {
+      this.clearPointDraft();
+    }
+    if (this.rewardRules.find((rule: RewardRuleDto) => rule.id === this.selectedRuleId)
+        === undefined) {
+      this.selectedRuleId = '';
+      this.requestedPoints = '';
+    }
   }
 
   private networkReady(): boolean {
@@ -91,6 +122,43 @@ struct Index {
     this.syncView();
   }
 
+  private selectRule(rule: RewardRuleDto): void {
+    this.selectedRuleId = rule.id;
+    const preferred: number = Math.max(1, rule.minPoints, rule.defaultPoints);
+    this.requestedPoints = `${Math.min(preferred, rule.maxPoints)}`;
+  }
+
+  private validRequestedPoints(): boolean {
+    const rule: RewardRuleDto | undefined = this.rewardRules.find(
+      (value: RewardRuleDto) => value.id === this.selectedRuleId
+    );
+    const value: number = Number(this.requestedPoints);
+    return rule !== undefined && Number.isSafeInteger(value) && value > 0
+      && value >= rule.minPoints && value <= rule.maxPoints;
+  }
+
+  private async submitPointRequest(): Promise<void> {
+    this.busy = true;
+    const points: number = Number(this.requestedPoints);
+    await this.coordinator.submitPointRequest(
+      this.selectedRuleId, points, this.description
+    );
+    this.clearPointDraft();
+    this.syncView();
+  }
+
+  private async loadMoreRules(): Promise<void> {
+    this.busy = true;
+    await this.coordinator.loadMoreRewardRules();
+    this.syncView();
+  }
+
+  private async loadMoreRequests(): Promise<void> {
+    this.busy = true;
+    await this.coordinator.loadMorePointRequests();
+    this.syncView();
+  }
+
   private statusText(): string {
     if (this.statusCode === 'BOOT') return '正在检查本机安全状态';
     if (this.statusCode === 'UNPAIRED') return '这台设备尚未开通';
@@ -100,6 +168,11 @@ struct Index {
     if (this.statusCode === 'LOCAL_ENVIRONMENT_DISABLED') return '独立测试服务尚未配置，联网功能保持关闭';
     if (this.statusCode === 'CLAIM_RESULT_UNKNOWN') return '上次配对码提交结果待确认，只能原样继续';
     if (this.statusCode === 'RESULT_UNKNOWN') return '上次写操作结果未知，只能原样恢复';
+    if (this.statusCode === 'POINT_REQUEST_RESULT_UNKNOWN') {
+      return '上次积分申报结果待确认，只能使用原请求恢复';
+    }
+    if (this.statusCode === 'POINT_REQUEST_SUBMITTED') return '积分申请已提交，等待家长处理';
+    if (this.statusCode === 'POINT_REQUEST_RECONCILED') return '已确认原积分申请存在';
     if (this.statusCode === 'SESSION_RECOVERY_REQUIRED') return '设备会话需要安全恢复';
     if (this.statusCode === 'PAIRING_CODE_INVALID') return '配对码无效或已不可用';
     if (this.statusCode === 'PAIRING_LOCKED') return '配对尝试已锁定，请稍后再试';
@@ -110,6 +183,10 @@ struct Index {
       return '家长授权或设备会话已失效，需要重新配对';
     }
     if (this.statusCode === 'FEATURE_DISABLED') return '儿童功能门当前关闭，本机凭据已安全保留';
+    if (this.statusCode === 'REWARD_RULES_CHANGED') return '家长刚刚更新了规则，请重新刷新选择';
+    if (this.statusCode === 'RULE_REFERENCE_INVALID') return '所选规则已更新，请重新刷新选择';
+    if (this.statusCode === 'RULE_AMOUNT_OUT_OF_RANGE') return '申报分值已超出当前规则范围';
+    if (this.statusCode === 'CHILD_PROCESSING_BLOCKED') return '当前档案已暂停新增积分处理';
     if (this.statusCode === 'ACCESS_TOKEN_EXPIRED') return '访问会话已过期，需要安全刷新';
     if (this.statusCode === 'NETWORK_UNAVAILABLE' || this.statusCode === 'SERVER_UNAVAILABLE') {
       return '网络暂不可用，请稍后再试';
@@ -121,7 +198,9 @@ struct Index {
     if (this.statusCode === 'LOCAL_STATE_CORRUPT'
         || this.statusCode === 'DEVICE_KEY_MISSING'
         || this.statusCode === 'LOCAL_STATE_COMMIT_FAILED'
-        || this.statusCode === 'LOCAL_SECURITY_ERROR') {
+        || this.statusCode === 'LOCAL_SECURITY_ERROR'
+        || this.statusCode.startsWith('LOCAL_POINT_INTENT_')
+        || this.statusCode === 'POINT_REQUEST_RECONCILIATION_CONFLICT') {
       return '本机安全状态不可验证，已停止读取积分，请联系家长处理';
     }
     return '当前操作未完成，请稍后再试';
@@ -134,7 +213,7 @@ struct Index {
         .fontSize(30)
         .fontWeight(FontWeight.Bold)
         .fontColor('#2F251E')
-      Text('儿童端 · 只看自己的积分')
+      Text('儿童端 · 看自己的积分并提交申请')
         .fontSize(15)
         .fontColor('#796B61')
       Text(this.statusText())
@@ -227,17 +306,23 @@ struct Index {
   @Builder
   private pendingCard() {
     Column({ space: 13 }) {
-      Text(this.phase === EnvelopePhase.WAITING_GUARDIAN
-        ? '还差家长确认' : '继续上次的安全操作')
+      Text(this.pointRequestPending
+        ? '继续上次的积分申报'
+        : this.phase === EnvelopePhase.WAITING_GUARDIAN
+          ? '还差家长确认' : '继续上次的安全操作')
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor('#3C3028')
-      Text(this.phase === EnvelopePhase.WAITING_GUARDIAN
-        ? '请让家长核对设备后点击确认。确认完成后，再点下面的按钮。'
-        : '应用只会使用原来的请求、签名和幂等键，不会创建第二次操作。')
+      Text(this.pointRequestPending
+        ? '为保护你的说明，这里不会重新显示正文。应用只会先对账，再原样重放安全仓中的请求。'
+        : this.phase === EnvelopePhase.WAITING_GUARDIAN
+          ? '请让家长核对设备后点击确认。确认完成后，再点下面的按钮。'
+          : '应用只会使用原来的请求、签名和幂等键，不会创建第二次操作。')
         .fontSize(15)
         .fontColor('#6F6057')
-      Button(this.phase === EnvelopePhase.WAITING_GUARDIAN ? '家长已确认，继续' : '原样恢复')
+      Button(this.pointRequestPending
+        ? '安全对账并原样恢复'
+        : this.phase === EnvelopePhase.WAITING_GUARDIAN ? '家长已确认，继续' : '原样恢复')
         .width('100%')
         .height(48)
         .enabled(this.networkReady() && !this.busy)
@@ -249,6 +334,185 @@ struct Index {
     .padding(20)
     .backgroundColor('#FFFFFF')
     .borderRadius(18)
+  }
+
+  @Builder
+  private pointRequestForm() {
+    if (this.hasSummary) {
+      Column({ space: 12 }) {
+        Row() {
+          Text('申报完成的任务')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#3C3028')
+        }
+        .width('100%')
+        Text('先选择家长当前设置的鼓励规则，再写一段不超过 120 字的说明。')
+          .width('100%')
+          .fontSize(13)
+          .fontColor('#76665C')
+        if (this.rewardRules.length === 0) {
+          Text('当前没有可申报的鼓励规则')
+            .width('100%')
+            .padding(16)
+            .fontSize(14)
+            .fontColor('#827268')
+            .textAlign(TextAlign.Center)
+            .backgroundColor('#FFF8F3')
+            .borderRadius(12)
+        } else {
+          ForEach(this.rewardRules, (rule: RewardRuleDto) => {
+            Button(`${rule.categoryLabel} · ${rule.label}`)
+              .width('100%')
+              .height(44)
+              .enabled(!this.busy)
+              .backgroundColor(this.selectedRuleId === rule.id ? '#B8663B' : '#EADFD7')
+              .fontColor(this.selectedRuleId === rule.id ? '#FFFFFF' : '#5B463A')
+              .onClick(() => this.selectRule(rule))
+          }, (rule: RewardRuleDto) => rule.id)
+        }
+        if (this.hasMoreRewardRules) {
+          Button('加载更多规则')
+            .width('100%')
+            .height(42)
+            .enabled(this.networkReady() && !this.busy)
+            .backgroundColor('#F1E8E2')
+            .fontColor('#5B463A')
+            .onClick(() => this.loadMoreRules())
+        }
+        if (this.selectedRuleId.length > 0) {
+          TextInput({ placeholder: '申报分值', text: this.requestedPoints })
+            .type(InputType.Number)
+            .enabled(!this.busy)
+            .maxLength(4)
+            .height(48)
+            .fontSize(18)
+            .backgroundColor('#FFFDFC')
+            .border({ width: 1, color: '#D7C6B8' })
+            .borderRadius(12)
+            .onChange((value: string) => {
+              this.requestedPoints = value.replace(/\D/g, '').substring(0, 4);
+            })
+          TextInput({ placeholder: '例如：今天主动整理好了书桌', text: this.description })
+            .maxLength(120)
+            .enabled(!this.busy)
+            .height(52)
+            .fontSize(15)
+            .backgroundColor('#FFFDFC')
+            .border({ width: 1, color: '#D7C6B8' })
+            .borderRadius(12)
+            .onChange((value: string) => {
+              this.description = value.replace(/[\u0000-\u001f\u007f]/g, '').substring(0, 120);
+            })
+          Button('提交给家长确认')
+            .width('100%')
+            .height(48)
+            .enabled(this.networkReady() && !this.busy && !this.pointRequestPending
+              && this.validRequestedPoints() && this.description.trim().length > 0)
+            .backgroundColor('#B8663B')
+            .fontColor('#FFFFFF')
+            .onClick(() => this.submitPointRequest())
+        }
+      }
+      .width('100%')
+      .padding(20)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(18)
+    }
+  }
+
+  private pointRequestStatus(value: PointRequestDto): string {
+    if (value.status === 'pending') return '等待家长处理';
+    if (value.status === 'needs_info') return '家长请你补充说明';
+    if (value.status === 'approved') return '已通过';
+    if (value.status === 'rejected') return '未通过';
+    return '已取消';
+  }
+
+  @Builder
+  private pointRequestList() {
+    if (this.hasSummary) {
+      Column({ space: 10 }) {
+        Row() {
+          Text('我的申请')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#3C3028')
+        }
+        .width('100%')
+        if (this.pointRequests.length === 0) {
+          Text('还没有积分申请')
+            .width('100%')
+            .padding(18)
+            .fontSize(14)
+            .fontColor('#827268')
+            .textAlign(TextAlign.Center)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(14)
+        } else {
+          ForEach(this.pointRequests, (item: PointRequestDto) => {
+            Column({ space: 6 }) {
+              Row({ space: 8 }) {
+                Text(item.rule.label)
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#40352E')
+                  .layoutWeight(1)
+                Text(this.pointRequestStatus(item))
+                  .fontSize(13)
+                  .fontColor(item.status === 'approved' ? '#25804B' : '#9A5B36')
+              }
+              .width('100%')
+              Text(`申报 ${item.requestedPoints} 分 · ${item.description}`)
+                .width('100%')
+                .fontSize(13)
+                .fontColor('#6F6057')
+                .maxLines(3)
+              if (item.requestInfo !== null) {
+                Text(`家长留言：${item.requestInfo.note}`)
+                  .width('100%')
+                  .fontSize(13)
+                  .fontColor('#9A5B36')
+                  .maxLines(3)
+              }
+              if (item.status === 'approved' && item.approvedPoints !== null) {
+                Text(`通过 ${item.approvedPoints} 分`)
+                  .width('100%')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#25804B')
+              }
+              if (item.decision !== null && item.decision.note !== null) {
+                Text(`处理说明：${item.decision.note}`)
+                  .width('100%')
+                  .fontSize(12)
+                  .fontColor('#76665C')
+                  .maxLines(3)
+              }
+              Text(new Date(item.updatedAt).toLocaleString())
+                .width('100%')
+                .fontSize(11)
+                .fontColor('#928178')
+            }
+            .alignItems(HorizontalAlign.Start)
+            .width('100%')
+            .padding(16)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(14)
+          }, (item: PointRequestDto) => item.id)
+        }
+        if (this.hasMorePointRequests) {
+          Button('加载更多申请')
+            .width('100%')
+            .height(44)
+            .enabled(this.networkReady() && !this.busy)
+            .backgroundColor('#EADFD7')
+            .fontColor('#5B463A')
+            .onClick(() => this.loadMoreRequests())
+        }
+      }
+      .width('100%')
+    }
   }
 
   @Builder
@@ -352,7 +616,8 @@ struct Index {
           this.lockedCard()
         } else if (this.phase === EnvelopePhase.UNPAIRED || this.phase === 'BOOT') {
           this.pairingCard()
-        } else if (this.phase === EnvelopePhase.CLAIM_INTENT
+        } else if (this.pointRequestPending
+            || this.phase === EnvelopePhase.CLAIM_INTENT
             || this.phase === EnvelopePhase.WAITING_GUARDIAN
             || this.phase === EnvelopePhase.COMPLETE_RESULT_UNKNOWN
             || this.phase === EnvelopePhase.REFRESH_ISSUE_INTENT
@@ -360,6 +625,8 @@ struct Index {
           this.pendingCard()
         } else {
           this.summaryCard()
+          this.pointRequestForm()
+          this.pointRequestList()
           this.transactionList()
         }
         Text('儿童生产功能门、正式隐私文本和 PIPIA 完成前，本版本不开放生产使用。')

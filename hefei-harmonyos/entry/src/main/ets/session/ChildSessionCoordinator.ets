@@ -4,9 +4,15 @@ import {
   ClaimPairingResponse,
   DEVICE_KEY_ALGORITHM,
   PairingCompletionResponse,
+  PointRequestCreateRequest,
+  PointRequestDto,
+  PointRequestResponse,
+  PointRequestsResponse,
   ProofDto,
   ProofResponse,
   RefreshResponse,
+  RewardRuleDto,
+  RewardRulesResponse,
   SessionDto,
   SummaryResponse,
   TransactionDto,
@@ -23,6 +29,14 @@ import {
   sessionFromEnvelope,
   unpairedEnvelope
 } from './SessionEnvelope';
+import {
+  bodyFromPointRequestIntent,
+  copyPointRequestIntent,
+  createPointRequestIntent,
+  emptyPointRequestIntent,
+  PointRequestIntent,
+  PointRequestIntentPhase
+} from './PointRequestIntent';
 
 const DEVICE_ALIAS: string = 'HarmonyOS 手机';
 const REFRESH_THRESHOLD_MS: number = 4 * 60 * 1000;
@@ -39,6 +53,11 @@ export interface SessionVaultPort {
   saveVerified(value: SessionEnvelope): Promise<SessionEnvelope>;
 }
 
+export interface PointRequestVaultPort {
+  load(): Promise<PointRequestIntent | null>;
+  saveVerified(value: PointRequestIntent): Promise<PointRequestIntent>;
+}
+
 export interface ChildApiPort {
   claimPairing(body: ClaimPairingRequest,
     idempotencyKey: string): Promise<ClaimPairingResponse>;
@@ -52,6 +71,12 @@ export interface ChildApiPort {
   getSummary(accessToken: string): Promise<SummaryResponse>;
   getTransactions(accessToken: string, limit: number,
     cursor: string): Promise<TransactionsResponse>;
+  getRewardRules(accessToken: string, limit: number,
+    cursor: string): Promise<RewardRulesResponse>;
+  createPointRequest(accessToken: string, bodyJson: string,
+    idempotencyKey: string): Promise<PointRequestResponse>;
+  getPointRequests(accessToken: string, limit: number,
+    cursor: string): Promise<PointRequestsResponse>;
 }
 
 export interface DeviceProofVerifierPort {
@@ -102,22 +127,31 @@ export class ChildSessionCoordinator {
   private readonly api: ChildApiPort;
   private readonly identity: DeviceIdentityPort;
   private readonly vault: SessionVaultPort;
+  private readonly pointVault: PointRequestVaultPort;
   private readonly proofVerifier: DeviceProofVerifierPort;
   private readonly secureIds: SecureIdPort;
   private envelope: SessionEnvelope | null = null;
+  private pointIntent: PointRequestIntent | null = null;
   private summaryValue: SummaryResponse | null = null;
   private transactionValues: Array<TransactionDto> = [];
   private nextCursorValue: string = '';
+  private rewardRuleValues: Array<RewardRuleDto> = [];
+  private rewardRuleRevisionValue: number = -1;
+  private nextRewardRuleCursorValue: string = '';
+  private pointRequestValues: Array<PointRequestDto> = [];
+  private nextPointRequestCursorValue: string = '';
   private operationGeneration: number = 0;
   private busyValue: boolean = false;
   private lockedValue: boolean = false;
   private statusCodeValue: string = 'BOOT';
 
   constructor(api: ChildApiPort, identity: DeviceIdentityPort, vault: SessionVaultPort,
-    proofVerifier: DeviceProofVerifierPort, secureIds: SecureIdPort) {
+    pointVault: PointRequestVaultPort, proofVerifier: DeviceProofVerifierPort,
+    secureIds: SecureIdPort) {
     this.api = api;
     this.identity = identity;
     this.vault = vault;
+    this.pointVault = pointVault;
     this.proofVerifier = proofVerifier;
     this.secureIds = secureIds;
   }
@@ -158,10 +192,36 @@ export class ChildSessionCoordinator {
     return this.nextCursorValue.length > 0;
   }
 
+  get rewardRules(): Array<RewardRuleDto> {
+    return this.rewardRuleValues.slice();
+  }
+
+  get hasMoreRewardRules(): boolean {
+    return this.nextRewardRuleCursorValue.length > 0;
+  }
+
+  get pointRequests(): Array<PointRequestDto> {
+    return this.pointRequestValues.slice();
+  }
+
+  get hasMorePointRequests(): boolean {
+    return this.nextPointRequestCursorValue.length > 0;
+  }
+
+  get pointRequestPending(): boolean {
+    return this.pointIntent !== null
+      && this.pointIntent.phase === PointRequestIntentPhase.CREATE_INTENT;
+  }
+
   private clearBusinessView(): void {
     this.summaryValue = null;
     this.transactionValues = [];
     this.nextCursorValue = '';
+    this.rewardRuleValues = [];
+    this.rewardRuleRevisionValue = -1;
+    this.nextRewardRuleCursorValue = '';
+    this.pointRequestValues = [];
+    this.nextPointRequestCursorValue = '';
   }
 
   lockForBackground(): void {
@@ -178,6 +238,7 @@ export class ChildSessionCoordinator {
     this.clearBusinessView();
     try {
       const stored: SessionEnvelope | null = await this.vault.load();
+      const storedPointIntent: PointRequestIntent | null = await this.pointVault.load();
       const keyExists: boolean = await this.identity.exists();
       if (stored === null) {
         if (keyExists) {
@@ -194,6 +255,10 @@ export class ChildSessionCoordinator {
         await this.identity.publicKeyBase64url();
         this.envelope = stored;
       }
+      this.pointIntent = storedPointIntent === null
+        ? await this.pointVault.saveVerified(emptyPointRequestIntent())
+        : storedPointIntent;
+      this.assertPointIntentBinding();
       this.lockedValue = false;
       this.statusCodeValue = this.statusForPhase();
     } catch (error) {
@@ -224,7 +289,25 @@ export class ChildSessionCoordinator {
         || this.envelope.phase === EnvelopePhase.REFRESH_COMPLETE_INTENT) {
       return 'SESSION_RECOVERY_REQUIRED';
     }
+    if (this.pointRequestPending) {
+      return 'POINT_REQUEST_RESULT_UNKNOWN';
+    }
     return 'READY';
+  }
+
+  private assertPointIntentBinding(): void {
+    if (!this.pointRequestPending) {
+      return;
+    }
+    const current: SessionEnvelope = this.requireEnvelope();
+    if (current.phase !== EnvelopePhase.ACTIVE
+        && current.phase !== EnvelopePhase.REFRESH_ISSUE_INTENT
+        && current.phase !== EnvelopePhase.REFRESH_COMPLETE_INTENT) {
+      throw new Error('LOCAL_POINT_INTENT_SCOPE_MISMATCH');
+    }
+    if (!this.pointIntent || this.pointIntent.bindingId !== current.bindingId) {
+      throw new Error('LOCAL_POINT_INTENT_SCOPE_MISMATCH');
+    }
   }
 
   private requireEnvelope(): SessionEnvelope {
@@ -242,8 +325,34 @@ export class ChildSessionCoordinator {
     return committed;
   }
 
+  private requirePointIntent(): PointRequestIntent {
+    if (!this.pointIntent || this.lockedValue) {
+      throw new Error('LOCAL_POINT_INTENT_UNAVAILABLE');
+    }
+    return this.pointIntent;
+  }
+
+  private async commitPointIntent(next: PointRequestIntent): Promise<PointRequestIntent> {
+    const current: PointRequestIntent = this.requirePointIntent();
+    next.revision = current.revision;
+    const committed: PointRequestIntent = await this.pointVault.saveVerified(next);
+    this.pointIntent = committed;
+    return committed;
+  }
+
+  private async clearPointIntent(): Promise<void> {
+    const current: PointRequestIntent = this.requirePointIntent();
+    if (current.phase === PointRequestIntentPhase.EMPTY) {
+      return;
+    }
+    const empty: PointRequestIntent = emptyPointRequestIntent();
+    empty.revision = current.revision;
+    await this.commitPointIntent(empty);
+  }
+
   private async resetToUnpaired(): Promise<void> {
     const current: SessionEnvelope = this.requireEnvelope();
+    await this.clearPointIntent();
     const next: SessionEnvelope = unpairedEnvelope(current.devicePublicId);
     next.revision = current.revision;
     this.envelope = await this.vault.saveVerified(next);
@@ -252,6 +361,19 @@ export class ChildSessionCoordinator {
 
   private async handleFailure(error: Object, pairingOperation: boolean = false): Promise<void> {
     const code: string = stableErrorCode(error);
+    if (code.startsWith('LOCAL_POINT_INTENT_')
+        || code === 'POINT_REQUEST_RECONCILIATION_CONFLICT') {
+      this.clearBusinessView();
+      this.lockedValue = true;
+      this.statusCodeValue = code;
+      return;
+    }
+    if (code === 'FEATURE_DISABLED' || code === 'CHILD_PROCESSING_BLOCKED'
+        || code === 'CHILD_DATA_INCOMPLETE') {
+      this.clearBusinessView();
+      this.statusCodeValue = code;
+      return;
+    }
     if (code === 'SESSION_REVOKED' || code === 'CONSENT_REQUIRED'
         || (pairingOperation && (code === 'PAIRING_CODE_INVALID'
           || code === 'PAIRING_CLAIM_INVALID'
@@ -260,9 +382,11 @@ export class ChildSessionCoordinator {
         await this.resetToUnpaired();
         this.statusCodeValue = code;
         return;
-      } catch (_) {
+      } catch (resetError) {
         this.lockedValue = true;
-        this.statusCodeValue = 'LOCAL_STATE_COMMIT_FAILED';
+        const resetCode: string = stableErrorCode(resetError as Object);
+        this.statusCodeValue = resetCode.startsWith('LOCAL_POINT_INTENT_')
+          ? resetCode : 'LOCAL_STATE_COMMIT_FAILED';
         return;
       }
     }
@@ -297,9 +421,10 @@ export class ChildSessionCoordinator {
       return;
     }
     this.busyValue = true;
+    const generation: number = this.operationGeneration;
     let pairingOperation: boolean = false;
     try {
-      const current: SessionEnvelope = this.requireEnvelope();
+      let current: SessionEnvelope = this.requireEnvelope();
       if (current.phase === EnvelopePhase.CLAIM_INTENT) {
         pairingOperation = true;
         await this.continuePairingClaimInternal();
@@ -310,7 +435,20 @@ export class ChildSessionCoordinator {
       } else if (current.phase === EnvelopePhase.REFRESH_ISSUE_INTENT
           || current.phase === EnvelopePhase.REFRESH_COMPLETE_INTENT) {
         await this.ensureFreshSessionInternal(true);
-        this.statusCodeValue = 'READY';
+        current = this.requireEnvelope();
+        if (this.pointRequestPending) {
+          const recovered: PointRequestDto | null = await this.sendPointRequestIntent();
+          if (generation === this.operationGeneration) {
+            this.applyRecoveredPointRequest(recovered);
+          }
+        } else if (generation === this.operationGeneration) {
+          this.statusCodeValue = 'READY';
+        }
+      } else if (current.phase === EnvelopePhase.ACTIVE && this.pointRequestPending) {
+        const recovered: PointRequestDto | null = await this.sendPointRequestIntent();
+        if (generation === this.operationGeneration) {
+          this.applyRecoveredPointRequest(recovered);
+        }
       } else {
         throw new Error('LOCAL_STATE_CONFLICT');
       }
@@ -530,6 +668,184 @@ export class ChildSessionCoordinator {
     }
   }
 
+  private async rewardRulesWithOneRefresh(cursor: string): Promise<RewardRulesResponse> {
+    let session: SessionDto = await this.ensureFreshSessionInternal(false);
+    try {
+      return await this.api.getRewardRules(session.accessToken, 50, cursor);
+    } catch (error) {
+      if (error instanceof ChildApiError && error.code === 'ACCESS_TOKEN_EXPIRED') {
+        session = await this.ensureFreshSessionInternal(true);
+        return this.api.getRewardRules(session.accessToken, 50, cursor);
+      }
+      throw throwableError(error as Object);
+    }
+  }
+
+  private async pointRequestsWithOneRefresh(cursor: string,
+    limit: number = 20): Promise<PointRequestsResponse> {
+    let session: SessionDto = await this.ensureFreshSessionInternal(false);
+    try {
+      return await this.api.getPointRequests(session.accessToken, limit, cursor);
+    } catch (error) {
+      if (error instanceof ChildApiError && error.code === 'ACCESS_TOKEN_EXPIRED') {
+        session = await this.ensureFreshSessionInternal(true);
+        return this.api.getPointRequests(session.accessToken, limit, cursor);
+      }
+      throw throwableError(error as Object);
+    }
+  }
+
+  private pointRequestMatchesIntent(value: PointRequestDto,
+    body: PointRequestCreateRequest): boolean {
+    return value.clientRequestId === body.clientRequestId
+      && value.rule.id === body.ruleId
+      && value.requestedPoints === body.requestedPoints
+      && value.description === body.description;
+  }
+
+  private async createPointRequestWithOneRefresh(
+    intent: PointRequestIntent): Promise<PointRequestResponse> {
+    let session: SessionDto = await this.ensureFreshSessionInternal(false);
+    try {
+      return await this.dispatchPointRequest(
+        session.accessToken, intent.bodyJson, intent.idempotencyKey
+      );
+    } catch (error) {
+      if (error instanceof ChildApiError && error.code === 'ACCESS_TOKEN_EXPIRED') {
+        session = await this.ensureFreshSessionInternal(true);
+        return this.dispatchPointRequest(
+          session.accessToken, intent.bodyJson, intent.idempotencyKey
+        );
+      }
+      throw throwableError(error as Object);
+    }
+  }
+
+  private async dispatchPointRequest(accessToken: string, bodyJson: string,
+    idempotencyKey: string): Promise<PointRequestResponse> {
+    try {
+      return await this.api.createPointRequest(accessToken, bodyJson, idempotencyKey);
+    } catch (error) {
+      if (error instanceof ChildApiError && error.code === 'IDEMPOTENCY_REPLAY_STALE') {
+        throw new ChildApiError('POINT_REQUEST_REPLAY_STALE', error.status, false, false);
+      }
+      throw throwableError(error as Object);
+    }
+  }
+
+  private preservePointIntent(error: ChildApiError): boolean {
+    return error.outcomeUnknown || error.transient
+      || error.code === 'FEATURE_DISABLED'
+      || error.code === 'LOCAL_ENVIRONMENT_DISABLED'
+      || error.code === 'CHILD_PROCESSING_BLOCKED'
+      || error.code === 'CHILD_DATA_INCOMPLETE'
+      || error.code === 'PROTOCOL_ERROR'
+      || error.code === 'ACCESS_TOKEN_EXPIRED';
+  }
+
+  private async sendPointRequestIntent(): Promise<PointRequestDto | null> {
+    this.assertPointIntentBinding();
+    const intent: PointRequestIntent = copyPointRequestIntent(this.requirePointIntent());
+    const body: PointRequestCreateRequest = bodyFromPointRequestIntent(intent);
+    let createAttempted: boolean = false;
+    try {
+      const mine: PointRequestsResponse = await this.pointRequestsWithOneRefresh('', 50);
+      const matching: PointRequestDto | undefined = mine.pointRequests.find(
+        (value: PointRequestDto) => value.clientRequestId === body.clientRequestId
+      );
+      if (matching !== undefined) {
+        if (!this.pointRequestMatchesIntent(matching, body)) {
+          throw new Error('POINT_REQUEST_RECONCILIATION_CONFLICT');
+        }
+        await this.clearPointIntent();
+        return matching;
+      }
+
+      createAttempted = true;
+      const response: PointRequestResponse = await this.createPointRequestWithOneRefresh(intent);
+      if (!this.pointRequestMatchesIntent(response.pointRequest, body)) {
+        throw new Error('POINT_REQUEST_RECONCILIATION_CONFLICT');
+      }
+      await this.clearPointIntent();
+      return response.pointRequest;
+    } catch (error) {
+      if (error instanceof ChildApiError
+          && (error.code === 'IDEMPOTENCY_CONFLICT'
+            || error.code === 'IDEMPOTENCY_RESULT_UNAVAILABLE')) {
+        throw new Error('POINT_REQUEST_RECONCILIATION_CONFLICT');
+      }
+      if (error instanceof ChildApiError && error.code === 'POINT_REQUEST_REPLAY_STALE') {
+        await this.clearPointIntent();
+        return null;
+      }
+      if (error instanceof ChildApiError && createAttempted
+          && !this.preservePointIntent(error)) {
+        await this.clearPointIntent();
+      }
+      throw throwableError(error as Object);
+    }
+  }
+
+  private applyRecoveredPointRequest(value: PointRequestDto | null): void {
+    if (value !== null) {
+      this.pointRequestValues = [value].concat(
+        this.pointRequestValues.filter((item: PointRequestDto) => item.id !== value.id)
+      );
+      this.statusCodeValue = 'POINT_REQUEST_SUBMITTED';
+    } else {
+      this.statusCodeValue = 'POINT_REQUEST_RECONCILED';
+    }
+  }
+
+  async submitPointRequest(ruleId: string, requestedPoints: number,
+    description: string): Promise<void> {
+    if (this.busyValue || this.lockedValue || this.pointRequestPending) {
+      return;
+    }
+    this.busyValue = true;
+    const generation: number = this.operationGeneration;
+    try {
+      const rule: RewardRuleDto | undefined = this.rewardRuleValues.find(
+        (value: RewardRuleDto) => value.id === ruleId
+      );
+      const normalizedDescription: string = description.trim().normalize('NFC');
+      if (rule === undefined || !Number.isSafeInteger(requestedPoints)
+          || requestedPoints < rule.minPoints || requestedPoints > rule.maxPoints
+          || requestedPoints <= 0 || normalizedDescription.length < 1
+          || normalizedDescription.length > 120
+          || /[\u0000-\u001f\u007f]/.test(normalizedDescription)) {
+        throw new Error('VALIDATION_ERROR');
+      }
+      await this.ensureFreshSessionInternal(false);
+      const current: SessionEnvelope = this.requireEnvelope();
+      if (current.phase !== EnvelopePhase.ACTIVE) {
+        throw new Error('SESSION_RECOVERY_REQUIRED');
+      }
+      const body: PointRequestCreateRequest = {
+        clientRequestId: this.secureIds.idempotencyKey('point-client'),
+        ruleId: rule.id,
+        requestedPoints,
+        description: normalizedDescription
+      };
+      const intent: PointRequestIntent = createPointRequestIntent(
+        current.bindingId,
+        body,
+        this.secureIds.idempotencyKey('point-create')
+      );
+      intent.revision = this.requirePointIntent().revision;
+      await this.commitPointIntent(intent);
+      const created: PointRequestDto | null = await this.sendPointRequestIntent();
+      if (generation !== this.operationGeneration) {
+        return;
+      }
+      this.applyRecoveredPointRequest(created);
+    } catch (error) {
+      await this.handleFailure(error as Object);
+    } finally {
+      this.busyValue = false;
+    }
+  }
+
   async refreshSelf(): Promise<void> {
     if (this.busyValue || this.lockedValue) {
       return;
@@ -543,8 +859,13 @@ export class ChildSessionCoordinator {
           && current.phase !== EnvelopePhase.REFRESH_COMPLETE_INTENT) {
         throw new Error('PAIRING_REQUIRED');
       }
+      if (this.pointRequestPending) {
+        throw new Error('POINT_REQUEST_RECOVERY_REQUIRED');
+      }
       const summary: SummaryResponse = await this.summaryWithOneRefresh();
       const transactions: TransactionsResponse = await this.transactionsWithOneRefresh('');
+      const rewardRules: RewardRulesResponse = await this.rewardRulesWithOneRefresh('');
+      const pointRequests: PointRequestsResponse = await this.pointRequestsWithOneRefresh('');
       if (generation !== this.operationGeneration) {
         return;
       }
@@ -552,6 +873,13 @@ export class ChildSessionCoordinator {
       this.transactionValues = transactions.transactions;
       this.nextCursorValue = transactions.page.nextCursor === null
         ? '' : transactions.page.nextCursor;
+      this.rewardRuleValues = rewardRules.rewardRules;
+      this.rewardRuleRevisionValue = rewardRules.revision;
+      this.nextRewardRuleCursorValue = rewardRules.page.nextCursor === null
+        ? '' : rewardRules.page.nextCursor;
+      this.pointRequestValues = pointRequests.pointRequests;
+      this.nextPointRequestCursorValue = pointRequests.nextCursor === null
+        ? '' : pointRequests.nextCursor;
       this.statusCodeValue = 'READY';
     } catch (error) {
       this.clearBusinessView();
@@ -575,6 +903,68 @@ export class ChildSessionCoordinator {
       }
       this.transactionValues = this.transactionValues.concat(response.transactions);
       this.nextCursorValue = response.page.nextCursor === null ? '' : response.page.nextCursor;
+      this.statusCodeValue = 'READY';
+    } catch (error) {
+      await this.handleFailure(error as Object);
+    } finally {
+      this.busyValue = false;
+    }
+  }
+
+  async loadMoreRewardRules(): Promise<void> {
+    if (this.busyValue || this.lockedValue || this.nextRewardRuleCursorValue.length === 0) {
+      return;
+    }
+    this.busyValue = true;
+    const generation: number = this.operationGeneration;
+    const cursor: string = this.nextRewardRuleCursorValue;
+    try {
+      let response: RewardRulesResponse;
+      try {
+        response = await this.rewardRulesWithOneRefresh(cursor);
+        if (response.revision !== this.rewardRuleRevisionValue) {
+          throw new ChildApiError('REWARD_RULES_CHANGED', 409, false, false);
+        }
+      } catch (error) {
+        if (!(error instanceof ChildApiError) || error.code !== 'REWARD_RULES_CHANGED') {
+          throw throwableError(error as Object);
+        }
+        response = await this.rewardRulesWithOneRefresh('');
+        this.rewardRuleValues = [];
+      }
+      if (generation !== this.operationGeneration) {
+        return;
+      }
+      this.rewardRuleValues = this.rewardRuleValues.concat(response.rewardRules);
+      this.rewardRuleRevisionValue = response.revision;
+      this.nextRewardRuleCursorValue = response.page.nextCursor === null
+        ? '' : response.page.nextCursor;
+      this.statusCodeValue = 'READY';
+    } catch (error) {
+      this.rewardRuleValues = [];
+      this.rewardRuleRevisionValue = -1;
+      this.nextRewardRuleCursorValue = '';
+      await this.handleFailure(error as Object);
+    } finally {
+      this.busyValue = false;
+    }
+  }
+
+  async loadMorePointRequests(): Promise<void> {
+    if (this.busyValue || this.lockedValue || this.nextPointRequestCursorValue.length === 0) {
+      return;
+    }
+    this.busyValue = true;
+    const generation: number = this.operationGeneration;
+    const cursor: string = this.nextPointRequestCursorValue;
+    try {
+      const response: PointRequestsResponse = await this.pointRequestsWithOneRefresh(cursor);
+      if (generation !== this.operationGeneration) {
+        return;
+      }
+      this.pointRequestValues = this.pointRequestValues.concat(response.pointRequests);
+      this.nextPointRequestCursorValue = response.nextCursor === null
+        ? '' : response.nextCursor;
       this.statusCodeValue = 'READY';
     } catch (error) {
       await this.handleFailure(error as Object);

@@ -7,12 +7,19 @@ import {
   parseApiErrorCode,
   parseClaimResponse,
   parseCompletionResponse,
+  parsePointRequestCreateRequest,
+  parsePointRequestResponse,
+  parsePointRequestsResponse,
   parseProofResponse,
   parseRefreshResponse,
+  parseRewardRulesResponse,
   parseSummaryResponse,
   parseTransactionsResponse,
+  PointRequestResponse,
+  PointRequestsResponse,
   ProofResponse,
   RefreshResponse,
+  RewardRulesResponse,
   SessionDto,
   SummaryResponse,
   TransactionsResponse,
@@ -69,17 +76,63 @@ function methodValue(method: string): http.RequestMethod {
   throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
 }
 
-function allowedTransportPath(path: string): boolean {
-  if (path === '/api/v2/device-pairings/claim-by-code'
-      || path === '/api/v2/device-pairings/claim/complete'
-      || path === '/api/v2/device-sessions/refresh'
-      || path === '/api/v2/me/summary') {
-    return true;
+function validIdempotencyKey(value: string): boolean {
+  return /^[\x21-\x7e]{16,128}$/.test(value);
+}
+
+function accessBearer(value: string): boolean {
+  return /^tg_access\.[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function refreshBearer(value: string): boolean {
+  return /^tg_refresh\.[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function claimBearer(value: string): boolean {
+  return /^tg_claim\.[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function pagedPath(path: string, endpoint: string, fixedCursorLength: number = 0): boolean {
+  const escaped: string = endpoint.replace(/\//g, '\\/');
+  const cursor: string = fixedCursorLength > 0
+    ? `[A-Za-z0-9_-]{${fixedCursorLength}}`
+    : '[A-Za-z0-9_-]{40,400}';
+  return new RegExp(`^${escaped}\\?limit=(?:[1-9]|[1-4][0-9]|50)(?:&cursor=${cursor})?$`)
+    .test(path);
+}
+
+export function isAllowedTransportRequest(value: TransportRequest): boolean {
+  if (value.path === '/api/v2/device-pairings/claim-by-code') {
+    return value.method === 'POST' && value.mutating && value.bearer.length === 0
+      && validIdempotencyKey(value.idempotencyKey) && value.body.length > 0;
   }
-  if (/^\/api\/v2\/me\/transactions\?limit=(?:[1-9]|[1-4][0-9]|50)(?:&cursor=[A-Za-z0-9_-]{92})?$/.test(path)) {
-    return true;
+  if (value.path === '/api/v2/device-pairings/claim/complete') {
+    return value.method === 'POST' && value.mutating && claimBearer(value.bearer)
+      && validIdempotencyKey(value.idempotencyKey) && value.body.length > 0;
   }
-  return /^\/api\/v2\/devices\/[A-Za-z0-9_-]{8,128}\/session-challenges$/.test(path);
+  if (value.path === '/api/v2/device-sessions/refresh') {
+    return value.method === 'POST' && value.mutating && refreshBearer(value.bearer)
+      && validIdempotencyKey(value.idempotencyKey) && value.body.length > 0;
+  }
+  if (/^\/api\/v2\/devices\/[A-Za-z0-9_-]{8,128}\/session-challenges$/.test(value.path)) {
+    return value.method === 'POST' && value.mutating && refreshBearer(value.bearer)
+      && validIdempotencyKey(value.idempotencyKey) && value.body.length === 0;
+  }
+  if (value.path === '/api/v2/me/summary') {
+    return value.method === 'GET' && !value.mutating && accessBearer(value.bearer)
+      && value.idempotencyKey.length === 0 && value.body.length === 0;
+  }
+  if (pagedPath(value.path, '/api/v2/me/transactions', 92)
+      || pagedPath(value.path, '/api/v2/me/reward-rules')
+      || pagedPath(value.path, '/api/v2/me/point-requests')) {
+    return value.method === 'GET' && !value.mutating && accessBearer(value.bearer)
+      && value.idempotencyKey.length === 0 && value.body.length === 0;
+  }
+  if (value.path === '/api/v2/point-requests') {
+    return value.method === 'POST' && value.mutating && accessBearer(value.bearer)
+      && validIdempotencyKey(value.idempotencyKey) && value.body.length > 0;
+  }
+  return false;
 }
 
 export class HarmonyHttpTransport implements ApiTransport {
@@ -89,7 +142,7 @@ export class HarmonyHttpTransport implements ApiTransport {
     } catch (_) {
       throw new ChildApiError('LOCAL_ENVIRONMENT_DISABLED', 0, false, false);
     }
-    if (!allowedTransportPath(value.path) || value.path.includes('://')
+    if (!isAllowedTransportRequest(value) || value.path.includes('://')
         || value.path.includes('\\') || value.path.includes('\r') || value.path.includes('\n')) {
       throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
     }
@@ -148,11 +201,12 @@ export class HarmonyHttpTransport implements ApiTransport {
 }
 
 function statusError(response: TransportResponse, mutating: boolean): ChildApiError {
-  if (response.status >= 500) {
+  if (response.status >= 500 || response.status === 429) {
     return new ChildApiError('SERVER_UNAVAILABLE', response.status, mutating, true);
   }
-  return new ChildApiError(parseApiErrorCode(response.body), response.status, false,
-    response.status === 429);
+  const code: string = parseApiErrorCode(response.body);
+  const outcomeUnknown: boolean = mutating && code === 'PROTOCOL_ERROR';
+  return new ChildApiError(code, response.status, outcomeUnknown, outcomeUnknown);
 }
 
 function protocolFailure(mutating: boolean): ChildApiError {
@@ -281,6 +335,69 @@ export class ChildApiClient {
     });
     try {
       return parseTransactionsResponse(response.body);
+    } catch (_) {
+      throw protocolFailure(false);
+    }
+  }
+
+  async getRewardRules(accessToken: string, limit: number,
+    cursor: string = ''): Promise<RewardRulesResponse> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50
+        || (cursor.length > 0 && !/^[A-Za-z0-9_-]{40,400}$/.test(cursor))) {
+      throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
+    }
+    const path: string = cursor.length > 0
+      ? `/api/v2/me/reward-rules?limit=${limit}&cursor=${encodeURIComponent(cursor)}`
+      : `/api/v2/me/reward-rules?limit=${limit}`;
+    const response: TransportResponse = await this.send({
+      method: 'GET', path, body: '', bearer: accessToken,
+      idempotencyKey: '', mutating: false
+    });
+    try {
+      return parseRewardRulesResponse(response.body);
+    } catch (_) {
+      throw protocolFailure(false);
+    }
+  }
+
+  async createPointRequest(accessToken: string, bodyJson: string,
+    idempotencyKey: string): Promise<PointRequestResponse> {
+    let clientRequestId: string;
+    try {
+      clientRequestId = parsePointRequestCreateRequest(bodyJson).clientRequestId;
+    } catch (_) {
+      throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
+    }
+    const response: TransportResponse = await this.send({
+      method: 'POST',
+      path: '/api/v2/point-requests',
+      body: bodyJson,
+      bearer: accessToken,
+      idempotencyKey,
+      mutating: true
+    });
+    try {
+      return parsePointRequestResponse(response.body, clientRequestId);
+    } catch (_) {
+      throw protocolFailure(true);
+    }
+  }
+
+  async getPointRequests(accessToken: string, limit: number,
+    cursor: string = ''): Promise<PointRequestsResponse> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50
+        || (cursor.length > 0 && !/^[A-Za-z0-9_-]{40,400}$/.test(cursor))) {
+      throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
+    }
+    const path: string = cursor.length > 0
+      ? `/api/v2/me/point-requests?limit=${limit}&cursor=${encodeURIComponent(cursor)}`
+      : `/api/v2/me/point-requests?limit=${limit}`;
+    const response: TransportResponse = await this.send({
+      method: 'GET', path, body: '', bearer: accessToken,
+      idempotencyKey: '', mutating: false
+    });
+    try {
+      return parsePointRequestsResponse(response.body);
     } catch (_) {
       throw protocolFailure(false);
     }

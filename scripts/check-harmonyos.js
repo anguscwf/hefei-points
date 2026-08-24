@@ -22,7 +22,10 @@ const allowedApiPaths = new Set([
   '/api/v2/device-pairings/claim/complete',
   '/api/v2/device-sessions/refresh',
   '/api/v2/me/summary',
-  '/api/v2/me/transactions'
+  '/api/v2/me/transactions',
+  '/api/v2/me/reward-rules',
+  '/api/v2/me/point-requests',
+  '/api/v2/point-requests'
 ]);
 
 function filesIn(directory, predicate) {
@@ -407,6 +410,37 @@ function checkSecurityPrimitives(harmonyRoot, files) {
       errors.push(`entry/src/main: AssetStore session must set ${requirement[0]}`);
     }
   }
+  const writerRequirements = [
+    ['DEVICE_UNLOCKED', /asset\.Tag\.ACCESSIBILITY\s*,\s*asset\.Accessibility\.DEVICE_UNLOCKED/],
+    ['SYNC_TYPE=NEVER', /asset\.Tag\.SYNC_TYPE\s*,\s*asset\.SyncType\.NEVER/],
+    ['REQUIRE_PASSWORD_SET=true', /asset\.Tag\.REQUIRE_PASSWORD_SET\s*,\s*true/],
+    ['IS_PERSISTENT=false', /asset\.Tag\.IS_PERSISTENT\s*,\s*false/]
+  ];
+  for (const filename of files.filter(value => /\.(?:ets|ts)$/i.test(value))) {
+    const source = codeWithoutComments(fs.readFileSync(filename, 'utf8'));
+    for (const call of callExpressions(source, /\basset\s*\.\s*add\s*\(/g)) {
+      const writer = splitTopLevelArguments(call.argumentsText)[0] || '';
+      let writerBlock = '';
+      if (/^[A-Za-z_$][\w$]*$/.test(writer)) {
+        const declaration = new RegExp(
+          `\\b(?:const|let|var)\\s+${writer}(?:\\s*:[^=;]+)?\\s*=\\s*new\\s+Map\\s*\\(`,
+          'g'
+        );
+        let match;
+        let latest = null;
+        while ((match = declaration.exec(source)) && match.index < call.start) latest = match;
+        if (latest) writerBlock = source.slice(latest.index, call.start);
+      }
+      for (const requirement of writerRequirements) {
+        const scoped = new RegExp(
+          `\\b${writer}\\s*\\.\\s*set\\s*\\(\\s*${requirement[1].source}`
+        );
+        if (!writerBlock || !scoped.test(writerBlock)) {
+          errors.push(`${relative(harmonyRoot, filename)}: AssetStore writer must set ${requirement[0]}`);
+        }
+      }
+    }
+  }
   return errors;
 }
 
@@ -462,6 +496,9 @@ function checkApiBoundary(harmonyRoot, files) {
       if (!candidate.startsWith('/api/') && !/^\/v[12]\//.test(candidate)) continue;
       if (!isAllowedApiPath(candidate)) {
         errors.push(`${relative(harmonyRoot, filename)}: API path is outside the child-device allowlist: ${candidate.split(/[?#]/, 1)[0]}`);
+      } else if (normalizeApiPath(candidate) === '/api/v2/point-requests'
+          && relative(harmonyRoot, filename) !== 'entry/src/main/ets/network/ApiClient.ets') {
+        errors.push(`${relative(harmonyRoot, filename)}: point creation path must stay inside the method-scoped API client`);
       }
     }
     for (const call of callExpressions(source, requestPattern)) {
@@ -487,6 +524,26 @@ function checkApiBoundary(harmonyRoot, files) {
   return errors;
 }
 
+function checkMethodScopedMutation(harmonyRoot, files) {
+  const hasPointCreationPath = files.some(filename => stringLiterals(
+    fs.readFileSync(filename, 'utf8')
+  ).some(literal => normalizeApiPath(literal.body) === '/api/v2/point-requests'));
+  if (!hasPointCreationPath) return [];
+  const filename = path.join(
+    harmonyRoot, 'entry', 'src', 'main', 'ets', 'network', 'ApiClient.ets'
+  );
+  if (!files.includes(filename)) {
+    return ['entry/src/main/ets/network/ApiClient.ets: method-scoped point creation gate is required'];
+  }
+  const source = codeWithoutComments(fs.readFileSync(filename, 'utf8'));
+  const pointBlock = /value\.path\s*===\s*['"]\/api\/v2\/point-requests['"][\s\S]{0,500}value\.method\s*===\s*['"]POST['"][\s\S]{0,500}value\.mutating[\s\S]{0,500}accessBearer\s*\(\s*value\.bearer\s*\)[\s\S]{0,500}validIdempotencyKey\s*\(\s*value\.idempotencyKey\s*\)/;
+  if (!/export\s+function\s+isAllowedTransportRequest\s*\(/.test(source)
+      || !pointBlock.test(source)) {
+    return ['entry/src/main/ets/network/ApiClient.ets: point creation must require POST, Access bearer, mutation mode and idempotency'];
+  }
+  return [];
+}
+
 function scan(options = {}) {
   const harmonyRoot = path.resolve(options.harmonyRoot || defaultHarmonyRoot);
   const mainRoot = path.join(harmonyRoot, mainSourceRelative);
@@ -503,7 +560,8 @@ function scan(options = {}) {
     ...checkEmbeddedCredentials(harmonyRoot, files),
     ...checkSecurityPrimitives(harmonyRoot, files),
     ...checkEnvironmentPolicy(harmonyRoot, files),
-    ...checkApiBoundary(harmonyRoot, files)
+    ...checkApiBoundary(harmonyRoot, files),
+    ...checkMethodScopedMutation(harmonyRoot, files)
   ];
 }
 
@@ -529,5 +587,6 @@ module.exports = {
   checkSecurityPrimitives,
   checkEnvironmentPolicy,
   checkApiBoundary,
+  checkMethodScopedMutation,
   isAllowedApiPath
 };

@@ -3,6 +3,7 @@ import {
   ApiTransport,
   ChildApiClient,
   ChildApiError,
+  isAllowedTransportRequest,
   TransportRequest,
   TransportResponse
 } from '../main/ets/network/ApiClient';
@@ -17,6 +18,18 @@ class RecordingTransport implements ApiTransport {
   async request(value: TransportRequest): Promise<TransportResponse> {
     this.requests.push(value);
     return { status: 200, body: '{}' };
+  }
+}
+
+class FixedResponseTransport implements ApiTransport {
+  private readonly response: TransportResponse;
+
+  constructor(response: TransportResponse) {
+    this.response = response;
+  }
+
+  async request(_value: TransportRequest): Promise<TransportResponse> {
+    return this.response;
   }
 }
 
@@ -85,8 +98,28 @@ export default function clientTests(): void {
         20,
         'A'.repeat(92)
       )));
+      errors.push(await captureProtocolError(client.getRewardRules(
+        session.accessToken,
+        50,
+        'B'.repeat(120)
+      )));
+      errors.push(await captureProtocolError(client.createPointRequest(
+        session.accessToken,
+        JSON.stringify({
+          clientRequestId: 'hmos-point-client-synthetic-0001',
+          ruleId: 'reward_synthetic',
+          requestedPoints: 4,
+          description: '合成文字申报'
+        }),
+        'point-create-idempotency-0001'
+      )));
+      errors.push(await captureProtocolError(client.getPointRequests(
+        session.accessToken,
+        20,
+        'C'.repeat(120)
+      )));
 
-      expect(transport.requests.length).assertEqual(6);
+      expect(transport.requests.length).assertEqual(9);
       expect(transport.requests[0].method).assertEqual('POST');
       expect(transport.requests[0].path).assertEqual('/api/v2/device-pairings/claim-by-code');
       expect(transport.requests[0].body).assertContain('"shortCode":"123456"');
@@ -132,13 +165,144 @@ export default function clientTests(): void {
       expect(transport.requests[5].idempotencyKey).assertEqual('');
       expect(transport.requests[5].mutating).assertFalse();
 
+      expect(transport.requests[6].method).assertEqual('GET');
+      expect(transport.requests[6].path).assertEqual(
+        `/api/v2/me/reward-rules?limit=50&cursor=${'B'.repeat(120)}`
+      );
+      expect(transport.requests[6].bearer).assertEqual(session.accessToken);
+      expect(transport.requests[6].idempotencyKey).assertEqual('');
+      expect(transport.requests[6].mutating).assertFalse();
+
+      expect(transport.requests[7].method).assertEqual('POST');
+      expect(transport.requests[7].path).assertEqual('/api/v2/point-requests');
+      expect(transport.requests[7].body).assertContain('"ruleId":"reward_synthetic"');
+      expect(transport.requests[7].bearer).assertEqual(session.accessToken);
+      expect(transport.requests[7].idempotencyKey)
+        .assertEqual('point-create-idempotency-0001');
+      expect(transport.requests[7].mutating).assertTrue();
+
+      expect(transport.requests[8].method).assertEqual('GET');
+      expect(transport.requests[8].path).assertEqual(
+        `/api/v2/me/point-requests?limit=20&cursor=${'C'.repeat(120)}`
+      );
+      expect(transport.requests[8].bearer).assertEqual(session.accessToken);
+      expect(transport.requests[8].idempotencyKey).assertEqual('');
+      expect(transport.requests[8].mutating).assertFalse();
+
       expect(errors[0].outcomeUnknown).assertTrue();
       expect(errors[1].outcomeUnknown).assertTrue();
       expect(errors[2].outcomeUnknown).assertTrue();
       expect(errors[3].outcomeUnknown).assertTrue();
       expect(errors[4].outcomeUnknown).assertFalse();
       expect(errors[5].outcomeUnknown).assertFalse();
+      expect(errors[6].outcomeUnknown).assertFalse();
+      expect(errors[7].outcomeUnknown).assertTrue();
+      expect(errors[8].outcomeUnknown).assertFalse();
       expect(errors[0].code).assertEqual('PROTOCOL_ERROR');
+    });
+
+    it('allows child point creation only through the exact POST matrix', 0, () => {
+      const session: SessionDto = syntheticSession();
+      const create: TransportRequest = {
+        method: 'POST',
+        path: '/api/v2/point-requests',
+        body: '{"synthetic":true}',
+        bearer: session.accessToken,
+        idempotencyKey: 'point-create-idempotency-0001',
+        mutating: true
+      };
+      expect(isAllowedTransportRequest(create)).assertTrue();
+      expect(isAllowedTransportRequest({
+        method: 'GET',
+        path: create.path,
+        body: '',
+        bearer: session.accessToken,
+        idempotencyKey: '',
+        mutating: false
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: 'POST',
+        path: create.path,
+        body: create.body,
+        bearer: session.accessToken,
+        idempotencyKey: '',
+        mutating: true
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: 'POST',
+        path: create.path,
+        body: create.body,
+        bearer: session.accessToken,
+        idempotencyKey: create.idempotencyKey,
+        mutating: false
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: 'GET',
+        path: '/api/v2/point-requests?limit=20',
+        body: '',
+        bearer: session.accessToken,
+        idempotencyKey: '',
+        mutating: false
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: 'POST',
+        path: '/api/v2/me/point-requests?limit=20',
+        body: create.body,
+        bearer: session.accessToken,
+        idempotencyKey: create.idempotencyKey,
+        mutating: true
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: 'POST',
+        path: '/api/v2/device-sessions/refresh',
+        body: '{"synthetic":true}',
+        bearer: session.accessToken,
+        idempotencyKey: 'refresh-idempotency-0001',
+        mutating: true
+      })).assertFalse();
+    });
+
+    it('treats a malformed mutation error response as outcome unknown', 0, async () => {
+      const client: ChildApiClient = new ChildApiClient(new FixedResponseTransport({
+        status: 409,
+        body: '<synthetic-invalid-error>'
+      }));
+      const error: ChildApiError = await captureProtocolError(client.createPointRequest(
+        `tg_access.${'a'.repeat(43)}`,
+        JSON.stringify({
+          clientRequestId: 'hmos-point-client-synthetic-0001',
+          ruleId: 'reward_synthetic',
+          requestedPoints: 4,
+          description: '合成文字申报'
+        }),
+        'point-create-idempotency-0001'
+      ));
+
+      expect(error.code).assertEqual('PROTOCOL_ERROR');
+      expect(error.outcomeUnknown).assertTrue();
+      expect(error.transient).assertTrue();
+    });
+
+    it('keeps a rate-limited point mutation outcome unknown for exact replay', 0, async () => {
+      const client: ChildApiClient = new ChildApiClient(new FixedResponseTransport({
+        status: 429,
+        body: '{"success":false,"code":"RATE_LIMITED","message":"synthetic"}'
+      }));
+      const error: ChildApiError = await captureProtocolError(client.createPointRequest(
+        `tg_access.${'a'.repeat(43)}`,
+        JSON.stringify({
+          clientRequestId: 'hmos-point-client-rate-limit-0001',
+          ruleId: 'reward_synthetic',
+          requestedPoints: 4,
+          description: '合成限流重放'
+        }),
+        'point-create-rate-limit-key-0001'
+      ));
+
+      expect(error.code).assertEqual('SERVER_UNAVAILABLE');
+      expect(error.status).assertEqual(429);
+      expect(error.outcomeUnknown).assertTrue();
+      expect(error.transient).assertTrue();
     });
 
     it('rejects a non-canonical transaction cursor before transport', 0, async () => {

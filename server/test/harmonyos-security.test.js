@@ -38,6 +38,7 @@ function createFixture() {
     '  attributes.set(asset.Tag.SYNC_TYPE, asset.SyncType.NEVER);',
     '  attributes.set(asset.Tag.REQUIRE_PASSWORD_SET, true);',
     '  attributes.set(asset.Tag.IS_PERSISTENT, false);',
+    '  asset.add(attributes);',
     '  asset.query(new Map());',
     '}'
   ].join('\n'));
@@ -170,6 +171,33 @@ test('静态门拒绝动态日志、启网默认值及缺失 HUKS/AssetStore', (
   });
 });
 
+test('每一个 AssetStore 写入实现都必须独立声明全部安全属性', () => {
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/security/UnsafePointVault.ets', [
+      "import { asset } from '@kit.AssetStoreKit';",
+      'export function savePointIntent(): void {',
+      '  const safe = new Map();',
+      '  safe.set(asset.Tag.ACCESSIBILITY, asset.Accessibility.DEVICE_UNLOCKED);',
+      '  safe.set(asset.Tag.SYNC_TYPE, asset.SyncType.NEVER);',
+      '  safe.set(asset.Tag.REQUIRE_PASSWORD_SET, true);',
+      '  safe.set(asset.Tag.IS_PERSISTENT, false);',
+      '  asset.add(safe);',
+      '  const unsafe = new Map();',
+      "  unsafe.set(asset.Tag.ALIAS, new Uint8Array([1]));",
+      "  unsafe.set(asset.Tag.SECRET, new Uint8Array([2]));",
+      '  asset.add(unsafe);',
+      '}'
+    ].join('\n'));
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    for (const fragment of [
+      'UnsafePointVault.ets: AssetStore writer must set DEVICE_UNLOCKED',
+      'UnsafePointVault.ets: AssetStore writer must set SYNC_TYPE=NEVER',
+      'UnsafePointVault.ets: AssetStore writer must set REQUIRE_PASSWORD_SET=true',
+      'UnsafePointVault.ets: AssetStore writer must set IS_PERSISTENT=false'
+    ]) assertHas(errors, fragment);
+  });
+});
+
 test('静态门拒绝成人/legacy API 与请求中的客户端身份选择', () => {
   withFixture(root => {
     write(root, 'entry/src/main/ets/network/UnsafeApi.ets', [
@@ -180,6 +208,10 @@ test('静态门拒绝成人/legacy API 与请求中的客户端身份选择', ()
       "const payload = { childId: 'synthetic-child' };",
       "requestJson('/api/v2/device-pairings/claim-by-code', payload);"
     ].join('\n'));
+    write(root, 'entry/src/main/ets/network/UnsafeAdultPointList.ets', [
+      "const adultPointList = '/api/v2/point-requests';",
+      "requestJson(adultPointList, { method: 'GET' });"
+    ].join('\n'));
     const errors = harmonyCheck.scan({ harmonyRoot: root });
     assert.ok(
       errors.filter(error => error.includes('outside the child-device allowlist')).length >= 3,
@@ -187,6 +219,7 @@ test('静态门拒绝成人/legacy API 与请求中的客户端身份选择', ()
     );
     assertHas(errors, 'business request contains a client-selected identity field');
     assertHas(errors, 'business request variable contains a client-selected identity field');
+    assertHas(errors, 'point creation path must stay inside the method-scoped API client');
   });
 });
 

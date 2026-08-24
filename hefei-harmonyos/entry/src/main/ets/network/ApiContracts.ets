@@ -11,6 +11,8 @@ const ACCESS_TOKEN_PATTERN: RegExp = /^tg_access\.[A-Za-z0-9_-]{43}$/;
 const REFRESH_TOKEN_PATTERN: RegExp = /^tg_refresh\.[A-Za-z0-9_-]{43}$/;
 const SHA256_PATTERN: RegExp = /^[0-9a-f]{64}$/;
 const API_CODE_PATTERN: RegExp = /^[A-Z][A-Z0-9_]{2,63}$/;
+const CLIENT_REQUEST_ID_PATTERN: RegExp = /^[A-Za-z0-9._:-]{8,128}$/;
+const POINT_REQUEST_ID_PATTERN: RegExp = /^point_request_[a-f0-9]{32}$/;
 
 export class ContractError extends Error {
   readonly code: string;
@@ -126,6 +128,89 @@ export interface TransactionsResponse {
   page: TransactionPageDto;
 }
 
+export interface RewardRuleDto {
+  id: string;
+  categoryId: string;
+  categoryLabel: string;
+  label: string;
+  unit: string;
+  minPoints: number;
+  defaultPoints: number;
+  maxPoints: number;
+}
+
+export interface RewardRulePageDto {
+  limit: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export interface RewardRulesResponse {
+  success: boolean;
+  revision: number;
+  rewardRules: Array<RewardRuleDto>;
+  page: RewardRulePageDto;
+}
+
+export interface PointRequestCreateRequest {
+  clientRequestId: string;
+  ruleId: string;
+  requestedPoints: number;
+  description: string;
+}
+
+export interface PointRequestRuleDto {
+  id: string;
+  categoryId: string;
+  label: string;
+  categoryLabel: string;
+  unit: string;
+  minPoints: number;
+  defaultPoints: number;
+  maxPoints: number;
+  revision: number;
+}
+
+export interface PointRequestInfoDto {
+  note: string;
+  requestedAt: string;
+  resubmittedAt: string | null;
+}
+
+export interface PointRequestDecisionDto {
+  note: string | null;
+  reviewedAt: string;
+  transactionId: string | null;
+}
+
+export interface PointRequestDto {
+  id: string;
+  status: string;
+  revision: number;
+  rule: PointRequestRuleDto;
+  requestedPoints: number;
+  approvedPoints: number | null;
+  description: string;
+  occurredAt: string;
+  duplicateSuspected: boolean;
+  requestInfo: PointRequestInfoDto | null;
+  decision: PointRequestDecisionDto | null;
+  submittedAt: string;
+  updatedAt: string;
+  clientRequestId?: string;
+}
+
+export interface PointRequestResponse {
+  success: boolean;
+  pointRequest: PointRequestDto;
+}
+
+export interface PointRequestsResponse {
+  success: boolean;
+  pointRequests: Array<PointRequestDto>;
+  nextCursor: string | null;
+}
+
 export interface ApiErrorDto {
   success: boolean;
   code: string;
@@ -161,6 +246,16 @@ function validTimestamp(value: string): boolean {
 function validText(value: string, min: number, max: number): boolean {
   return typeof value === 'string' && value.length >= min && value.length <= max
     && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function exactKeys(value: Object, allowed: Array<string>): boolean {
+  const keys: Array<string> = Object.keys(value);
+  for (let index: number = 0; index < keys.length; index += 1) {
+    if (allowed.indexOf(keys[index]) < 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function validateClaimRequest(value: ClaimPairingRequest): void {
@@ -308,6 +403,170 @@ export function parseTransactionsResponse(text: string): TransactionsResponse {
   requireCondition(value.page.nextCursor === null
     || isCanonicalBase64url(value.page.nextCursor, 69, 69), 'PROTOCOL_ERROR');
   requireCondition(value.page.hasMore === (value.page.nextCursor !== null), 'PROTOCOL_ERROR');
+  return value;
+}
+
+function validateRewardRule(value: RewardRuleDto): void {
+  requireCondition(exactKeys(value as Object, [
+    'id', 'categoryId', 'categoryLabel', 'label', 'unit',
+    'minPoints', 'defaultPoints', 'maxPoints'
+  ]), 'PROTOCOL_ERROR');
+  requireCondition(DATA_ID_PATTERN.test(value.id), 'PROTOCOL_ERROR');
+  requireCondition(DATA_ID_PATTERN.test(value.categoryId), 'PROTOCOL_ERROR');
+  requireCondition(validText(value.categoryLabel, 1, 30), 'PROTOCOL_ERROR');
+  requireCondition(validText(value.label, 1, 50), 'PROTOCOL_ERROR');
+  requireCondition(validText(value.unit, 0, 20), 'PROTOCOL_ERROR');
+  requireCondition(Number.isSafeInteger(value.minPoints) && value.minPoints >= 0,
+    'PROTOCOL_ERROR');
+  requireCondition(Number.isSafeInteger(value.defaultPoints)
+    && value.defaultPoints >= value.minPoints, 'PROTOCOL_ERROR');
+  requireCondition(Number.isSafeInteger(value.maxPoints)
+    && value.maxPoints >= value.defaultPoints && value.maxPoints <= 1000
+    && value.maxPoints > 0, 'PROTOCOL_ERROR');
+}
+
+export function parseRewardRulesResponse(text: string): RewardRulesResponse {
+  const value: RewardRulesResponse = JSON.parse(text) as RewardRulesResponse;
+  requireCondition(exactKeys(value as Object, [
+    'success', 'revision', 'rewardRules', 'page'
+  ]), 'PROTOCOL_ERROR');
+  requireCondition(value.success === true, 'PROTOCOL_ERROR');
+  requireCondition(Number.isSafeInteger(value.revision) && value.revision >= 0,
+    'PROTOCOL_ERROR');
+  requireCondition(Array.isArray(value.rewardRules) && value.rewardRules.length <= 50,
+    'PROTOCOL_ERROR');
+  const ruleIds: Array<string> = [];
+  for (let index: number = 0; index < value.rewardRules.length; index += 1) {
+    validateRewardRule(value.rewardRules[index]);
+    requireCondition(ruleIds.indexOf(value.rewardRules[index].id) < 0, 'PROTOCOL_ERROR');
+    ruleIds.push(value.rewardRules[index].id);
+  }
+  requireCondition(exactKeys(value.page as Object, [
+    'limit', 'hasMore', 'nextCursor'
+  ]), 'PROTOCOL_ERROR');
+  requireCondition(Number.isSafeInteger(value.page.limit) && value.page.limit >= 1
+    && value.page.limit <= 50, 'PROTOCOL_ERROR');
+  requireCondition(value.rewardRules.length <= value.page.limit, 'PROTOCOL_ERROR');
+  requireCondition(typeof value.page.hasMore === 'boolean', 'PROTOCOL_ERROR');
+  requireCondition(value.page.nextCursor === null
+    || isCanonicalBase64url(value.page.nextCursor, 30, 300), 'PROTOCOL_ERROR');
+  requireCondition(value.page.hasMore === (value.page.nextCursor !== null), 'PROTOCOL_ERROR');
+  return value;
+}
+
+export function parsePointRequestCreateRequest(text: string): PointRequestCreateRequest {
+  const value: PointRequestCreateRequest = JSON.parse(text) as PointRequestCreateRequest;
+  requireCondition(exactKeys(value as Object, [
+    'clientRequestId', 'ruleId', 'requestedPoints', 'description'
+  ]) && Object.keys(value as Object).length === 4, 'VALIDATION_ERROR');
+  requireCondition(CLIENT_REQUEST_ID_PATTERN.test(value.clientRequestId), 'VALIDATION_ERROR');
+  requireCondition(DATA_ID_PATTERN.test(value.ruleId), 'VALIDATION_ERROR');
+  requireCondition(Number.isSafeInteger(value.requestedPoints)
+    && value.requestedPoints >= 1 && value.requestedPoints <= 1000, 'VALIDATION_ERROR');
+  requireCondition(validText(value.description, 1, 300), 'VALIDATION_ERROR');
+  return value;
+}
+
+function validatePointRequestRule(value: PointRequestRuleDto): void {
+  requireCondition(exactKeys(value as Object, [
+    'id', 'categoryId', 'label', 'categoryLabel', 'unit',
+    'minPoints', 'defaultPoints', 'maxPoints', 'revision'
+  ]), 'PROTOCOL_ERROR');
+  validateRewardRule({
+    id: value.id,
+    categoryId: value.categoryId,
+    categoryLabel: value.categoryLabel,
+    label: value.label,
+    unit: value.unit,
+    minPoints: value.minPoints,
+    defaultPoints: value.defaultPoints,
+    maxPoints: value.maxPoints
+  });
+  requireCondition(Number.isSafeInteger(value.revision) && value.revision >= 0,
+    'PROTOCOL_ERROR');
+}
+
+function validatePointRequest(value: PointRequestDto): void {
+  requireCondition(exactKeys(value as Object, [
+    'id', 'status', 'revision', 'rule', 'requestedPoints', 'approvedPoints',
+    'description', 'occurredAt', 'duplicateSuspected', 'requestInfo', 'decision',
+    'submittedAt', 'updatedAt', 'clientRequestId'
+  ]), 'PROTOCOL_ERROR');
+  requireCondition(POINT_REQUEST_ID_PATTERN.test(value.id), 'PROTOCOL_ERROR');
+  requireCondition(['pending', 'needs_info', 'approved', 'rejected', 'cancelled']
+    .indexOf(value.status) >= 0, 'PROTOCOL_ERROR');
+  requireCondition(Number.isSafeInteger(value.revision) && value.revision >= 0,
+    'PROTOCOL_ERROR');
+  validatePointRequestRule(value.rule);
+  requireCondition(Number.isSafeInteger(value.requestedPoints)
+    && value.requestedPoints >= 1 && value.requestedPoints <= 1000
+    && value.requestedPoints >= value.rule.minPoints
+    && value.requestedPoints <= value.rule.maxPoints, 'PROTOCOL_ERROR');
+  requireCondition(value.approvedPoints === null
+    || (Number.isSafeInteger(value.approvedPoints) && value.approvedPoints >= value.rule.minPoints
+      && value.approvedPoints <= value.rule.maxPoints && value.approvedPoints > 0),
+  'PROTOCOL_ERROR');
+  requireCondition((value.status === 'approved') === (value.approvedPoints !== null),
+    'PROTOCOL_ERROR');
+  requireCondition(validText(value.description, 1, 300), 'PROTOCOL_ERROR');
+  requireCondition(validTimestamp(value.occurredAt), 'PROTOCOL_ERROR');
+  requireCondition(typeof value.duplicateSuspected === 'boolean', 'PROTOCOL_ERROR');
+  if (value.requestInfo !== null) {
+    requireCondition(exactKeys(value.requestInfo as Object, [
+      'note', 'requestedAt', 'resubmittedAt'
+    ]), 'PROTOCOL_ERROR');
+    requireCondition(validText(value.requestInfo.note, 1, 300), 'PROTOCOL_ERROR');
+    requireCondition(validTimestamp(value.requestInfo.requestedAt), 'PROTOCOL_ERROR');
+    requireCondition(value.requestInfo.resubmittedAt === null
+      || validTimestamp(value.requestInfo.resubmittedAt), 'PROTOCOL_ERROR');
+  }
+  if (value.decision !== null) {
+    requireCondition(exactKeys(value.decision as Object, [
+      'note', 'reviewedAt', 'transactionId'
+    ]), 'PROTOCOL_ERROR');
+    requireCondition(value.decision.note === null
+      || validText(value.decision.note, 1, 300), 'PROTOCOL_ERROR');
+    requireCondition(validTimestamp(value.decision.reviewedAt), 'PROTOCOL_ERROR');
+    requireCondition(value.decision.transactionId === null
+      || DATA_ID_PATTERN.test(value.decision.transactionId), 'PROTOCOL_ERROR');
+    requireCondition((value.status === 'approved')
+      === (value.decision.transactionId !== null), 'PROTOCOL_ERROR');
+  }
+  requireCondition(['approved', 'rejected'].indexOf(value.status) >= 0
+    === (value.decision !== null), 'PROTOCOL_ERROR');
+  requireCondition(validTimestamp(value.submittedAt) && validTimestamp(value.updatedAt),
+    'PROTOCOL_ERROR');
+  requireCondition(value.clientRequestId === undefined
+    || CLIENT_REQUEST_ID_PATTERN.test(value.clientRequestId), 'PROTOCOL_ERROR');
+}
+
+export function parsePointRequestResponse(text: string,
+  expectedClientRequestId: string): PointRequestResponse {
+  const value: PointRequestResponse = JSON.parse(text) as PointRequestResponse;
+  requireCondition(exactKeys(value as Object, ['success', 'pointRequest']), 'PROTOCOL_ERROR');
+  requireCondition(value.success === true, 'PROTOCOL_ERROR');
+  validatePointRequest(value.pointRequest);
+  requireCondition(value.pointRequest.clientRequestId === expectedClientRequestId,
+    'PROTOCOL_ERROR');
+  return value;
+}
+
+export function parsePointRequestsResponse(text: string): PointRequestsResponse {
+  const value: PointRequestsResponse = JSON.parse(text) as PointRequestsResponse;
+  requireCondition(exactKeys(value as Object, [
+    'success', 'pointRequests', 'nextCursor'
+  ]), 'PROTOCOL_ERROR');
+  requireCondition(value.success === true, 'PROTOCOL_ERROR');
+  requireCondition(Array.isArray(value.pointRequests) && value.pointRequests.length <= 50,
+    'PROTOCOL_ERROR');
+  const requestIds: Array<string> = [];
+  for (let index: number = 0; index < value.pointRequests.length; index += 1) {
+    validatePointRequest(value.pointRequests[index]);
+    requireCondition(requestIds.indexOf(value.pointRequests[index].id) < 0, 'PROTOCOL_ERROR');
+    requestIds.push(value.pointRequests[index].id);
+  }
+  requireCondition(value.nextCursor === null
+    || isCanonicalBase64url(value.nextCursor, 30, 300), 'PROTOCOL_ERROR');
   return value;
 }
 
