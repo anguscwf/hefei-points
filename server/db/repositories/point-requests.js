@@ -192,31 +192,17 @@ function inspectAdultChildScope(input, db = getDb()) {
   };
 }
 
-function currentRewardRule(input, db = getDb()) {
+function currentRewardRules(input, db = getDb()) {
   const row = db.prepare(`
     SELECT revision, data_json FROM rules WHERE family_id = ?
   `).get(input.familyId);
   if (!row) return null;
   const rules = parseJson(row.data_json, null);
   if (!rules || !Array.isArray(rules.reward)) return null;
-  for (const category of rules.reward) {
-    const items = Array.isArray(category && category.items) ? category.items : [];
-    const item = items.find(candidate => candidate && candidate.id === input.ruleId);
-    if (item) {
-      return {
-        ruleRevision: Number(row.revision),
-        ruleId: item.id,
-        categoryId: category.id,
-        ruleLabel: item.label,
-        categoryLabel: category.category,
-        ruleUnit: typeof item.unit === 'string' ? item.unit : '',
-        min: Number(item.min),
-        default: Number(item.default),
-        max: Number(item.max)
-      };
-    }
-  }
-  return null;
+  return {
+    revision: Number(row.revision),
+    categories: rules.reward
+  };
 }
 
 function findById(input, db = getDb()) {
@@ -508,7 +494,7 @@ module.exports = {
   toEvent,
   inspectDeviceScope,
   inspectAdultChildScope,
-  currentRewardRule,
+  currentRewardRules,
   findById,
   findByDeviceClientRequest,
   insertEvent,

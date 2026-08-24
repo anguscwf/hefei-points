@@ -4,7 +4,8 @@ const features = require('../config/features');
 const { inReadTransaction, inTransaction } = require('../db/connection');
 const repositories = require('../db/repositories');
 const { ApiError } = require('../lib/api-error');
-const { isPlainObject } = require('../lib/validation');
+const validation = require('../lib/validation');
+const { isPlainObject } = validation;
 const credentials = require('../lib/device-credentials');
 
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{16,128}$/;
@@ -16,6 +17,7 @@ const STATUSES = new Set(['pending', 'needs_info', 'approved', 'rejected', 'canc
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 const CURSOR_VERSION = 1;
+const REWARD_RULE_CURSOR_VERSION = 1;
 
 function fail(status, code, message, field) {
   throw new ApiError({ status, code, message, field });
@@ -231,6 +233,71 @@ function decodeCursor(value, scope) {
   return { submittedAt: decoded[0], id: decoded[1] };
 }
 
+function rewardRuleCursorKey() {
+  return Buffer.from(credentials.hmac(
+    'reward-rule-cursor-aead-key', `v${REWARD_RULE_CURSOR_VERSION}`
+  ), 'hex');
+}
+
+function rewardRuleCursorAad(actor) {
+  return Buffer.from(JSON.stringify([
+    `tangguan-reward-rule-cursor-v${REWARD_RULE_CURSOR_VERSION}`,
+    actor.familyId,
+    actor.childId,
+    actor.deviceBindingId
+  ]), 'utf8');
+}
+
+function encodeRewardRuleCursor(snapshot, nextIndex, actor) {
+  const nonce = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', rewardRuleCursorKey(), nonce);
+  cipher.setAAD(rewardRuleCursorAad(actor));
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify([
+      snapshot.revision,
+      fingerprint(snapshot.rewardRules),
+      nextIndex
+    ]), 'utf8'),
+    cipher.final()
+  ]);
+  return Buffer.concat([
+    Buffer.from([REWARD_RULE_CURSOR_VERSION]), nonce, cipher.getAuthTag(), ciphertext
+  ]).toString('base64url');
+}
+
+function decodeRewardRuleCursor(value, actor) {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || value.length < 40 || value.length > 400
+      || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    fail(400, 'VALIDATION_ERROR', '规则分页游标无效', 'cursor');
+  }
+  const packet = Buffer.from(value, 'base64url');
+  if (packet.toString('base64url') !== value
+      || packet.length < 30 || packet[0] !== REWARD_RULE_CURSOR_VERSION) {
+    fail(400, 'VALIDATION_ERROR', '规则分页游标无效', 'cursor');
+  }
+  let decoded;
+  try {
+    const decipher = crypto.createDecipheriv(
+      'aes-256-gcm', rewardRuleCursorKey(), packet.subarray(1, 13)
+    );
+    decipher.setAAD(rewardRuleCursorAad(actor));
+    decipher.setAuthTag(packet.subarray(13, 29));
+    decoded = JSON.parse(Buffer.concat([
+      decipher.update(packet.subarray(29)), decipher.final()
+    ]).toString('utf8'));
+  } catch (_) {
+    fail(400, 'VALIDATION_ERROR', '规则分页游标无效', 'cursor');
+  }
+  if (!Array.isArray(decoded) || decoded.length !== 3
+      || !Number.isSafeInteger(decoded[0]) || decoded[0] < 0
+      || typeof decoded[1] !== 'string' || !/^[0-9a-f]{64}$/.test(decoded[1])
+      || !Number.isSafeInteger(decoded[2]) || decoded[2] < 1) {
+    fail(400, 'VALIDATION_ERROR', '规则分页游标无效', 'cursor');
+  }
+  return { revision: decoded[0], fingerprint: decoded[1], nextIndex: decoded[2] };
+}
+
 function nextTimestamp(now, previous) {
   const candidate = now.toISOString();
   if (!previous || candidate > previous) return candidate;
@@ -438,20 +505,19 @@ function createRequest({ actor, body, idempotencyKey, now = new Date() }) {
       });
     }
 
-    const rule = repositories.pointRequests.currentRewardRule({
-      familyId: device.familyId, ruleId: input.ruleId
-    }, db);
-    if (!rule || typeof rule.categoryId !== 'string' || !rule.categoryId
-        || typeof rule.ruleLabel !== 'string' || !rule.ruleLabel
-        || typeof rule.categoryLabel !== 'string' || !rule.categoryLabel
-        || !Number.isSafeInteger(rule.min) || !Number.isSafeInteger(rule.default)
-        || !Number.isSafeInteger(rule.max)
-        || rule.min < 0 || rule.min > rule.default || rule.default > rule.max) {
+    const currentRules = serializeRewardRules(
+      repositories.pointRequests.currentRewardRules({ familyId: device.familyId }, db)
+    );
+    const rule = currentRules.rewardRules.find(candidate => candidate.id === input.ruleId);
+    if (!rule) {
       fail(400, 'RULE_REFERENCE_INVALID', '规则不存在、不是鼓励规则或快照无效', 'ruleId');
     }
-    const requestedPoints = input.requestedPoints === null ? rule.default : input.requestedPoints;
-    if (requestedPoints <= 0 || requestedPoints < rule.min || requestedPoints > rule.max) {
-      fail(400, 'RULE_AMOUNT_OUT_OF_RANGE', `申报分值必须在 ${rule.min}~${rule.max} 之间`, 'requestedPoints');
+    const requestedPoints = input.requestedPoints === null
+      ? rule.defaultPoints : input.requestedPoints;
+    if (requestedPoints <= 0 || requestedPoints < rule.minPoints
+        || requestedPoints > rule.maxPoints) {
+      fail(400, 'RULE_AMOUNT_OUT_OF_RANGE',
+        `申报分值必须在 ${rule.minPoints}~${rule.maxPoints} 之间`, 'requestedPoints');
     }
     const submittedAt = now.toISOString();
     const occurredAt = input.occurredAt || submittedAt;
@@ -459,7 +525,7 @@ function createRequest({ actor, body, idempotencyKey, now = new Date() }) {
     const duplicateSuspected = repositories.pointRequests.hasDuplicateSignal({
       familyId: device.familyId,
       childId: device.childId,
-      ruleId: rule.ruleId,
+      ruleId: rule.id,
       periodKey: periodKey(new Date(occurredAt))
     }, db);
     repositories.pointRequests.insertEvent({
@@ -485,15 +551,15 @@ function createRequest({ actor, body, idempotencyKey, now = new Date() }) {
       deviceBindingId: device.deviceBindingId,
       clientRequestId: input.clientRequestId,
       requestFingerprint,
-      ruleId: rule.ruleId,
+      ruleId: rule.id,
       categoryId: rule.categoryId,
-      ruleRevision: rule.ruleRevision,
-      ruleLabel: rule.ruleLabel,
+      ruleRevision: currentRules.revision,
+      ruleLabel: rule.label,
       categoryLabel: rule.categoryLabel,
-      ruleUnit: rule.ruleUnit,
-      ruleMinPoints: rule.min,
-      ruleDefaultPoints: rule.default,
-      ruleMaxPoints: rule.max,
+      ruleUnit: rule.unit,
+      ruleMinPoints: rule.minPoints,
+      ruleDefaultPoints: rule.defaultPoints,
+      ruleMaxPoints: rule.maxPoints,
       childAlias: scope.child.name,
       requestedPoints,
       description: input.description,
@@ -507,6 +573,114 @@ function createRequest({ actor, body, idempotencyKey, now = new Date() }) {
       audience: 'device',
       actorDeviceBindingId: device.deviceBindingId
     });
+  });
+}
+
+function rewardRuleText(value, { field, min, max }) {
+  if (typeof value !== 'string') {
+    fail(409, 'REWARD_RULES_UNAVAILABLE', '当前可申报规则状态异常', field);
+  }
+  const normalized = value.trim().normalize('NFC');
+  if (normalized.length < min || normalized.length > max
+      || CONTROL_CHARACTERS.test(normalized)) {
+    fail(409, 'REWARD_RULES_UNAVAILABLE', '当前可申报规则状态异常', field);
+  }
+  return normalized;
+}
+
+function serializeRewardRules(current) {
+  if (!current || !Number.isSafeInteger(current.revision) || current.revision < 0
+      || !Array.isArray(current.categories)
+      || current.categories.length > validation.RULE_LIMITS.categoriesPerType) {
+    fail(409, 'REWARD_RULES_UNAVAILABLE', '当前可申报规则状态异常');
+  }
+  const seen = new Set();
+  const rewardRules = [];
+  let itemCount = 0;
+  for (let categoryIndex = 0; categoryIndex < current.categories.length; categoryIndex += 1) {
+    const category = current.categories[categoryIndex];
+    const categoryField = `reward[${categoryIndex}]`;
+    if (!isPlainObject(category) || typeof category.id !== 'string'
+        || !validation.RULE_ID.test(category.id) || seen.has(category.id)
+        || !Array.isArray(category.items)
+        || category.items.length > validation.RULE_LIMITS.itemsPerCategory) {
+      fail(409, 'REWARD_RULES_UNAVAILABLE', '当前可申报规则状态异常', categoryField);
+    }
+    seen.add(category.id);
+    for (let itemIndex = 0; itemIndex < category.items.length; itemIndex += 1) {
+      itemCount += 1;
+      if (itemCount > validation.RULE_LIMITS.itemsPerType) {
+        fail(409, 'REWARD_RULES_UNAVAILABLE', '当前可申报规则状态异常', 'reward');
+      }
+      const item = category.items[itemIndex];
+      const itemField = `${categoryField}.items[${itemIndex}]`;
+      if (!isPlainObject(item) || typeof item.id !== 'string'
+          || !validation.RULE_ID.test(item.id) || seen.has(item.id)
+          || !Number.isSafeInteger(item.min) || !Number.isSafeInteger(item.default)
+          || !Number.isSafeInteger(item.max) || item.min < 0 || item.max > 1000
+          || item.min > item.default || item.default > item.max) {
+        fail(409, 'REWARD_RULES_UNAVAILABLE', '当前可申报规则状态异常', itemField);
+      }
+      seen.add(item.id);
+      const rule = {
+        id: item.id,
+        categoryId: category.id,
+        categoryLabel: rewardRuleText(category.category, {
+          field: `${categoryField}.category`, min: 1, max: validation.RULE_LIMITS.category
+        }),
+        label: rewardRuleText(item.label, {
+          field: `${itemField}.label`, min: 1, max: validation.RULE_LIMITS.label
+        }),
+        unit: rewardRuleText(item.unit, {
+          field: `${itemField}.unit`, min: 0, max: validation.RULE_LIMITS.unit
+        }),
+        minPoints: item.min,
+        defaultPoints: item.default,
+        maxPoints: item.max
+      };
+      if (rule.maxPoints > 0) rewardRules.push(rule);
+    }
+  }
+  return { revision: current.revision, rewardRules };
+}
+
+function listRewardRules({ actor, query, body, now = new Date() }) {
+  assertEnabled();
+  const device = assertDeviceActor(actor);
+  validateEmptyBody(body);
+  validateQuery(query, new Set(['limit', 'cursor']));
+  const limit = parseLimit(query.limit);
+  const cursor = decodeRewardRuleCursor(query.cursor, device);
+  return inReadTransaction(db => {
+    deviceScope(db, device, now);
+    const current = repositories.pointRequests.currentRewardRules({
+      familyId: device.familyId
+    }, db);
+    const snapshot = serializeRewardRules(current);
+    const snapshotFingerprint = fingerprint(snapshot.rewardRules);
+    if (cursor && (cursor.revision !== snapshot.revision
+        || cursor.fingerprint !== snapshotFingerprint)) {
+      fail(409, 'REWARD_RULES_CHANGED', '可申报规则已更新，请从第一页重新读取', 'cursor');
+    }
+    const start = cursor ? cursor.nextIndex : 0;
+    if (start >= snapshot.rewardRules.length && start !== 0) {
+      fail(400, 'VALIDATION_ERROR', '规则分页游标无效', 'cursor');
+    }
+    const visible = snapshot.rewardRules.slice(start, start + limit);
+    const nextIndex = start + visible.length;
+    const hasMore = nextIndex < snapshot.rewardRules.length;
+    return {
+      success: true,
+      revision: snapshot.revision,
+      rewardRules: visible,
+      page: {
+        limit,
+        hasMore,
+        nextCursor: hasMore
+          ? encodeRewardRuleCursor(snapshot, nextIndex, device)
+          : null
+      }
+    };
   });
 }
 
@@ -802,6 +976,7 @@ function tasksSummary({ actor, query, body }) {
 
 module.exports = {
   assertEnabled,
+  listRewardRules,
   createRequest,
   listMine,
   mutateByDevice,

@@ -413,6 +413,188 @@ test('积分申报双门先止损，设备身份决定作用域且待审不入�
   assertMinimalResponse(adult.body);
 });
 
+test('设备只读取当前家庭可申报鼓励规则的最小快照', async () => {
+  const fixture = await createAuthorizedFamily({ childCount: 2 });
+  const other = await createAuthorizedFamily();
+  const first = await fullDeviceFlow(fixture, fixture.children[0], 'rules-first');
+  const sameChildSecond = await fullDeviceFlow(
+    fixture, fixture.children[0], 'rules-same-child-second'
+  );
+  const sibling = await fullDeviceFlow(fixture, fixture.children[1], 'rules-sibling');
+  const foreign = await fullDeviceFlow(other, other.children[0], 'rules-foreign');
+
+  const current = await request('/api/v2/me/reward-rules', {
+    bearer: first.completed.session.accessToken
+  });
+  assert.equal(current.response.status, 200);
+  assert.deepEqual(current.body, {
+    success: true,
+    revision: 1,
+    rewardRules: [{
+      id: `reward_${fixture.suffix}`,
+      categoryId: `cat_reward_${fixture.suffix}`,
+      categoryLabel: `合成鼓励分类 ${fixture.suffix}`,
+      label: '完成合成任务',
+      unit: '每次',
+      minPoints: 2,
+      defaultPoints: 4,
+      maxPoints: 10
+    }],
+    page: { limit: 20, hasMore: false, nextCursor: null }
+  });
+  assert.match(current.response.headers.get('cache-control'), /no-store/);
+  assertMinimalResponse(current.body);
+  const serialized = JSON.stringify(current.body);
+  for (const forbidden of ['punish', 'special', 'hint', 'aliases', `punish_${fixture.suffix}`]) {
+    assert.equal(serialized.includes(forbidden), false);
+  }
+
+  const siblingView = await request('/api/v2/me/reward-rules', {
+    bearer: sibling.completed.session.accessToken
+  });
+  assert.deepEqual(siblingView.body, current.body);
+
+  const foreignView = await request('/api/v2/me/reward-rules', {
+    bearer: foreign.completed.session.accessToken
+  });
+  assert.equal(foreignView.response.status, 200);
+  assert.equal(foreignView.body.rewardRules[0].id, `reward_${other.suffix}`);
+  assert.equal(JSON.stringify(foreignView.body).includes(`reward_${fixture.suffix}`), false);
+
+  const adultToken = await request('/api/v2/me/reward-rules', { userId: fixture.adminId });
+  assertApiError(adultToken, 401, 'AUTH_REQUIRED');
+  const selectedIdentity = await request(
+    `/api/v2/me/reward-rules?childId=${encodeURIComponent(fixture.children[1].id)}`,
+    { bearer: first.completed.session.accessToken }
+  );
+  assertApiError(selectedIdentity, 400, 'VALIDATION_ERROR');
+  assert.equal(selectedIdentity.body.field, 'childId');
+
+  const pagedRules = rulesFor(fixture.suffix, {
+    label: '更新后的合成鼓励规则', min: 1, max: 6, defaultPoints: 3
+  });
+  pagedRules.reward[0].category = `  ${pagedRules.reward[0].category}  `;
+  pagedRules.reward[0].items[0].label = '  更新后的合成鼓励规则  ';
+  pagedRules.reward[0].items[0].unit = '  每次  ';
+  pagedRules.reward[0].items.push({
+    id: `reward_second_${fixture.suffix}`,
+    label: '第二条合成鼓励规则',
+    min: 2,
+    max: 8,
+    default: 5,
+    unit: '每次'
+  });
+  repositories.config.setRules(fixture.familyId, pagedRules, {
+    expectedRevision: 1, updatedBy: fixture.adminId
+  });
+  const firstPage = await request('/api/v2/me/reward-rules?limit=1', {
+    bearer: first.completed.session.accessToken
+  });
+  assert.equal(firstPage.response.status, 200);
+  assert.equal(firstPage.body.revision, 2);
+  assert.equal(firstPage.body.rewardRules.length, 1);
+  assert.equal(firstPage.body.page.hasMore, true);
+  assert.equal(typeof firstPage.body.page.nextCursor, 'string');
+  assert.equal(firstPage.body.rewardRules[0].categoryLabel,
+    `合成鼓励分类 ${fixture.suffix}`);
+  assert.equal(firstPage.body.rewardRules[0].label, '更新后的合成鼓励规则');
+  assert.equal(firstPage.body.rewardRules[0].unit, '每次');
+  const normalizedCreate = await createPointRequest(
+    fixture, first, `client-normalized-${fixture.suffix}`,
+    { requestedPoints: 3 }, idempotencyKey(`point-normalized-${fixture.suffix}`)
+  );
+  assert.equal(normalizedCreate.response.status, 201);
+  assert.deepEqual(normalizedCreate.body.pointRequest.rule, {
+    ...firstPage.body.rewardRules[0],
+    revision: 2
+  });
+  const ruleCursor = firstPage.body.page.nextCursor;
+  const secondPage = await request(
+    `/api/v2/me/reward-rules?limit=1&cursor=${encodeURIComponent(ruleCursor)}`,
+    { bearer: first.completed.session.accessToken }
+  );
+  assert.equal(secondPage.response.status, 200);
+  assert.deepEqual(secondPage.body.rewardRules.map(rule => rule.id), [
+    `reward_second_${fixture.suffix}`
+  ]);
+  assert.deepEqual(secondPage.body.page, { limit: 1, hasMore: false, nextCursor: null });
+
+  for (const [bearer, cursor] of [
+    [sameChildSecond.completed.session.accessToken, ruleCursor],
+    [sibling.completed.session.accessToken, ruleCursor],
+    [foreign.completed.session.accessToken, ruleCursor],
+    [first.completed.session.accessToken,
+      `${ruleCursor.slice(0, -1)}${ruleCursor.endsWith('A') ? 'B' : 'A'}`]
+  ]) {
+    const isolated = await request(
+      `/api/v2/me/reward-rules?limit=1&cursor=${encodeURIComponent(cursor)}`,
+      { bearer }
+    );
+    assertApiError(isolated, 400, 'VALIDATION_ERROR');
+    assert.equal(isolated.body.field, 'cursor');
+  }
+
+  repositories.config.setRules(fixture.familyId, rulesFor(fixture.suffix, {
+    label: '最终合成鼓励规则', min: 1, max: 5, defaultPoints: 2
+  }), { expectedRevision: 2, updatedBy: fixture.adminId });
+  const changedCursor = await request(
+    `/api/v2/me/reward-rules?limit=1&cursor=${encodeURIComponent(ruleCursor)}`,
+    { bearer: first.completed.session.accessToken }
+  );
+  assertApiError(changedCursor, 409, 'REWARD_RULES_CHANGED');
+  assert.equal(changedCursor.body.field, 'cursor');
+
+  const updated = await request('/api/v2/me/reward-rules', {
+    bearer: first.completed.session.accessToken
+  });
+  assert.equal(updated.response.status, 200);
+  assert.equal(updated.body.revision, 3);
+  assert.deepEqual(updated.body.rewardRules[0], {
+    id: `reward_${fixture.suffix}`,
+    categoryId: `cat_reward_${fixture.suffix}`,
+    categoryLabel: `合成鼓励分类 ${fixture.suffix}`,
+    label: '最终合成鼓励规则',
+    unit: '每次',
+    minPoints: 1,
+    defaultPoints: 2,
+    maxPoints: 5
+  });
+
+  const emptyRules = rulesFor(fixture.suffix, {
+    label: '不会回显的合成鼓励规则', min: 1, max: 5, defaultPoints: 2
+  });
+  emptyRules.reward = [];
+  repositories.config.setRules(fixture.familyId, emptyRules, {
+    expectedRevision: 3, updatedBy: fixture.adminId
+  });
+  const empty = await request('/api/v2/me/reward-rules', {
+    bearer: first.completed.session.accessToken
+  });
+  assert.equal(empty.response.status, 200);
+  assert.deepEqual(empty.body, {
+    success: true,
+    revision: 4,
+    rewardRules: [],
+    page: { limit: 20, hasMore: false, nextCursor: null }
+  });
+
+  getDb().prepare('UPDATE rules SET data_json = ? WHERE family_id = ?')
+    .run('{"reward":"synthetic-invalid"}', fixture.familyId);
+  const malformed = await request('/api/v2/me/reward-rules', {
+    bearer: first.completed.session.accessToken
+  });
+  assertApiError(malformed, 409, 'REWARD_RULES_UNAVAILABLE');
+
+  for (const gate of ['POINT_REQUESTS_ENABLED', 'DEVICE_PAIRING_ENABLED', 'HARMONY_CHILD_ENABLED']) {
+    process.env[gate] = 'false';
+    const gated = await request('/api/v2/me/reward-rules', {
+      bearer: first.completed.session.accessToken
+    });
+    assertApiError(gated, 403, 'FEATURE_DISABLED');
+    enableAllGates();
+  }
+});
+
 test('同一设备 clientRequestId 的 100 次并发重试只产生一条申请', async () => {
   const fixture = await createAuthorizedFamily();
   const flow = await fullDeviceFlow(fixture, fixture.children[0], 'hundred-retries');
@@ -817,6 +999,10 @@ test('家庭、兄弟姐妹和监护授权隔离，授权撤回阻断审批并�
     bearer: first.completed.session.accessToken
   });
   assertApiError(revokedDevice, 401, 'SESSION_REVOKED');
+  const revokedRuleRead = await request('/api/v2/me/reward-rules', {
+    bearer: first.completed.session.accessToken
+  });
+  assertApiError(revokedRuleRead, 401, 'SESSION_REVOKED');
   const blockedParent = await request(`/api/v2/point-requests/${id}/approve`, {
     method: 'POST', userId: family.parentId,
     idempotency: idempotencyKey('withdrawn-approve'),

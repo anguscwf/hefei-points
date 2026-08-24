@@ -52,6 +52,13 @@ function device(req, now) {
   return requireDeviceV2(req, now);
 }
 
+router.get('/v2/me/reward-rules', endpoint(req => {
+  const now = new Date();
+  return service.listRewardRules({
+    actor: device(req, now), query: req.query, body: req.body, now
+  });
+}));
+
 router.get('/v2/me/point-requests', endpoint(req => {
   const now = new Date();
   return service.listMine({
