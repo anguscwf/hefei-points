@@ -4,6 +4,7 @@ var VERSION = '2.6.0';
 var runtimeEnvironment = require('./utils/runtime-environment.js');
 var sessionUtils = require('./utils/session.js');
 var v2Request = require('./utils/v2-request.js');
+var legacyRequestPath = require('./utils/legacy-request-path.js');
 var guardianApiFactory = require('./utils/guardian-api.js');
 var guardianRecovery = require('./utils/guardian-operation-recovery.js');
 var pairingRecovery = require('./utils/device-pairing-recovery.js');
@@ -484,6 +485,14 @@ App({
   // ========== API 封装 ==========
   fetchAPI: function(url, opts) {
     var that = this;
+    var normalizedUrl = legacyRequestPath.normalize(url);
+    if (!normalizedUrl) {
+      return Promise.resolve({
+        success: false,
+        code: 'CLIENT_REQUEST_INVALID',
+        message: '请求路径无效'
+      });
+    }
     var environment = that.getRuntimeEnvironment();
     if (!environment.environmentReady) {
       return Promise.resolve({
@@ -493,7 +502,7 @@ App({
       });
     }
     var sessionSnapshot = that._captureSessionSnapshot();
-    var routePath = url.split('?')[0];
+    var routePath = normalizedUrl.split('?')[0];
     var isLoginRequest = routePath === '/api/auth' || routePath === '/api/wx-login' || routePath === '/api/wx-bind';
     return new Promise(function(resolve) {
       var headers = {
@@ -504,7 +513,7 @@ App({
         Object.keys(opts.headers).forEach(function(key) { headers[key] = opts.headers[key]; });
       }
       wx.request({
-        url: environment.apiBase + url,
+        url: environment.apiBase + normalizedUrl,
         method: (opts && opts.method) || 'GET',
         data: (opts && opts.body) ? JSON.parse(opts.body) : undefined,
         header: headers,

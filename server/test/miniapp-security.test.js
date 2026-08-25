@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const miniappCheck = require('../../scripts/check-miniapp');
+const legacyRequestPath = require('../../hefei-miniapp/utils/legacy-request-path');
 const MINIAPP_PREFIX = `${path.join(path.resolve(__dirname, '../..'), 'hefei-miniapp')}${path.sep}`;
 
 function assertNoErrors(errors) {
@@ -35,6 +36,48 @@ test('小程序项目与运行环境配置保持域名校验和生产隔离', ()
   assertNoErrors(miniappCheck.checkProjectConfiguration());
   assertNoErrors(miniappCheck.checkRuntimeEnvironmentSource());
   assertNoErrors(miniappCheck.checkRuntimeEnvironmentPolicy());
+});
+
+test('legacy 请求路径只能是不会逃逸固定 origin 的相对 API 路径', () => {
+  for (const value of [
+    '/api/config',
+    '/api/config/rules/history?limit=50',
+    '/api/history/note?scope=family%20one'
+  ]) assert.equal(legacyRequestPath.normalize(value), value);
+  for (const value of [
+    '@hefeijifen.cn/api/config',
+    '.hefeijifen.cn/api/config',
+    '//hefeijifen.cn/api/config',
+    '/api\\@hefeijifen.cn/config',
+    'https://hefeijifen.cn/api/config',
+    '/api/%2e%2e/config',
+    '/api/%252e%252e/config',
+    '/api//config',
+    '/api/config#fragment',
+    '/api/config?next=one?two',
+    '/api/config?next=bad\\value'
+  ]) assert.equal(legacyRequestPath.normalize(value), '', value);
+});
+
+test('小程序网络出口只保留已审计的 legacy、v2 与法律 web-view 链路', () => {
+  assertNoErrors(miniappCheck.checkNetworkDispatchBoundary());
+  const canonical = miniappCheck.miniappSourceFiles().map(filename => ({
+    filename,
+    content: fs.readFileSync(filename)
+  }));
+  for (const source of [
+    "wx.request({ url: 'https://synthetic.example.com/api' });",
+    "wx.uploadFile({ url: 'https://synthetic.example.com/upload' });",
+    "wx['request']({ url: 'https://synthetic.example.com/api' });",
+    "var host = 'hefei' + 'jifen.cn';",
+    "var origin = wx.getExtConfigSync().apiOrigin; wx.request({ url: origin });"
+  ]) {
+    const errors = miniappCheck.checkNetworkDispatchBoundary([
+      ...canonical,
+      { filename: 'hefei-miniapp/pages/synthetic/network-violation.js', content: source }
+    ]);
+    assert.ok(errors.length > 0, source);
+  }
 });
 
 test('小程序安全门不会执行偏离已审计模板的运行环境源码', () => {

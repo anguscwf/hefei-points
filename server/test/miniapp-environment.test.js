@@ -166,3 +166,22 @@ test('release 环境的 legacy/v2 请求均只发往生产源', async () => {
   );
   assert.ok(calls.every(call => call.url.startsWith(`${PRODUCTION_API_BASE}/`)));
 });
+
+test('legacy 请求不能用 userinfo、子域拼接或绝对 URL 逃逸固定源', async () => {
+  const calls = [];
+  const wxApi = wxRuntime('release', calls);
+  const app = appRuntime(wxApi);
+  await withWx(wxApi, async () => {
+    for (const value of [
+      '@hefeijifen.cn/api/config',
+      '.hefeijifen.cn/api/config',
+      '//hefeijifen.cn/api/config',
+      '/api\\@hefeijifen.cn/config',
+      'https://hefeijifen.cn/api/config'
+    ]) {
+      const result = await app.fetchAPI(value);
+      assert.equal(result.code, 'CLIENT_REQUEST_INVALID', value);
+    }
+  });
+  assert.equal(calls.length, 0);
+});

@@ -10,6 +10,7 @@ const sourceExtensions = new Set(['.js', '.json', '.wxml', '.wxss']);
 const productionApiBase = 'https://hefeijifen.cn';
 const projectConfigFile = path.join(miniappRoot, 'project.config.json');
 const runtimeEnvironmentFile = path.join(miniappRoot, 'utils', 'runtime-environment.js');
+const runtimeEnvironmentTrackedFile = 'hefei-miniapp/utils/runtime-environment.js';
 const legalDocumentMarkup = path.join(miniappRoot, 'pages', 'legal-document', 'legal-document.wxml');
 const legalDocumentSource = path.join(miniappRoot, 'pages', 'legal-document', 'legal-document.js');
 const trackedMiniappPrefix = 'hefei-miniapp/';
@@ -21,11 +22,70 @@ const forbiddenTrackedExtensions = new Set([
 ]);
 const realpathSync = fs.realpathSync.native || fs.realpathSync;
 const auditedRuntimeEnvironmentSha256 = 'e64c1c3b7a80df66ad2c1d945b66fa75c5b8e7c8c8fafe35a0f166cee5749782';
+const readOnlyGitPrefix = [
+  '--no-optional-locks',
+  '-c', 'core.fsmonitor=false',
+  '-c', `safe.directory=${path.resolve(root).split(path.sep).join('/')}`
+];
+const auditedNetworkBoundarySha256 = new Map([
+  ['hefei-miniapp/app.js', '1f19a6eba6b04ce1fe0bc921c5e5cb9d8abbdf348518557c171b93c5fa371d89'],
+  ['hefei-miniapp/utils/legacy-request-path.js', '80f590eea94f1cc1c3f381165ea2256cbb44b7ed8c8d58dd6bbb4ce64ca538f8'],
+  ['hefei-miniapp/utils/v2-request.js', '00d445dcfa5226d4ceed2db30e18ef3623d30b058a2bc8910c8429a8115800bd'],
+  ['hefei-miniapp/utils/legal-public-url.js', 'd5efa60f013d7aeb09c8b7e4c102e37675aa772b400e2d0194b1feeda9d3c800'],
+  ['hefei-miniapp/pages/legal-document/legal-document.js', '847873727b4b58f658684438efefdf2d5127ce31397969c1da62115197fc8958'],
+  ['hefei-miniapp/pages/legal-document/legal-document.wxml', 'c0b6499b1d7d157e06948b00f8c08b58c71ae58e2fe7524b680f128f3a6c63cb']
+]);
+const lowLevelNetworkMethods = [
+  'request',
+  'uploadFile',
+  'downloadFile',
+  'connectSocket',
+  'sendSocketMessage',
+  'createTCPSocket',
+  'createUDPSocket'
+];
+
+function readOnlyGitEnvironment() {
+  const environment = { ...process.env };
+  const repositoryOverrides = new Set([
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_CEILING_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_DIR',
+    'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+    'GIT_INDEX_FILE',
+    'GIT_NAMESPACE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_REPLACE_REF_BASE',
+    'GIT_WORK_TREE'
+  ]);
+  for (const key of Object.keys(environment)) {
+    const normalized = key.toUpperCase();
+    if (repositoryOverrides.has(normalized)
+        || normalized === 'GIT_CONFIG_COUNT'
+        || /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(normalized)
+        || normalized.startsWith('GIT_TRACE')) {
+      delete environment[key];
+    }
+  }
+  environment.GIT_OPTIONAL_LOCKS = '0';
+  environment.GIT_TERMINAL_PROMPT = '0';
+  return environment;
+}
+
+function readOnlyGitArguments(arguments_) {
+  return [...readOnlyGitPrefix, ...arguments_];
+}
 
 function assertCanonicalGitRoot() {
   const gitRoot = execFileSync(
-    'git', ['rev-parse', '--show-toplevel'],
-    { cwd: root, encoding: 'utf8', windowsHide: true }
+    'git', readOnlyGitArguments(['rev-parse', '--show-toplevel']),
+    {
+      cwd: root,
+      encoding: 'utf8',
+      windowsHide: true,
+      env: readOnlyGitEnvironment()
+    }
   ).trim();
   if (!gitRoot || path.relative(realpathSync(root), realpathSync(gitRoot)) !== '') {
     throw new Error('miniapp checks must run from the canonical repository');
@@ -98,8 +158,13 @@ function validateTrackedMiniappFile(filename) {
 function trackedMiniappFiles() {
   assertCanonicalGitRoot();
   const output = execFileSync(
-    'git', ['ls-files', '--stage', '-z', '--', 'hefei-miniapp'],
-    { cwd: root, encoding: 'utf8', windowsHide: true }
+    'git', readOnlyGitArguments(['ls-files', '--stage', '-z', '--', 'hefei-miniapp']),
+    {
+      cwd: root,
+      encoding: 'utf8',
+      windowsHide: true,
+      env: readOnlyGitEnvironment()
+    }
   );
   const entries = parseTrackedMiniappEntries(output);
   if (entries.length === 0) throw new Error('tracked miniapp project is empty');
@@ -130,6 +195,93 @@ function miniappMarkupFiles() {
   return trackedMiniappFiles().filter(
     filename => path.extname(filename).toLowerCase() === '.wxml'
   );
+}
+
+function normalizedTextDigest(source) {
+  if (source.replace(/\r\n/g, '').includes('\r')) return '';
+  return crypto.createHash('sha256')
+    .update(source.replace(/\r\n/g, '\n'), 'utf8')
+    .digest('hex');
+}
+
+function sourceEntryName(filename) {
+  const normalized = String(filename).split(path.sep).join('/');
+  if (normalized.startsWith(trackedMiniappPrefix)) return normalized;
+  const candidate = path.isAbsolute(filename) ? filename : path.resolve(root, filename);
+  const relativeName = path.relative(root, candidate).split(path.sep).join('/');
+  return relativeName === '..' || relativeName.startsWith('../') || path.isAbsolute(relativeName)
+    ? 'external-test-fixture'
+    : relativeName;
+}
+
+function networkSourceEntries(files) {
+  const candidates = files === undefined ? miniappSourceFiles() : files;
+  return candidates.map(candidate => {
+    if (typeof candidate === 'string') {
+      return {
+        filename: sourceEntryName(candidate),
+        source: fs.readFileSync(candidate, 'utf8')
+      };
+    }
+    const content = Buffer.isBuffer(candidate.content)
+      ? candidate.content.toString('utf8')
+      : String(candidate.content);
+    return { filename: sourceEntryName(candidate.filename), source: content };
+  }).filter(entry => sourceExtensions.has(path.extname(entry.filename).toLowerCase()));
+}
+
+function checkNetworkDispatchBoundary(files) {
+  const errors = [];
+  const entries = networkSourceEntries(files);
+  const byName = new Map(entries.map(entry => [entry.filename, entry]));
+  for (const [filename, expectedDigest] of auditedNetworkBoundarySha256) {
+    const entry = byName.get(filename);
+    if (!entry || normalizedTextDigest(entry.source) !== expectedDigest) {
+      errors.push(`${filename}: network routing source differs from the audited template`);
+    }
+  }
+
+  const methods = lowLevelNetworkMethods.join('|');
+  const directCallPattern = new RegExp(
+    `\\b(wx|wxApi)\\s*\\.\\s*(${methods})\\s*\\(`,
+    'g'
+  );
+  const computedAccessPattern = new RegExp(
+    `\\[\\s*['\"](?:${methods})['\"]\\s*\\]`,
+    'i'
+  );
+  const approvedCalls = new Map([
+    ['hefei-miniapp/app.js:wx.request', /\burl\s*:\s*environment\s*\.\s*apiBase\s*\+\s*normalizedUrl\s*[,}]/],
+    ['hefei-miniapp/utils/v2-request.js:wxApi.request', /\burl\s*:\s*baseUrl\s*\+\s*input\s*\.\s*path\s*\+\s*input\s*\.\s*query\s*[,}]/]
+  ]);
+  const callCounts = new Map([...approvedCalls.keys()].map(key => [key, 0]));
+
+  for (const entry of entries) {
+    if (entry.filename !== runtimeEnvironmentTrackedFile
+        && /hefei(?:\s*['"`]\s*\+\s*['"`]\s*)?jifen/i.test(entry.source)) {
+      errors.push(`${entry.filename}: production host material is forbidden outside the audited runtime policy`);
+    }
+    if (computedAccessPattern.test(entry.source)
+        || /\b(?:fetch|XMLHttpRequest|WebSocket)\s*\(/.test(entry.source)) {
+      errors.push(`${entry.filename}: computed or alternate network dispatch is forbidden`);
+    }
+    for (const call of callExpressions(entry.source, directCallPattern)) {
+      const match = directCallPattern.exec(call.text);
+      directCallPattern.lastIndex = 0;
+      const callee = match ? `${match[1]}.${match[2]}` : '';
+      const key = `${entry.filename}:${callee}`;
+      const approvedUrl = approvedCalls.get(key);
+      if (!approvedUrl || !approvedUrl.test(call.text)) {
+        errors.push(`${entry.filename}: low-level network dispatch is outside the audited routes`);
+      } else {
+        callCounts.set(key, callCounts.get(key) + 1);
+      }
+    }
+  }
+  for (const [key, count] of callCounts) {
+    if (count !== 1) errors.push(`${key}: audited network dispatch count must be exactly one`);
+  }
+  return errors;
 }
 
 function findMatching(source, openIndex, open, close) {
@@ -454,6 +606,7 @@ function runChecks() {
     ...checkGuardianApiBoundary(),
     ...checkProjectConfiguration(),
     ...checkRuntimeEnvironmentPolicy(),
+    ...checkNetworkDispatchBoundary(),
     ...checkWebViewBoundary()
   ];
 }
@@ -488,6 +641,7 @@ module.exports = {
   checkProjectConfiguration,
   checkRuntimeEnvironmentSource,
   checkRuntimeEnvironmentPolicy,
+  checkNetworkDispatchBoundary,
   checkWebViewBoundary,
   runChecks
 };
