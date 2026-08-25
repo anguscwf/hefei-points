@@ -12,6 +12,21 @@ const profile = require('../config/deployment-profile');
 const runtimeFilesystem = require('../config/synthetic-runtime-filesystem');
 const preflight = require('../../scripts/preflight-synthetic-api');
 const committedPreflightVerifier = require('../../scripts/verify-synthetic-api-preflight');
+const committedPreflightImplementationFiles = Object.freeze([
+  'package.json',
+  'scripts/preflight-synthetic-api.js',
+  'scripts/support/synthetic-preflight-offline-guard.js',
+  'scripts/verify-synthetic-api-preflight.js',
+  'server/config/defaults.js',
+  'server/config/deployment-profile.js',
+  'server/config/env.js',
+  'server/config/synthetic-runtime-filesystem.js',
+  'server/db/connection.js',
+  'server/lib/backup.js',
+  'server/lib/token.js',
+  'server/lib/wx-auth.js',
+  'server/routes/backup.js'
+]);
 
 function syntheticEnvironment(overrides = {}) {
   const root = path.join(tempRoot, 'tangguan-synthetic-stage1');
@@ -115,21 +130,6 @@ test('committed preflight guard 阻断网络、非 Git 子进程和边界外写�
   const dotenvSentinel = path.join(tempRoot, 'preflight-guard-readable.env');
   fs.writeFileSync(readableSentinel, 'synthetic sentinel', { flag: 'wx' });
   fs.writeFileSync(dotenvSentinel, 'TANGGUAN_GUARD_CANARY=must-not-load\n', { flag: 'wx' });
-  const implementationFiles = [
-    'package.json',
-    'scripts/preflight-synthetic-api.js',
-    'scripts/support/synthetic-preflight-offline-guard.js',
-    'scripts/verify-synthetic-api-preflight.js',
-    'server/config/defaults.js',
-    'server/config/deployment-profile.js',
-    'server/config/env.js',
-    'server/config/synthetic-runtime-filesystem.js',
-    'server/db/connection.js',
-    'server/lib/backup.js',
-    'server/lib/token.js',
-    'server/lib/wx-auth.js',
-    'server/routes/backup.js'
-  ];
   const guard = path.join(
     projectRoot,
     'scripts',
@@ -142,7 +142,7 @@ test('committed preflight guard 阻断网络、非 Git 子进程和边界外写�
     "const net=require('node:net');",
     "const os=require('node:os');",
     "const path=require('node:path');",
-    `const implementationFiles=${JSON.stringify(implementationFiles)};`,
+    `const implementationFiles=${JSON.stringify(committedPreflightImplementationFiles)};`,
     "const realpathSync=fs.realpathSync.native||fs.realpathSync;",
     "const gitEnvironment={};",
     "const inherited=new Set(['COMSPEC','LANG','LC_ALL','LC_CTYPE','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR']);",
@@ -279,6 +279,125 @@ test('committed preflight guard 阻断网络、非 Git 子进程和边界外写�
         && !fs.lstatSync(verificationRoot).isSymbolicLink()
         && fs.readdirSync(verificationRoot).length === 0) {
       fs.rmdirSync(verificationRoot);
+    }
+  }
+});
+
+test('committed preflight guard 锁死 Git 乱序、错 OID、重复 batch 与动态 import', () => {
+  const guard = path.join(
+    projectRoot,
+    'scripts',
+    'support',
+    'synthetic-preflight-offline-guard.js'
+  );
+  const program = [
+    "const childProcess=require('node:child_process');",
+    "const fs=require('node:fs');",
+    "const os=require('node:os');",
+    `const implementationFiles=${JSON.stringify(committedPreflightImplementationFiles)};`,
+    "const realpathSync=fs.realpathSync.native||fs.realpathSync;",
+    "const gitEnvironment={};",
+    "const inherited=new Set(['COMSPEC','LANG','LC_ALL','LC_CTYPE','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR']);",
+    "for(const [key,value] of Object.entries(process.env)){if(inherited.has(key.toUpperCase())&&typeof value==='string')gitEnvironment[key]=value;}",
+    "Object.assign(gitEnvironment,{GIT_ATTR_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':os.devNull,GIT_CONFIG_NOSYSTEM:'1',GIT_OPTIONAL_LOCKS:'0',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_PROTOCOL_FROM_USER:'0',GIT_TERMINAL_PROMPT:'0'});",
+    "const prefix=['--no-pager','--no-optional-locks','--no-replace-objects','-c','core.fsmonitor=false','-c','safe.directory='+realpathSync(process.cwd())];",
+    "const runGit=(command,extra={encoding:'utf8'})=>childProcess.execFileSync('git',[...prefix,...command],{cwd:process.cwd(),windowsHide:true,env:gitEnvironment,maxBuffer:16*1024*1024,...extra});",
+    'function captureTree(){',
+    "  runGit(['rev-parse','--show-toplevel']);",
+    "  const commit=runGit(['rev-parse','--verify','HEAD^{commit}']).slice(0,-1);",
+    "  runGit(['ls-files','--stage','-z','--',...implementationFiles]);",
+    "  const tree=runGit(['ls-tree','-r','-z','--full-tree',commit,'--',...implementationFiles]);",
+    "  const oids=tree.split('\\0').filter(Boolean).map(record=>record.split(/[ \\t]/)[2]);",
+    '  return {commit,oids};',
+    '}',
+    'async function expectRejected(work){',
+    '  try{await work();process.exitCode=11;}',
+    "  catch(error){if(error.code!=='SYNTHETIC_PREFLIGHT_OFFLINE_FORBIDDEN')process.exitCode=12;}",
+    '}',
+    '(async()=>{',
+    "const attack=process.env.GUARD_TEST_ATTACK;",
+    "if(attack==='out_of_order'){const input=('a'.repeat(40)+'\\n').repeat(implementationFiles.length);await expectRejected(()=>runGit(['cat-file','--batch'],{encoding:null,input}));}",
+    "else if(attack==='dynamic_import'){await expectRejected(()=>import /* synthetic bypass probe */ ('node:sqlite'));}",
+    'else{',
+    '  const {commit,oids}=captureTree();',
+    "  if(attack==='wrong_oid'){const changed=oids.slice();changed[0]=commit;await expectRejected(()=>runGit(['cat-file','--batch'],{encoding:null,input:changed.join('\\n')+'\\n'}));}",
+    "  else if(attack==='permuted'){const changed=oids.slice();const distinct=changed.findIndex((oid,index)=>index>0&&oid!==changed[0]);if(distinct<0){process.exitCode=13;}else{[changed[0],changed[distinct]]=[changed[distinct],changed[0]];await expectRejected(()=>runGit(['cat-file','--batch'],{encoding:null,input:changed.join('\\n')+'\\n'}));}}",
+    "  else if(attack==='repeated'){const input=oids.join('\\n')+'\\n';runGit(['cat-file','--batch'],{encoding:null,input});await expectRejected(()=>runGit(['cat-file','--batch'],{encoding:null,input}));}",
+    '  else process.exitCode=14;',
+    '}',
+    "if(!process.exitCode)process.stdout.write('guard state machine rejected '+attack+'\\n');",
+    "})().catch(()=>{process.exitCode=15;});"
+  ].join('\n');
+
+  for (const attack of ['out_of_order', 'wrong_oid', 'permuted', 'repeated', 'dynamic_import']) {
+    const verificationRoot = fs.mkdtempSync(path.join(
+      os.tmpdir(),
+      'tangguan-synthetic-api-preflight-verification-'
+    ));
+    const output = path.join(verificationRoot, 'evidence');
+    try {
+      const result = spawnSync(process.execPath, ['--require', guard, '-e', program], {
+        cwd: projectRoot,
+        env: {
+          ...process.env,
+          TANGGUAN_PREFLIGHT_GUARD_ROOT: verificationRoot,
+          TANGGUAN_PREFLIGHT_GUARD_OUTPUT: output,
+          GUARD_TEST_ATTACK: attack
+        },
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 15000
+      });
+      assert.equal(result.status, 0, `${attack}: ${result.stderr}`);
+      assert.equal(result.stdout, `guard state machine rejected ${attack}\n`);
+      assert.equal(result.stderr, '');
+      assert.deepEqual(fs.readdirSync(verificationRoot), []);
+    } finally {
+      if (fs.existsSync(verificationRoot)
+          && fs.lstatSync(verificationRoot).isDirectory()
+          && !fs.lstatSync(verificationRoot).isSymbolicLink()
+          && fs.readdirSync(verificationRoot).length === 0) {
+        fs.rmdirSync(verificationRoot);
+      }
+    }
+  }
+});
+
+test('committed preflight verifier 不执行 PATH 中的临时假 Git', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const fakeDirectory = fs.mkdtempSync(path.join(tempRoot, 'preflight-fake-git-'));
+  const fakeGit = path.join(fakeDirectory, 'git.exe');
+  fs.writeFileSync(fakeGit, 'synthetic non-executable sentinel', { flag: 'wx' });
+  try {
+    const result = spawnSync(process.execPath, [
+      path.join(projectRoot, 'scripts', 'verify-synthetic-api-preflight.js')
+    ], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        PATH: `${fakeDirectory}${path.delimiter}${process.env.PATH}`
+      },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 30000
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'Synthetic API committed preflight verification passed.\n');
+    assert.equal(result.stderr, '');
+    assert.equal(fs.readFileSync(fakeGit, 'utf8'), 'synthetic non-executable sentinel');
+  } finally {
+    if (fs.existsSync(fakeGit)
+        && fs.lstatSync(fakeGit).isFile()
+        && !fs.lstatSync(fakeGit).isSymbolicLink()
+        && fs.lstatSync(fakeGit).nlink === 1) {
+      fs.unlinkSync(fakeGit);
+    }
+    if (fs.existsSync(fakeDirectory)
+        && fs.lstatSync(fakeDirectory).isDirectory()
+        && !fs.lstatSync(fakeDirectory).isSymbolicLink()
+        && fs.readdirSync(fakeDirectory).length === 0) {
+      fs.rmdirSync(fakeDirectory);
     }
   }
 });
