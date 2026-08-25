@@ -8,10 +8,7 @@ const miniappCheck = require('./check-miniapp');
 const harmonyWorkspace = require('./prepare-harmonyos-synthetic-workspace');
 
 const projectRoot = path.resolve(__dirname, '..');
-const projectRealRoot = (fs.realpathSync.native || fs.realpathSync)(projectRoot);
 const realpathSync = fs.realpathSync.native || fs.realpathSync;
-const temporaryRoot = path.resolve(os.tmpdir());
-const temporaryRealRoot = realpathSync(temporaryRoot);
 const miniappPrefix = 'hefei-miniapp/';
 const environmentFile = 'hefei-miniapp/utils/runtime-environment.js';
 const projectConfigFile = 'hefei-miniapp/project.config.json';
@@ -21,17 +18,41 @@ const allowedProjectExtensions = new Set([
   '.js', '.json', '.png', '.svg', '.wxml', '.wxss'
 ]);
 const explicitlyExcludedTrackedFiles = new Set(['hefei-miniapp/README.md']);
-const readOnlyGitPrefix = [
-  '--no-pager',
-  '--no-optional-locks',
-  '-c', 'core.fsmonitor=false',
-  '-c', `safe.directory=${projectRoot.split(path.sep).join('/')}`
-];
 const implementationFiles = [
   'scripts/prepare-miniapp-synthetic-workspace.js',
   'scripts/check-miniapp.js',
   'scripts/prepare-harmonyos-synthetic-workspace.js'
 ];
+
+function runtimeRoots() {
+  const projectRealRoot = realpathSync(projectRoot);
+  const temporaryRootValue = os.tmpdir();
+  if (!path.isAbsolute(temporaryRootValue)
+      || (process.platform === 'win32'
+        && temporaryRootValue.replaceAll('/', '\\').startsWith('\\\\'))) {
+    throw new Error('system temporary directory must be a local absolute path');
+  }
+  const temporaryRoot = path.resolve(temporaryRootValue);
+  const metadata = fs.lstatSync(temporaryRoot);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error('system temporary directory must be a real local directory');
+  }
+  return Object.freeze({
+    projectRealRoot,
+    temporaryRealRoot: realpathSync(temporaryRoot)
+  });
+}
+
+function readOnlyGitPrefix() {
+  const { projectRealRoot } = runtimeRoots();
+  return [
+    '--no-pager',
+    '--no-optional-locks',
+    '--no-replace-objects',
+    '-c', 'core.fsmonitor=false',
+    '-c', `safe.directory=${projectRealRoot.split(path.sep).join('/')}`
+  ];
+}
 
 function parseArguments(argv) {
   const result = {
@@ -95,6 +116,7 @@ function isWithin(base, candidate) {
 }
 
 function assertCanonicalGitRoot() {
+  const { projectRealRoot } = runtimeRoots();
   const gitRoot = gitText(['rev-parse', '--show-toplevel']);
   if (!gitRoot || path.relative(projectRealRoot, realpathSync(gitRoot)) !== '') {
     throw new Error('synthetic miniapp workspace must use the canonical repository');
@@ -102,37 +124,29 @@ function assertCanonicalGitRoot() {
 }
 
 function readOnlyGitEnvironment() {
-  const environment = { ...process.env };
-  const repositoryOverrides = new Set([
-    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-    'GIT_CEILING_DIRECTORIES',
-    'GIT_COMMON_DIR',
-    'GIT_DIR',
-    'GIT_DISCOVERY_ACROSS_FILESYSTEM',
-    'GIT_INDEX_FILE',
-    'GIT_NAMESPACE',
-    'GIT_OBJECT_DIRECTORY',
-    'GIT_REPLACE_REF_BASE',
-    'GIT_WORK_TREE'
+  const environment = {};
+  const inherited = new Set([
+    'COMSPEC', 'LANG', 'LC_ALL', 'LC_CTYPE', 'PATH', 'PATHEXT',
+    'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'WINDIR'
   ]);
-  for (const key of Object.keys(environment)) {
-    const normalized = key.toUpperCase();
-    if (repositoryOverrides.has(normalized)
-        || normalized === 'GIT_CONFIG_COUNT'
-        || normalized === 'GIT_CONFIG_PARAMETERS'
-        || /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(normalized)
-        || normalized.startsWith('GIT_TRACE')) {
-      delete environment[key];
+  for (const [key, value] of Object.entries(process.env)) {
+    if (inherited.has(key.toUpperCase()) && typeof value === 'string') {
+      environment[key] = value;
     }
   }
+  environment.GIT_ATTR_NOSYSTEM = '1';
+  environment.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : os.devNull;
+  environment.GIT_CONFIG_NOSYSTEM = '1';
   environment.GIT_OPTIONAL_LOCKS = '0';
   environment.GIT_NO_LAZY_FETCH = '1';
+  environment.GIT_NO_REPLACE_OBJECTS = '1';
+  environment.GIT_PROTOCOL_FROM_USER = '0';
   environment.GIT_TERMINAL_PROMPT = '0';
   return environment;
 }
 
 function readOnlyGitArguments(arguments_) {
-  return [...readOnlyGitPrefix, ...arguments_];
+  return [...readOnlyGitPrefix(), ...arguments_];
 }
 
 function gitText(arguments_) {
@@ -205,7 +219,7 @@ function entrySignature(entries) {
   return entries.map(entry => `${entry.mode} ${entry.oid}\t${entry.filename}`).join('\0');
 }
 
-function trackedMiniappFiles() {
+function trackedMiniappEntries() {
   assertCanonicalGitRoot();
   const indexed = indexedMiniappEntries();
   const committed = committedMiniappEntries();
@@ -217,26 +231,37 @@ function trackedMiniappFiles() {
     throw new Error('tracked miniapp project is incomplete');
   }
   if (files.length === 0) throw new Error('tracked miniapp project is empty');
-  return files;
+  const byName = new Map(indexed.map(entry => [entry.filename, entry]));
+  return files.map(filename => byName.get(filename));
 }
 
-function trackedInputs(files) {
+function trackedMiniappFiles() {
+  return trackedMiniappEntries().map(entry => entry.filename);
+}
+
+function trackedInputs(files, entries = trackedMiniappEntries()) {
+  if (files.join('\0') !== entries.map(entry => entry.filename).join('\0')) {
+    throw new Error('tracked miniapp file selection changed before blob read');
+  }
   const output = execFileSync('git', readOnlyGitArguments(['cat-file', '--batch']), {
     cwd: projectRoot,
     encoding: null,
     windowsHide: true,
     env: readOnlyGitEnvironment(),
-    input: `${files.map(filename => `:${filename}`).join('\n')}\n`,
+    input: `${entries.map(entry => entry.oid).join('\n')}\n`,
     maxBuffer: 64 * 1024 * 1024
   });
   const inputs = [];
   let offset = 0;
-  for (const filename of files) {
+  for (const entry of entries) {
+    const filename = entry.filename;
     const headerEnd = output.indexOf(0x0a, offset);
     if (headerEnd < 0) throw new Error('tracked miniapp blob response is incomplete');
     const header = output.subarray(offset, headerEnd).toString('utf8');
     const match = /^([0-9a-f]{40,64}) blob ([0-9]+)$/.exec(header);
-    if (!match) throw new Error('tracked miniapp input must resolve to a blob');
+    if (!match || match[1] !== entry.oid) {
+      throw new Error('tracked miniapp input must resolve to the captured blob');
+    }
     const length = Number(match[2]);
     const contentStart = headerEnd + 1;
     const contentEnd = contentStart + length;
@@ -416,6 +441,7 @@ function resolveOutput(value) {
 }
 
 function verifyTemporaryDirectory(directory) {
+  const { projectRealRoot, temporaryRealRoot } = runtimeRoots();
   const metadata = fs.lstatSync(directory);
   const real = realpathSync(directory);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()
@@ -486,8 +512,9 @@ function prepareWorkspace(options) {
   assertCanonicalGitRoot();
   const sourceCommit = gitText(['rev-parse', '--verify', 'HEAD']);
   const sourceImplementationFiles = implementationDigests();
-  const files = trackedMiniappFiles();
-  const inputs = trackedInputs(files);
+  const sourceEntries = trackedMiniappEntries();
+  const files = sourceEntries.map(entry => entry.filename);
+  const inputs = trackedInputs(files, sourceEntries);
   const sourceTreeSha256 = inputDigest(inputs);
   if (sourceTreeSha256 !== auditedMiniappSourceTreeSha256) {
     throw new Error('tracked miniapp source tree differs from the audited synthetic input');
@@ -505,8 +532,9 @@ function prepareWorkspace(options) {
     writeGeneratedInputs(staging, generated);
 
     const finalCommit = gitText(['rev-parse', '--verify', 'HEAD']);
-    const finalFiles = trackedMiniappFiles();
-    const finalInputs = trackedInputs(finalFiles);
+    const finalEntries = trackedMiniappEntries();
+    const finalFiles = finalEntries.map(entry => entry.filename);
+    const finalInputs = trackedInputs(finalFiles, finalEntries);
     const finalImplementationFiles = implementationDigests();
     if (sourceCommit !== finalCommit
         || files.join('\0') !== finalFiles.join('\0')
@@ -523,9 +551,9 @@ function prepareWorkspace(options) {
       sourceTreeSha256,
       auditedSourceTreeRequired: true,
       auditedSourceTreeSha256: auditedMiniappSourceTreeSha256,
-      sourceIndexMatchesHead: true,
-      sourceWorktreeInspected: false,
-      sourceWorktreeUsed: false,
+      clientSourceIndexMatchesHead: true,
+      clientSourceWorktreeInspected: false,
+      clientSourceWorktreeUsed: false,
       sourceSelectedTrackedFileCount: files.length,
       sourceSelectedTrackedFilesSha256: namesDigest(files),
       sourceExplicitlyExcludedTrackedFiles: [...explicitlyExcludedTrackedFiles].sort(),

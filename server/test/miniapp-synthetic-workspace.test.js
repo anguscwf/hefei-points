@@ -19,6 +19,7 @@ const ALLOWED_EXTENSIONS = new Set(['.js', '.json', '.png', '.svg', '.wxml', '.w
 const SAFE_GIT_PREFIX = [
   '--no-pager',
   '--no-optional-locks',
+  '--no-replace-objects',
   '-c', 'core.fsmonitor=false',
   '-c', `safe.directory=${projectRoot.split(path.sep).join('/')}`
 ];
@@ -33,6 +34,7 @@ function safeGitEnvironment() {
   const environment = {
     ...process.env,
     GIT_NO_LAZY_FETCH: '1',
+    GIT_NO_REPLACE_OBJECTS: '1',
     GIT_OPTIONAL_LOCKS: '0',
     GIT_TERMINAL_PROMPT: '0'
   };
@@ -55,39 +57,50 @@ function git(arguments_, options = {}) {
   });
 }
 
-function selectedTrackedFiles() {
+function selectedTrackedEntries() {
   const output = git(['ls-files', '--stage', '-z', '--', 'hefei-miniapp'], {
     encoding: 'utf8'
   });
-  const files = output.split('\0').filter(Boolean).map(record => {
-    const match = /^(?:100644|100755) [0-9a-f]{40,64} 0\t(.+)$/.exec(record);
+  const entries = output.split('\0').filter(Boolean).map(record => {
+    const match = /^(100644|100755) ([0-9a-f]{40,64}) 0\t(.+)$/.exec(record);
     assert.ok(match, record);
-    return match[1];
+    return { mode: match[1], oid: match[2], filename: match[3] };
   });
   const selected = [];
-  for (const filename of files) {
+  for (const entry of entries) {
+    const filename = entry.filename;
     if (EXCLUDED_TRACKED_FILES.includes(filename)) continue;
     assert.equal(ALLOWED_EXTENSIONS.has(path.extname(filename).toLowerCase()), true, filename);
-    selected.push(filename);
+    selected.push(entry);
   }
-  return selected.sort();
+  return selected.sort((left, right) => (
+    left.filename < right.filename ? -1 : (left.filename > right.filename ? 1 : 0)
+  ));
+}
+
+function selectedTrackedFiles() {
+  return selectedTrackedEntries().map(entry => entry.filename);
 }
 
 function indexInputs(files) {
+  const entries = selectedTrackedEntries();
+  assert.deepEqual(entries.map(entry => entry.filename), files);
   const output = git(['cat-file', '--batch'], {
     encoding: null,
-    input: `${files.map(filename => `:${filename}`).join('\n')}\n`,
+    input: `${entries.map(entry => entry.oid).join('\n')}\n`,
     maxBuffer: 64 * 1024 * 1024
   });
   const inputs = [];
   let offset = 0;
-  for (const filename of files) {
+  for (const entry of entries) {
+    const filename = entry.filename;
     const headerEnd = output.indexOf(0x0a, offset);
     assert.ok(headerEnd >= 0, filename);
     const match = /^([0-9a-f]{40,64}) blob ([0-9]+)$/.exec(
       output.subarray(offset, headerEnd).toString('utf8')
     );
     assert.ok(match, filename);
+    assert.equal(match[1], entry.oid, filename);
     const length = Number(match[2]);
     const start = headerEnd + 1;
     const end = start + length;
@@ -410,9 +423,9 @@ test('只从与 HEAD 一致的 Git 索引生成 synthetic-only 小程序且 cano
     assert.equal(manifest.auditedSourceTreeRequired, true);
     assert.equal(manifest.auditedSourceTreeSha256, manifest.sourceTreeSha256);
     assert.equal(manifest.generatedTreeSha256, framedDigest(generatedInputs));
-    assert.equal(manifest.sourceIndexMatchesHead, true);
-    assert.equal(manifest.sourceWorktreeInspected, false);
-    assert.equal(manifest.sourceWorktreeUsed, false);
+    assert.equal(manifest.clientSourceIndexMatchesHead, true);
+    assert.equal(manifest.clientSourceWorktreeInspected, false);
+    assert.equal(manifest.clientSourceWorktreeUsed, false);
     assert.equal(manifest.sourceSelectedTrackedFileCount, selectedFiles.length);
     assert.equal(manifest.sourceSelectedTrackedFilesSha256, filenameDigest(selectedFiles));
     assert.deepEqual(manifest.sourceExplicitlyExcludedTrackedFiles, EXCLUDED_TRACKED_FILES);
@@ -579,6 +592,7 @@ test('CLI 不联网、不调用 DevTools/上传且输出不回显 origin、AppID
   withTemporaryParent(parent => {
     const output = path.join(parent, 'cli-miniapp-synthetic');
     const guard = path.join(parent, 'deny-network-and-tools.cjs');
+    const expectedBatchInput = `${selectedTrackedEntries().map(entry => entry.oid).join('\n')}\n`;
     fs.writeFileSync(guard, [
       "const deny = () => { throw new Error('EXTERNAL_IO_DISABLED_BY_TEST'); };",
       "const net = require('node:net'); net.connect = deny; net.createConnection = deny; net.Socket.prototype.connect = deny;",
@@ -591,8 +605,42 @@ test('CLI 不联网、不调用 DevTools/上传且输出不回显 origin、AppID
       "const dgram = require('node:dgram'); dgram.createSocket = deny;",
       'if (dns.promises) { dns.promises.lookup = deny; dns.promises.resolve = deny; dns.promises.resolve4 = deny; dns.promises.resolve6 = deny; }',
       'globalThis.fetch = deny;',
+      "const path = require('node:path'); const fs = require('node:fs');",
+      `const canonicalRoot = ${JSON.stringify(projectRoot)};`,
+      `const miniappRoot = ${JSON.stringify(path.join(projectRoot, 'hefei-miniapp'))};`,
+      "const privateName = /(?:^|[\\\\/])(?:\\.env(?:$|\\.)|project\\.private\\.config\\.json$)/i;",
+      'const forbiddenRead = filename => {',
+      '  const resolved = path.resolve(String(filename));',
+      '  return resolved === miniappRoot || resolved.startsWith(miniappRoot + path.sep)',
+      '    || ((resolved === canonicalRoot || resolved.startsWith(canonicalRoot + path.sep))',
+      '      && privateName.test(String(filename)));',
+      '};',
+      "for (const name of ['readFileSync', 'openSync', 'createReadStream']) {",
+      '  const original = fs[name];',
+      '  fs[name] = function(filename, ...args) {',
+      '    if (forbiddenRead(filename)) return deny();',
+      '    return original.call(fs, filename, ...args);',
+      '  };',
+      '}',
+      "for (const name of ['readFile', 'open']) {",
+      '  const original = fs[name];',
+      '  fs[name] = function(filename, ...args) {',
+      '    if (forbiddenRead(filename)) return deny();',
+      '    return original.call(fs, filename, ...args);',
+      '  };',
+      '}',
+      'if (fs.promises) {',
+      "  for (const name of ['readFile', 'open']) {",
+      '    const original = fs.promises[name];',
+      '    fs.promises[name] = function(filename, ...args) {',
+      '      if (forbiddenRead(filename)) return deny();',
+      '      return original.call(fs.promises, filename, ...args);',
+      '    };',
+      '  }',
+      '}',
       "const child = require('node:child_process'); const originalExecFileSync = child.execFileSync;",
       `const expectedGitPrefix = ${JSON.stringify(SAFE_GIT_PREFIX)};`,
+      `const expectedBatchInput = ${JSON.stringify(expectedBatchInput)};`,
       `const allowedGitCommands = new Set(${JSON.stringify([
         ['rev-parse', '--show-toplevel'],
         ['rev-parse', '--verify', 'HEAD'],
@@ -606,9 +654,17 @@ test('CLI 不联网、不调用 DevTools/上传且输出不回显 origin、AppID
       '  const command = prefixMatches ? args.slice(expectedGitPrefix.length) : [];',
       '  const environment = options && options.env || {};',
       '  const forbiddenEnvironment = Object.keys(environment).some(key => /^(?:GIT_TRACE|GIT_CONFIG_(?:COUNT|PARAMETERS|KEY_|VALUE_))/i.test(key));',
+      "  const secretEnvironmentPresent = Object.prototype.hasOwnProperty.call(environment, 'WX_APPSECRET')",
+      "    || Object.prototype.hasOwnProperty.call(environment, 'SYNTHETIC_GIT_ENV_CANARY');",
+      "  const batchInputValid = command[0] !== 'cat-file' || options.input === expectedBatchInput;",
       "  const allowed = prefixMatches && allowedGitCommands.has(JSON.stringify(command))",
       "    && environment.GIT_NO_LAZY_FETCH === '1'",
-      "    && environment.GIT_OPTIONAL_LOCKS === '0' && !forbiddenEnvironment;",
+      "    && environment.GIT_NO_REPLACE_OBJECTS === '1'",
+      "    && environment.GIT_OPTIONAL_LOCKS === '0'",
+      "    && environment.GIT_CONFIG_NOSYSTEM === '1'",
+      "    && environment.GIT_ATTR_NOSYSTEM === '1'",
+      "    && environment.GIT_PROTOCOL_FROM_USER === '0'",
+      '    && batchInputValid && !forbiddenEnvironment && !secretEnvironmentPresent;',
       '  if (!allowed) return deny();',
       '  return originalExecFileSync.call(child, file, args, options);',
       '};',
@@ -616,6 +672,12 @@ test('CLI 不联网、不调用 DevTools/上传且输出不回显 origin、AppID
       'child.spawn = deny; child.spawnSync = deny; child.fork = deny;'
     ].join('\n'));
     const nodeOptions = `--require=${guard.split(path.sep).join('/')}`;
+    const childEnvironment = {
+      ...process.env,
+      NODE_OPTIONS: nodeOptions,
+      SYNTHETIC_GIT_ENV_CANARY: 'must-not-enter-git-child',
+      WX_APPSECRET: 'synthetic-parent-secret-must-not-enter-git-child'
+    };
     const result = spawnSync(process.execPath, [
       scriptFile,
       '--origin', SYNTHETIC_ORIGIN,
@@ -625,7 +687,7 @@ test('CLI 不联网、不调用 DevTools/上传且输出不回显 origin、AppID
       '--acknowledge-independent-synthetic-app-id'
     ], {
       cwd: projectRoot,
-      env: { ...process.env, NODE_OPTIONS: nodeOptions },
+      env: childEnvironment,
       encoding: 'utf8',
       windowsHide: true,
       timeout: 20000
@@ -650,7 +712,7 @@ test('CLI 不联网、不调用 DevTools/上传且输出不回显 origin、AppID
       '--acknowledge-independent-synthetic-app-id'
     ], {
       cwd: projectRoot,
-      env: { ...process.env, NODE_OPTIONS: nodeOptions },
+      env: childEnvironment,
       encoding: 'utf8',
       windowsHide: true,
       timeout: 20000
@@ -661,5 +723,25 @@ test('CLI 不联网、不调用 DevTools/上传且输出不回显 origin、AppID
       assert.equal(rejected.stdout.includes(forbidden), false);
       assert.equal(rejected.stderr.includes(forbidden), false);
     }
+
+    const privateTemp = path.join(parent, 'missing-private-temp-sentinel');
+    const invalidTemp = spawnSync(process.execPath, [
+      scriptFile,
+      '--origin', SYNTHETIC_ORIGIN,
+      '--app-id', SYNTHETIC_APP_ID,
+      '--output', path.join(privateTemp, 'miniapp-output'),
+      '--acknowledge-approved-synthetic-origin',
+      '--acknowledge-independent-synthetic-app-id'
+    ], {
+      cwd: projectRoot,
+      env: { ...childEnvironment, TEMP: privateTemp, TMP: privateTemp },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 20000
+    });
+    assert.equal(invalidTemp.status, 1);
+    assert.equal(invalidTemp.stderr, 'Synthetic miniapp workspace preparation failed.\n');
+    assert.equal(invalidTemp.stderr.includes(privateTemp), false);
+    assert.equal(invalidTemp.stderr.includes(projectRoot), false);
   });
 });
