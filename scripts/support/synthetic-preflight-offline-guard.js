@@ -61,9 +61,10 @@ const implementationFiles = Object.freeze([
   'server/routes/backup.js'
 ]);
 
-function forbidden() {
+function forbidden(reason = '') {
   const error = new Error('synthetic preflight offline guard rejected an operation');
   error.code = ERROR_CODE;
+  if (reason) error.guardReason = reason;
   return error;
 }
 
@@ -446,10 +447,15 @@ function installOfflineGuard() {
     return original.call(this, filename, options);
   });
   replace(fs, 'writeFileSync', original => function guardedWriteFileSync(filename, data, options) {
-    if (gitStep !== 8 || !staging || evidenceWritten || published
-        || !samePath(filename, path.join(staging, evidenceName))
-        || !exactKeys(options, ['flag']) || options.flag !== 'wx') {
-      throw forbidden();
+    if (gitStep !== 8) throw forbidden(`WRITE_GIT_STEP_${gitStep}`);
+    if (!staging) throw forbidden('WRITE_STAGING_MISSING');
+    if (evidenceWritten) throw forbidden('WRITE_ALREADY_COMPLETED');
+    if (published) throw forbidden('WRITE_ALREADY_PUBLISHED');
+    if (!samePath(filename, path.join(staging, evidenceName))) {
+      throw forbidden('WRITE_PATH_INVALID');
+    }
+    if (!exactKeys(options, ['flag']) || options.flag !== 'wx') {
+      throw forbidden('WRITE_OPTIONS_INVALID');
     }
     const result = original.call(this, filename, data, options);
     evidenceWritten = true;

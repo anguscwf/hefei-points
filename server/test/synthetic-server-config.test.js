@@ -112,7 +112,24 @@ test('committed preflight guard 阻断网络、非 Git 子进程和边界外写�
   const output = path.join(verificationRoot, 'evidence');
   const outside = path.join(tempRoot, 'preflight-guard-outside-write');
   const readableSentinel = path.join(tempRoot, 'preflight-guard-readable-sentinel');
+  const dotenvSentinel = path.join(tempRoot, 'preflight-guard-readable.env');
   fs.writeFileSync(readableSentinel, 'synthetic sentinel', { flag: 'wx' });
+  fs.writeFileSync(dotenvSentinel, 'TANGGUAN_GUARD_CANARY=must-not-load\n', { flag: 'wx' });
+  const implementationFiles = [
+    'package.json',
+    'scripts/preflight-synthetic-api.js',
+    'scripts/support/synthetic-preflight-offline-guard.js',
+    'scripts/verify-synthetic-api-preflight.js',
+    'server/config/defaults.js',
+    'server/config/deployment-profile.js',
+    'server/config/env.js',
+    'server/config/synthetic-runtime-filesystem.js',
+    'server/db/connection.js',
+    'server/lib/backup.js',
+    'server/lib/token.js',
+    'server/lib/wx-auth.js',
+    'server/routes/backup.js'
+  ];
   const guard = path.join(
     projectRoot,
     'scripts',
@@ -125,39 +142,92 @@ test('committed preflight guard 阻断网络、非 Git 子进程和边界外写�
     "const net=require('node:net');",
     "const os=require('node:os');",
     "const path=require('node:path');",
+    `const implementationFiles=${JSON.stringify(implementationFiles)};`,
     "const realpathSync=fs.realpathSync.native||fs.realpathSync;",
     "const gitEnvironment={};",
     "const inherited=new Set(['COMSPEC','LANG','LC_ALL','LC_CTYPE','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR']);",
     "for(const [key,value] of Object.entries(process.env)){if(inherited.has(key.toUpperCase())&&typeof value==='string')gitEnvironment[key]=value;}",
     "Object.assign(gitEnvironment,{GIT_ATTR_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':os.devNull,GIT_CONFIG_NOSYSTEM:'1',GIT_OPTIONAL_LOCKS:'0',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_PROTOCOL_FROM_USER:'0',GIT_TERMINAL_PROMPT:'0'});",
     "const prefix=['--no-pager','--no-optional-locks','--no-replace-objects','-c','core.fsmonitor=false','-c','safe.directory='+realpathSync(process.cwd())];",
-    "const root=childProcess.execFileSync('git',[...prefix,'rev-parse','--show-toplevel'],{cwd:process.cwd(),windowsHide:true,env:gitEnvironment,maxBuffer:16*1024*1024,encoding:'utf8'}).trim();",
-    "if(path.relative(realpathSync(process.cwd()),realpathSync(root))!=='')process.exitCode=13;",
+    "const runGit=(command,extra={encoding:'utf8'})=>childProcess.execFileSync('git',[...prefix,...command],{cwd:process.cwd(),windowsHide:true,env:gitEnvironment,maxBuffer:16*1024*1024,...extra});",
+    '(async()=>{',
+    'let completedGitStep=0;',
+    'let commit;',
+    'let oids;',
+    'try{',
+    "  const root=runGit(['rev-parse','--show-toplevel']).slice(0,-1);completedGitStep=1;",
+    "  if(path.relative(realpathSync(process.cwd()),realpathSync(root))!=='')throw new Error('ROOT');",
+    "  commit=runGit(['rev-parse','--verify','HEAD^{commit}']).slice(0,-1);completedGitStep=2;",
+    "  const index=runGit(['ls-files','--stage','-z','--',...implementationFiles]);completedGitStep=3;",
+    "  const tree=runGit(['ls-tree','-r','-z','--full-tree',commit,'--',...implementationFiles]);completedGitStep=4;",
+    "  if(index.replaceAll(' 0\\t','\\t')!==tree.replaceAll(' blob ',' '))throw new Error('TREE');",
+    "  oids=tree.split('\\0').filter(Boolean).map(record=>record.split(/[ \\t]/)[2]);",
+    "  runGit(['cat-file','--batch'],{encoding:null,input:oids.join('\\n')+'\\n'});completedGitStep=5;",
+    "  runGit(['rev-parse','--verify','HEAD^{commit}']);completedGitStep=6;",
+    "  runGit(['ls-files','--stage','-z','--',...implementationFiles]);completedGitStep=7;",
+    "  runGit(['ls-tree','-r','-z','--full-tree',commit,'--',...implementationFiles]);completedGitStep=8;",
+    "  completedGitStep='8-mkdtemp';const staging=fs.mkdtempSync(path.join(process.env.GUARD_TEST_ROOT,'.tangguan-api-preflight-stage-'));",
+    "  const evidenceFile=path.join(staging,'.synthetic-api-preflight.json');",
+    "  completedGitStep='8-write';fs.writeFileSync(evidenceFile,Buffer.from('{}\\n'),{flag:'wx'});",
+    "  completedGitStep='8-read';if(!fs.readFileSync(evidenceFile).equals(Buffer.from('{}\\n')))throw new Error('EVIDENCE');",
+    "  runGit(['rev-parse','--show-toplevel']);completedGitStep=9;",
+    "  runGit(['rev-parse','--verify','HEAD^{commit}']);completedGitStep=10;",
+    "  runGit(['ls-files','--stage','-z','--',...implementationFiles]);completedGitStep=11;",
+    "  runGit(['ls-tree','-r','-z','--full-tree',commit,'--',...implementationFiles]);completedGitStep=12;",
+    "  runGit(['cat-file','--batch'],{encoding:null,input:oids.join('\\n')+'\\n'});completedGitStep=13;",
+    "  runGit(['rev-parse','--verify','HEAD^{commit}']);completedGitStep=14;",
+    "  runGit(['ls-files','--stage','-z','--',...implementationFiles]);completedGitStep=15;",
+    "  runGit(['ls-tree','-r','-z','--full-tree',commit,'--',...implementationFiles]);completedGitStep=16;",
+    "  fs.renameSync(staging,process.env.GUARD_TEST_OUTPUT);",
+    '}catch(error){',
+    "  process.stderr.write('guard git step '+completedGitStep+' failed ('+(error.guardReason||error.code||'INVALID')+')\\n');",
+    '  process.exitCode=20;return;',
+    '}',
+    "if(!Object.isFrozen(JSON)||!Object.isFrozen(path)||!Object.isFrozen(Function.prototype)){process.exitCode=21;return;}",
     'const attempts=[',
     "  ()=>fs.writeFileSync(process.env.GUARD_TEST_OUTSIDE,'blocked'),",
     "  ()=>fs.readFileSync(process.env.GUARD_TEST_OUTSIDE,{flag:'w+'}),",
     "  ()=>fs.readFileSync(process.env.GUARD_TEST_READABLE),",
+    "  ()=>fs.openAsBlob(process.env.GUARD_TEST_READABLE).then(blob=>blob.text()),",
+    "  ()=>fs.closeSync(2),",
     "  ()=>childProcess.execFileSync(process.execPath,['-e','process.exit(0)']),",
     "  ()=>net.connect({host:'127.0.0.1',port:9}),",
+    "  ()=>new net['Ser'+'ver'](),",
     "  ()=>fetch('https://synthetic-api.example.com'),",
-    "  ()=>require('node:sqlite')",
+    "  ()=>require('node:sqlite'),",
+    "  ()=>process['getBuiltin'+'Module']('node:sqlite'),",
+    "  ()=>process['bind'+'ing']('fs'),",
+    "  ()=>process['_linked'+'Binding']('fs'),",
+    "  ()=>process['dl'+'open'](),",
+    "  ()=>process['loadEnv'+'File'](process.env.GUARD_TEST_DOTENV),",
+    "  ()=>process.report.writeReport(process.env.GUARD_TEST_OUTSIDE),",
+    "  ()=>module['constr'+'uctor']['register'+'Hooks']({resolve(){return {url:'node:sqlite',shortCircuit:true};}}),",
+    "  ()=>((()=>{})['constr'+'uctor']('return im'+'port(\\\"node:sqlite\\\")'))(),",
+    "  ()=>runGit(['status','--porcelain=v1'])",
     '];',
     'for(const attempt of attempts){if(process.exitCode)break;',
-    '  try{attempt();process.exitCode=11;break;}',
+    '  try{await attempt();process.exitCode=11;break;}',
     "  catch(error){if(error.code!=='SYNTHETIC_PREFLIGHT_OFFLINE_FORBIDDEN'){process.exitCode=12;break;}}",
     '}',
-    "if(!process.exitCode)process.stdout.write('offline guard blocked unsafe operations\\n');"
+    "if(process.env.TANGGUAN_GUARD_CANARY!==undefined)process.exitCode=13;",
+    "if(!process.exitCode)process.stdout.write('offline guard blocked unsafe operations\\n');",
+    "})().catch(()=>{process.exitCode=22;});"
   ].join('\n');
+  const guardEnvironment = {
+    ...process.env,
+    TANGGUAN_PREFLIGHT_GUARD_ROOT: verificationRoot,
+    TANGGUAN_PREFLIGHT_GUARD_OUTPUT: output,
+    GUARD_TEST_OUTSIDE: outside,
+    GUARD_TEST_READABLE: readableSentinel,
+    GUARD_TEST_DOTENV: dotenvSentinel,
+    GUARD_TEST_ROOT: verificationRoot,
+    GUARD_TEST_OUTPUT: output
+  };
+  delete guardEnvironment.TANGGUAN_GUARD_CANARY;
   try {
     const result = spawnSync(process.execPath, ['--require', guard, '-e', program], {
       cwd: projectRoot,
-      env: {
-        ...process.env,
-        TANGGUAN_PREFLIGHT_GUARD_ROOT: verificationRoot,
-        TANGGUAN_PREFLIGHT_GUARD_OUTPUT: output,
-        GUARD_TEST_OUTSIDE: outside,
-        GUARD_TEST_READABLE: readableSentinel
-      },
+      env: guardEnvironment,
       encoding: 'utf8',
       windowsHide: true,
       timeout: 15000
@@ -167,6 +237,10 @@ test('committed preflight guard 阻断网络、非 Git 子进程和边界外写�
     assert.equal(result.stderr, '');
     assert.equal(fs.existsSync(outside), false);
     assert.equal(fs.readFileSync(readableSentinel, 'utf8'), 'synthetic sentinel');
+    const probeEvidence = path.join(output, '.synthetic-api-preflight.json');
+    assert.equal(fs.readFileSync(probeEvidence, 'utf8'), '{}\n');
+    fs.unlinkSync(probeEvidence);
+    fs.rmdirSync(output);
     const help = spawnSync(process.execPath, [
       '--require',
       guard,
@@ -193,6 +267,12 @@ test('committed preflight guard 阻断网络、非 Git 子进程和边界外写�
         && !fs.lstatSync(readableSentinel).isSymbolicLink()
         && fs.lstatSync(readableSentinel).nlink === 1) {
       fs.unlinkSync(readableSentinel);
+    }
+    if (fs.existsSync(dotenvSentinel)
+        && fs.lstatSync(dotenvSentinel).isFile()
+        && !fs.lstatSync(dotenvSentinel).isSymbolicLink()
+        && fs.lstatSync(dotenvSentinel).nlink === 1) {
+      fs.unlinkSync(dotenvSentinel);
     }
     if (fs.existsSync(verificationRoot)
         && fs.lstatSync(verificationRoot).isDirectory()
