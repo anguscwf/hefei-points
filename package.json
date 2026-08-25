@@ -15,6 +15,7 @@
     "prepare:harmonyos-synthetic": "node scripts/prepare-harmonyos-synthetic-workspace.js",
     "prepare:miniapp-synthetic": "node scripts/prepare-miniapp-synthetic-workspace.js",
     "preflight:synthetic-api": "node scripts/preflight-synthetic-api.js",
+    "verify:synthetic-api-preflight": "node scripts/verify-synthetic-api-preflight.js",
     "test": "node --test --test-concurrency=1",
     "pm2:logrotate": "node scripts/configure-pm2-logrotate.js",
     "check": "node scripts/check-rename.js && node scripts/check-miniapp.js && node scripts/check-harmonyos.js",

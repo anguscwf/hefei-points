@@ -10,6 +10,8 @@ const realpathSync = fs.realpathSync.native || fs.realpathSync;
 const implementationFiles = Object.freeze([
   'package.json',
   'scripts/preflight-synthetic-api.js',
+  'scripts/support/synthetic-preflight-offline-guard.js',
+  'scripts/verify-synthetic-api-preflight.js',
   'server/config/defaults.js',
   'server/config/deployment-profile.js',
   'server/config/env.js',
@@ -157,16 +159,20 @@ function git(arguments_, options = {}) {
 
 function parseIndexEntries(output) {
   return output.split('\0').filter(Boolean).map(record => {
-    const match = /^(100644|100755) ([0-9a-f]{40,64}) 0\t(.+)$/.exec(record);
-    if (!match) throw new Error('preflight implementation index entry is invalid');
+    const match = /^(100644|100755) ((?:[0-9a-f]{40}|[0-9a-f]{64})) 0\t(.+)$/.exec(record);
+    if (!match || /^0+$/.test(match[2])) {
+      throw new Error('preflight implementation index entry is invalid');
+    }
     return { mode: match[1], oid: match[2], filename: match[3] };
   });
 }
 
 function parseHeadEntries(output) {
   return output.split('\0').filter(Boolean).map(record => {
-    const match = /^(100644|100755) blob ([0-9a-f]{40,64})\t(.+)$/.exec(record);
-    if (!match) throw new Error('preflight implementation HEAD entry is invalid');
+    const match = /^(100644|100755) blob ((?:[0-9a-f]{40}|[0-9a-f]{64}))\t(.+)$/.exec(record);
+    if (!match || /^0+$/.test(match[2])) {
+      throw new Error('preflight implementation HEAD entry is invalid');
+    }
     return { mode: match[1], oid: match[2], filename: match[3] };
   });
 }
@@ -186,16 +192,17 @@ function readBatchBlobs(entries) {
     const filename = entry.filename;
     const headerEnd = output.indexOf(0x0a, offset);
     if (headerEnd < 0) throw new Error('preflight implementation blob response is incomplete');
-    const match = /^([0-9a-f]{40,64}) blob ([0-9]+)$/.exec(
+    const match = /^((?:[0-9a-f]{40}|[0-9a-f]{64})) blob (0|[1-9][0-9]*)$/.exec(
       output.subarray(offset, headerEnd).toString('utf8')
     );
-    if (!match || match[1] !== entry.oid) {
+    if (!match || /^0+$/.test(match[1]) || match[1] !== entry.oid) {
       throw new Error('preflight implementation must resolve to the captured blob');
     }
     const length = Number(match[2]);
     const start = headerEnd + 1;
     const end = start + length;
-    if (!Number.isSafeInteger(length) || length < 0 || end >= output.length
+    if (!Number.isSafeInteger(length) || length < 0
+        || length > output.length - start - 1
         || output[end] !== 0x0a) {
       throw new Error('preflight implementation blob response is malformed');
     }
@@ -219,9 +226,35 @@ function framedDigest(inputs) {
   return digest.digest('hex');
 }
 
+function canonicalLineEndings(content) {
+  const normalized = Buffer.allocUnsafe(content.length);
+  let writeOffset = 0;
+  for (let readOffset = 0; readOffset < content.length; readOffset += 1) {
+    const byte = content[readOffset];
+    if (byte === 0x0d) {
+      if (content[readOffset + 1] !== 0x0a) return null;
+      continue;
+    }
+    normalized[writeOffset] = byte;
+    writeOffset += 1;
+  }
+  return normalized.subarray(0, writeOffset);
+}
+
+function runningContentMatchesCommitted(running, committed) {
+  if (!Buffer.isBuffer(running) || !Buffer.isBuffer(committed)) return false;
+  if (running.equals(committed)) return true;
+  const normalizedRunning = canonicalLineEndings(running);
+  const normalizedCommitted = canonicalLineEndings(committed);
+  return normalizedRunning !== null && normalizedCommitted !== null
+    && normalizedRunning.equals(normalizedCommitted);
+}
+
 function capturedCommit() {
-  const commit = git(['rev-parse', '--verify', 'HEAD^{commit}'], { encoding: 'utf8' }).trim();
-  if (!/^[0-9a-f]{40,64}$/.test(commit)) {
+  const output = git(['rev-parse', '--verify', 'HEAD^{commit}'], { encoding: 'utf8' });
+  const match = /^((?:[0-9a-f]{40}|[0-9a-f]{64}))\n$/.exec(output);
+  const commit = match && match[1];
+  if (!commit || /^0+$/.test(commit)) {
     throw new Error('preflight implementation commit is invalid');
   }
   return commit;
@@ -249,7 +282,7 @@ function implementationSnapshot(commit) {
 function assertRunningImplementation(inputs) {
   for (const input of inputs) {
     const running = fs.readFileSync(path.join(projectRoot, ...input.filename.split('/')));
-    if (!running.equals(input.content)) {
+    if (!runningContentMatchesCommitted(running, input.content)) {
       throw new Error('running preflight implementation must match committed HEAD');
     }
   }
@@ -257,7 +290,9 @@ function assertRunningImplementation(inputs) {
 
 function committedProvenance() {
   const { projectRealRoot } = runtimeRoots();
-  const root = git(['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  const rootOutput = git(['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  const rootMatch = /^([^\r\n]+)\n$/.exec(rootOutput);
+  const root = rootMatch && rootMatch[1];
   if (!root || path.relative(projectRealRoot, realpathSync(root)) !== '') {
     throw new Error('preflight must use the canonical repository');
   }
@@ -277,7 +312,7 @@ function committedProvenance() {
   return Object.freeze({
     sourceCommit,
     implementationIndexMatchesHead: true,
-    implementationWorktreeMatchesHead: true,
+    implementationWorktreeMatchesHeadAfterEolNormalization: true,
     implementationTreeSha256: framedDigest(inputs),
     implementationFiles: inputs.map(input => Object.freeze({
       path: input.filename,
@@ -309,7 +344,8 @@ function evidenceFor(environment, provenance) {
     result: 'configuration-shape-validated',
     sourceCommit: provenance.sourceCommit,
     implementationIndexMatchesHead: provenance.implementationIndexMatchesHead,
-    implementationWorktreeMatchesHead: provenance.implementationWorktreeMatchesHead,
+    implementationWorktreeMatchesHeadAfterEolNormalization:
+      provenance.implementationWorktreeMatchesHeadAfterEolNormalization,
     implementationTreeSha256: provenance.implementationTreeSha256,
     implementationFiles: provenance.implementationFiles,
     configuration,
@@ -433,6 +469,7 @@ module.exports = {
   parseArguments,
   prepareEvidence,
   resolveOutput,
+  runningContentMatchesCommitted,
   runCli,
   safeErrorCode
 };

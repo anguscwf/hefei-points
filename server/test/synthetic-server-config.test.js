@@ -11,6 +11,7 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tangguan-synthetic-confi
 const profile = require('../config/deployment-profile');
 const runtimeFilesystem = require('../config/synthetic-runtime-filesystem');
 const preflight = require('../../scripts/preflight-synthetic-api');
+const committedPreflightVerifier = require('../../scripts/verify-synthetic-api-preflight');
 
 function syntheticEnvironment(overrides = {}) {
   const root = path.join(tempRoot, 'tangguan-synthetic-stage1');
@@ -71,13 +72,212 @@ function fakeProvenance() {
   return Object.freeze({
     sourceCommit: 'a'.repeat(40),
     implementationIndexMatchesHead: true,
-    implementationWorktreeMatchesHead: true,
+    implementationWorktreeMatchesHeadAfterEolNormalization: true,
     implementationTreeSha256: 'b'.repeat(64),
     implementationFiles: Object.freeze([
       Object.freeze({ path: 'synthetic-fixture.js', sha256: 'c'.repeat(64) })
     ])
   });
 }
+
+test('preflight 只把 CRLF/LF 规范化视为相同实现内容', () => {
+  assert.equal(
+    preflight.runningContentMatchesCommitted(
+      Buffer.from('const value = 1;\r\nmodule.exports = value;\r\n'),
+      Buffer.from('const value = 1;\nmodule.exports = value;\n')
+    ),
+    true
+  );
+  assert.equal(
+    preflight.runningContentMatchesCommitted(
+      Buffer.from('const value = 2;\r\nmodule.exports = value;\r\n'),
+      Buffer.from('const value = 1;\nmodule.exports = value;\n')
+    ),
+    false
+  );
+  assert.equal(
+    preflight.runningContentMatchesCommitted(
+      Buffer.from('const value = 1;\rmodule.exports = value;\n'),
+      Buffer.from('const value = 1;\nmodule.exports = value;\n')
+    ),
+    false
+  );
+});
+
+test('committed preflight guard 阻断网络、非 Git 子进程和边界外写入', () => {
+  const verificationRoot = fs.mkdtempSync(path.join(
+    os.tmpdir(),
+    'tangguan-synthetic-api-preflight-verification-'
+  ));
+  const output = path.join(verificationRoot, 'evidence');
+  const outside = path.join(tempRoot, 'preflight-guard-outside-write');
+  const readableSentinel = path.join(tempRoot, 'preflight-guard-readable-sentinel');
+  fs.writeFileSync(readableSentinel, 'synthetic sentinel', { flag: 'wx' });
+  const guard = path.join(
+    projectRoot,
+    'scripts',
+    'support',
+    'synthetic-preflight-offline-guard.js'
+  );
+  const program = [
+    "const fs=require('node:fs');",
+    "const childProcess=require('node:child_process');",
+    "const net=require('node:net');",
+    "const os=require('node:os');",
+    "const path=require('node:path');",
+    "const realpathSync=fs.realpathSync.native||fs.realpathSync;",
+    "const gitEnvironment={};",
+    "const inherited=new Set(['COMSPEC','LANG','LC_ALL','LC_CTYPE','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR']);",
+    "for(const [key,value] of Object.entries(process.env)){if(inherited.has(key.toUpperCase())&&typeof value==='string')gitEnvironment[key]=value;}",
+    "Object.assign(gitEnvironment,{GIT_ATTR_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':os.devNull,GIT_CONFIG_NOSYSTEM:'1',GIT_OPTIONAL_LOCKS:'0',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_PROTOCOL_FROM_USER:'0',GIT_TERMINAL_PROMPT:'0'});",
+    "const prefix=['--no-pager','--no-optional-locks','--no-replace-objects','-c','core.fsmonitor=false','-c','safe.directory='+realpathSync(process.cwd())];",
+    "const root=childProcess.execFileSync('git',[...prefix,'rev-parse','--show-toplevel'],{cwd:process.cwd(),windowsHide:true,env:gitEnvironment,maxBuffer:16*1024*1024,encoding:'utf8'}).trim();",
+    "if(path.relative(realpathSync(process.cwd()),realpathSync(root))!=='')process.exitCode=13;",
+    'const attempts=[',
+    "  ()=>fs.writeFileSync(process.env.GUARD_TEST_OUTSIDE,'blocked'),",
+    "  ()=>fs.readFileSync(process.env.GUARD_TEST_OUTSIDE,{flag:'w+'}),",
+    "  ()=>fs.readFileSync(process.env.GUARD_TEST_READABLE),",
+    "  ()=>childProcess.execFileSync(process.execPath,['-e','process.exit(0)']),",
+    "  ()=>net.connect({host:'127.0.0.1',port:9}),",
+    "  ()=>fetch('https://synthetic-api.example.com'),",
+    "  ()=>require('node:sqlite')",
+    '];',
+    'for(const attempt of attempts){if(process.exitCode)break;',
+    '  try{attempt();process.exitCode=11;break;}',
+    "  catch(error){if(error.code!=='SYNTHETIC_PREFLIGHT_OFFLINE_FORBIDDEN'){process.exitCode=12;break;}}",
+    '}',
+    "if(!process.exitCode)process.stdout.write('offline guard blocked unsafe operations\\n');"
+  ].join('\n');
+  try {
+    const result = spawnSync(process.execPath, ['--require', guard, '-e', program], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        TANGGUAN_PREFLIGHT_GUARD_ROOT: verificationRoot,
+        TANGGUAN_PREFLIGHT_GUARD_OUTPUT: output,
+        GUARD_TEST_OUTSIDE: outside,
+        GUARD_TEST_READABLE: readableSentinel
+      },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 15000
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'offline guard blocked unsafe operations\n');
+    assert.equal(result.stderr, '');
+    assert.equal(fs.existsSync(outside), false);
+    assert.equal(fs.readFileSync(readableSentinel, 'utf8'), 'synthetic sentinel');
+    const help = spawnSync(process.execPath, [
+      '--require',
+      guard,
+      path.join(projectRoot, 'scripts', 'preflight-synthetic-api.js'),
+      '--help'
+    ], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        TANGGUAN_PREFLIGHT_GUARD_ROOT: verificationRoot,
+        TANGGUAN_PREFLIGHT_GUARD_OUTPUT: output
+      },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 15000
+    });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /^Usage:\n/);
+    assert.equal(help.stderr, '');
+    assert.deepEqual(fs.readdirSync(verificationRoot), []);
+  } finally {
+    if (fs.existsSync(readableSentinel)
+        && fs.lstatSync(readableSentinel).isFile()
+        && !fs.lstatSync(readableSentinel).isSymbolicLink()
+        && fs.lstatSync(readableSentinel).nlink === 1) {
+      fs.unlinkSync(readableSentinel);
+    }
+    if (fs.existsSync(verificationRoot)
+        && fs.lstatSync(verificationRoot).isDirectory()
+        && !fs.lstatSync(verificationRoot).isSymbolicLink()
+        && fs.readdirSync(verificationRoot).length === 0) {
+      fs.rmdirSync(verificationRoot);
+    }
+  }
+});
+
+test('committed preflight verifier 对证据 schema 与值精确 fail closed', () => {
+  const environment = syntheticEnvironment();
+  const expected = fakeProvenance();
+  const evidence = preflight.evidenceFor(environment, expected);
+  const boundaries = {
+    temporaryRoot: tempRoot,
+    realTemporaryRoot: fs.realpathSync(tempRoot),
+    verificationRoot: path.join(tempRoot, 'verification-root'),
+    realVerificationRoot: path.join(tempRoot, 'verification-root'),
+    output: path.join(tempRoot, 'verification-root', 'evidence')
+  };
+  assert.doesNotThrow(() => committedPreflightVerifier.assertEvidenceForTest(
+    evidence,
+    `${JSON.stringify(evidence, null, 2)}\n`,
+    expected,
+    environment,
+    boundaries
+  ));
+
+  const emptyExternal = structuredClone(evidence);
+  emptyExternal.externalVerification = {};
+  assert.throws(
+    () => committedPreflightVerifier.assertEvidenceForTest(
+      emptyExternal,
+      `${JSON.stringify(emptyExternal, null, 2)}\n`,
+      expected,
+      environment,
+      boundaries
+    ),
+    error => error && error.code === 'EVIDENCE_SCHEMA_INVALID'
+  );
+
+  const selfHashedEmptyConfiguration = structuredClone(evidence);
+  selfHashedEmptyConfiguration.configuration = {};
+  selfHashedEmptyConfiguration.configurationSha256 = sha256(Buffer.from('{}', 'utf8'));
+  assert.throws(
+    () => committedPreflightVerifier.assertEvidenceForTest(
+      selfHashedEmptyConfiguration,
+      `${JSON.stringify(selfHashedEmptyConfiguration, null, 2)}\n`,
+      expected,
+      environment,
+      boundaries
+    ),
+    error => error && error.code === 'EVIDENCE_SCHEMA_INVALID'
+  );
+
+  const extraClaim = structuredClone(evidence);
+  extraClaim.unverifiedDeploymentClaim = false;
+  assert.throws(
+    () => committedPreflightVerifier.assertEvidenceForTest(
+      extraClaim,
+      `${JSON.stringify(extraClaim, null, 2)}\n`,
+      expected,
+      environment,
+      boundaries
+    ),
+    error => error && error.code === 'PROVENANCE_MISMATCH'
+  );
+
+  const canonical = `${JSON.stringify(evidence, null, 2)}\n`;
+  const duplicateKeyLeak = canonical.replace(
+    '  "profile":',
+    `  "profile": ${JSON.stringify(environment.WX_APPSECRET)},\n  "profile":`
+  );
+  assert.throws(
+    () => committedPreflightVerifier.assertEvidenceForTest(
+      JSON.parse(duplicateKeyLeak),
+      duplicateKeyLeak,
+      expected,
+      environment,
+      boundaries
+    ),
+    error => error && error.code === 'PROVENANCE_MISMATCH'
+  );
+});
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -504,7 +704,7 @@ test('离线 preflight 只原子发布无密配置形状证据', () => {
   assert.equal(evidence.result, 'configuration-shape-validated');
   assert.equal(evidence.sourceCommit, 'a'.repeat(40));
   assert.equal(evidence.implementationIndexMatchesHead, true);
-  assert.equal(evidence.implementationWorktreeMatchesHead, true);
+  assert.equal(evidence.implementationWorktreeMatchesHeadAfterEolNormalization, true);
   assert.equal(evidence.configuration.wechatSecretPresent, true);
   assert.equal(
     evidence.configuration.apiOriginSha256,
