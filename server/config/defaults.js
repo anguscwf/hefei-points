@@ -46,23 +46,36 @@ function getDefaultRuleTemplates() {
 }
 
 function initData() {
-  repositories.families.ensureDefault({ id: 'default', name: '安总家', inviteCode: generateInviteCode(), createdAt: new Date().toISOString() });
+  const syntheticRuntime = process.env.NODE_ENV === 'production'
+    && process.env.DEPLOYMENT_TIER === 'synthetic';
+  repositories.families.ensureDefault({
+    id: 'default',
+    name: syntheticRuntime ? '合成默认家庭' : '安总家',
+    inviteCode: generateInviteCode(),
+    createdAt: new Date().toISOString()
+  });
   if (Object.keys(repositories.config.getRules('default')).length === 0) {
     repositories.config.setRules('default', getDefaultRuleTemplates(), { updatedBy: 'system' });
   }
   if (repositories.users.listAll().length === 0) {
-    const legacyConfigFile = path.join(DATA_DIR, 'config.json');
     let legacyHasUsers = false;
-    try {
-      const legacy = JSON.parse(fs.readFileSync(legacyConfigFile, 'utf8'));
-      legacyHasUsers = Array.isArray(legacy.users) && legacy.users.length > 0;
-    } catch (_) {}
+    if (!syntheticRuntime) {
+      const legacyConfigFile = path.join(DATA_DIR, 'config.json');
+      try {
+        const legacy = JSON.parse(fs.readFileSync(legacyConfigFile, 'utf8'));
+        legacyHasUsers = Array.isArray(legacy.users) && legacy.users.length > 0;
+      } catch (_) {}
+    }
     if (legacyHasUsers) {
       throw new Error('检测到尚未迁移的 JSON 用户数据，请先运行 npm run migrate:sqlite');
     }
     logger.warn({ event: 'bootstrap.no_users' }, 'no users configured; create an administrator securely');
   }
-  require('../lib/backup').doBackup();
+  if (syntheticRuntime) {
+    logger.info({ event: 'backup.synthetic_skipped' }, 'automatic backup is disabled for synthetic data');
+  } else {
+    require('../lib/backup').doBackup();
+  }
 }
 
 module.exports = { initData, getDefaultRuleTemplates };

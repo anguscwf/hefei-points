@@ -1,0 +1,667 @@
+const { test, after } = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+
+const projectRoot = path.resolve(__dirname, '..', '..');
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tangguan-synthetic-config-'));
+const profile = require('../config/deployment-profile');
+const runtimeFilesystem = require('../config/synthetic-runtime-filesystem');
+const preflight = require('../../scripts/preflight-synthetic-api');
+
+function syntheticEnvironment(overrides = {}) {
+  const root = path.join(tempRoot, 'tangguan-synthetic-stage1');
+  const origin = 'https://synthetic-api.example.com';
+  return {
+    NODE_ENV: 'production',
+    DEPLOYMENT_TIER: 'synthetic',
+    SYNTHETIC_RUNTIME_ACK: profile.SYNTHETIC_RUNTIME_ACK,
+    SYNTHETIC_APP_CREDENTIALS_ACK: profile.SYNTHETIC_APP_CREDENTIALS_ACK,
+    SYNTHETIC_DATA_ACK: profile.SYNTHETIC_DATA_ACK,
+    SYNTHETIC_DATASET_ID: 'synthetic-stage1-family',
+    SYNTHETIC_DATA_ROOT: root,
+    DATA_DIR: path.join(root, 'data'),
+    SQLITE_FILE: path.join(root, 'data', 'hefei-points-synthetic.sqlite'),
+    API_PUBLIC_ORIGIN: origin,
+    LEGAL_PUBLIC_ORIGIN: origin,
+    GUARDIAN_RELATION_DECLARATION_VERSION: 'synthetic-relation-v1',
+    GUARDIAN_RELATION_DECLARATION_SHA256: 'e'.repeat(64),
+    GUARDIAN_RELATION_DECLARATION_PUBLIC_URL:
+      `${origin}/legal/guardian-relation-declaration/synthetic-relation-v1/${'e'.repeat(64)}.html`,
+    WX_APPID: 'wx0123456789abcdef',
+    WX_APPSECRET: 'synthetic-secret-material-only',
+    HARMONY_CHILD_ENABLED: 'true',
+    CHILD_ENROLLMENT_ENABLED: 'true',
+    DEVICE_PAIRING_ENABLED: 'true',
+    POINT_REQUESTS_ENABLED: 'true',
+    CHILD_DATA_RIGHTS_ENABLED: 'false',
+    LEGACY_CHILD_LOGIN_ENABLED: 'false',
+    LEGACY_CHILD_MANAGEMENT_ENABLED: 'false',
+    PAIRING_CLIENT_IP_MODE: 'direct',
+    TRUSTED_PROXIES: '',
+    LOG_LEVEL: 'info',
+    ...overrides
+  };
+}
+
+function assertCode(work, code) {
+  assert.throws(work, error => error instanceof profile.DeploymentConfigError
+    && error.code === code);
+}
+
+function assertRuntimeCode(work, code = 'SYNTHETIC_DATA_ROOT_UNSAFE') {
+  assert.throws(work, error => error && error.code === code);
+}
+
+function createPhysicalSyntheticRoot(environment) {
+  const deployment = profile.validateSyntheticDeployment(environment, { projectRoot });
+  fs.mkdirSync(deployment.dataPaths.dataDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(deployment.dataPaths.root, runtimeFilesystem.SYNTHETIC_DATA_MARKER_FILENAME),
+    runtimeFilesystem.markerBufferFor(deployment),
+    { flag: 'wx' }
+  );
+  return deployment;
+}
+
+function fakeProvenance() {
+  return Object.freeze({
+    sourceCommit: 'a'.repeat(40),
+    implementationIndexMatchesHead: true,
+    implementationWorktreeMatchesHead: true,
+    implementationTreeSha256: 'b'.repeat(64),
+    implementationFiles: Object.freeze([
+      Object.freeze({ path: 'synthetic-fixture.js', sha256: 'c'.repeat(64) })
+    ])
+  });
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+after(() => {
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('synthetic 配置总门只返回无秘密的规范化运行契约', () => {
+  const environment = syntheticEnvironment();
+  const result = profile.validateSyntheticDeployment(environment, { projectRoot });
+  assert.equal(result.deploymentTier, 'synthetic');
+  assert.equal(result.apiOrigin, environment.API_PUBLIC_ORIGIN);
+  assert.equal(result.wechatAppId, environment.WX_APPID);
+  assert.equal(result.wechatSecretPresent, true);
+  assert.equal(result.coreFeatureGatesEnabled, true);
+  assert.equal(result.closedFeatureGatesDisabled, true);
+  assert.equal(result.proxyPolicy.mode, 'direct');
+  assert.equal(result.proxyPolicy.trustedProxyCount, 0);
+  assert.equal(Object.values(result).includes(environment.WX_APPSECRET), false);
+});
+
+test('synthetic profile、三项人工确认和生产形态必须精确拒绝', () => {
+  assertCode(
+    () => profile.validateSyntheticDeployment(syntheticEnvironment({ NODE_ENV: 'test' }), {
+      projectRoot
+    }),
+    'SYNTHETIC_MODE_REQUIRED'
+  );
+  for (const name of [
+    'SYNTHETIC_RUNTIME_ACK',
+    'SYNTHETIC_APP_CREDENTIALS_ACK',
+    'SYNTHETIC_DATA_ACK'
+  ]) {
+    assertCode(
+      () => profile.validateSyntheticDeployment(syntheticEnvironment({ [name]: '' }), {
+        projectRoot
+      }),
+      'SYNTHETIC_ACK_REQUIRED'
+    );
+  }
+  assertCode(
+    () => profile.validateSyntheticDeployment(syntheticEnvironment({
+      WX_APPID: profile.PRODUCTION_WECHAT_APP_ID
+    }), { projectRoot }),
+    'SYNTHETIC_PRODUCTION_RESOURCE_FORBIDDEN'
+  );
+  assertCode(
+    () => profile.validateSyntheticDeployment(syntheticEnvironment({ WX_APPSECRET: '' }), {
+      projectRoot
+    }),
+    'SYNTHETIC_CONFIG_INVALID'
+  );
+});
+
+test('API 与法律源拒绝生产等价写法、跨源和非 canonical URL', () => {
+  for (const origin of [
+    'https://hefeijifen.cn',
+    'https://preview.hefeijifen.cn',
+    'https://HEFEIJIFEN.cn',
+    'https://hefeijifen.cn:443',
+    'https://user@synthetic-api.example.com',
+    'https://synthetic-api.example.com/',
+    'https://synthetic-api.example.com/path',
+    'https://127.0.0.1',
+    'https://synthetic-api.invalid'
+  ]) {
+    const expectedCode = origin.toLowerCase().includes('hefeijifen.cn')
+      && profile.canonicalPublicHttpsOrigin(origin)
+      ? 'SYNTHETIC_PRODUCTION_RESOURCE_FORBIDDEN'
+      : 'SYNTHETIC_CONFIG_INVALID';
+    assertCode(
+      () => profile.validateSyntheticDeployment(syntheticEnvironment({
+        API_PUBLIC_ORIGIN: origin
+      }), { projectRoot }),
+      expectedCode
+    );
+  }
+  assertCode(
+    () => profile.validateSyntheticDeployment(syntheticEnvironment({
+      LEGAL_PUBLIC_ORIGIN: 'https://other-synthetic.example.com'
+    }), { projectRoot }),
+    'SYNTHETIC_LEGAL_SOURCE_INVALID'
+  );
+  assertCode(
+    () => profile.validateSyntheticDeployment(syntheticEnvironment({
+      GUARDIAN_RELATION_DECLARATION_PUBLIC_URL: 'https://synthetic-api.example.com/legal/wrong'
+    }), { projectRoot }),
+    'SYNTHETIC_LEGAL_SOURCE_INVALID'
+  );
+});
+
+test('核心四门必须字面开启且数据权利与 legacy 三门必须字面关闭', () => {
+  for (const name of profile.CORE_SYNTHETIC_GATES) {
+    for (const value of ['', 'false', '1', 'TRUE']) {
+      assertCode(
+        () => profile.validateSyntheticDeployment(syntheticEnvironment({ [name]: value }), {
+          projectRoot
+        }),
+        'SYNTHETIC_FEATURE_GATES_INVALID'
+      );
+    }
+  }
+  for (const name of profile.CLOSED_SYNTHETIC_GATES) {
+    for (const value of ['', 'true', '0', 'FALSE']) {
+      assertCode(
+        () => profile.validateSyntheticDeployment(syntheticEnvironment({ [name]: value }), {
+          projectRoot
+        }),
+        'SYNTHETIC_FEATURE_GATES_INVALID'
+      );
+    }
+  }
+});
+
+test('synthetic 数据根拒绝相对、仓库、父目录、别名文件名和迁移清单', () => {
+  const unsafe = [
+    { SYNTHETIC_DATA_ROOT: 'relative-synthetic-root' },
+    {
+      SYNTHETIC_DATA_ROOT: path.join(projectRoot, 'tangguan-synthetic-stage1'),
+      DATA_DIR: path.join(projectRoot, 'tangguan-synthetic-stage1', 'data'),
+      SQLITE_FILE: path.join(
+        projectRoot, 'tangguan-synthetic-stage1', 'data', 'hefei-points-synthetic.sqlite'
+      )
+    },
+    {
+      SYNTHETIC_DATA_ROOT: path.dirname(projectRoot),
+      DATA_DIR: path.join(path.dirname(projectRoot), 'data'),
+      SQLITE_FILE: path.join(path.dirname(projectRoot), 'data', 'hefei-points-synthetic.sqlite')
+    },
+    { SQLITE_FILE: path.join(tempRoot, 'tangguan-synthetic-stage1', 'data', 'production.sqlite') },
+    { PRE_MIGRATION_BACKUP_MANIFEST: path.join(tempRoot, 'production-manifest.json') }
+  ];
+  if (process.platform === 'win32') {
+    unsafe.push({
+      SYNTHETIC_DATA_ROOT: '\\\\synthetic-host\\share\\tangguan-synthetic-stage1'
+    });
+  }
+  for (const overrides of unsafe) {
+    assertCode(
+      () => profile.validateSyntheticDeployment(syntheticEnvironment(overrides), { projectRoot }),
+      'SYNTHETIC_DATA_ROOT_UNSAFE'
+    );
+  }
+});
+
+test('synthetic 运行数据根要求无链接物理目录、严格 marker 与普通 SQLite 文件', t => {
+  const environment = syntheticEnvironment();
+  const deployment = createPhysicalSyntheticRoot(environment);
+  const markerFile = path.join(
+    deployment.dataPaths.root,
+    runtimeFilesystem.SYNTHETIC_DATA_MARKER_FILENAME
+  );
+  assert.match(
+    runtimeFilesystem.validateSyntheticRuntimeFilesystem(deployment, projectRoot).markerSha256,
+    /^[0-9a-f]{64}$/
+  );
+
+  fs.writeFileSync(deployment.dataPaths.sqliteFile, Buffer.alloc(0), { flag: 'wx' });
+  assert.doesNotThrow(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    deployment,
+    projectRoot
+  ));
+  fs.writeFileSync(markerFile, '{}\n');
+  assertRuntimeCode(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    deployment,
+    projectRoot
+  ));
+  fs.writeFileSync(markerFile, runtimeFilesystem.markerBufferFor(deployment));
+
+  for (const unexpected of [
+    path.join(deployment.dataPaths.root, 'config.json'),
+    `${deployment.dataPaths.sqliteFile}-journal`
+  ]) {
+    fs.writeFileSync(unexpected, 'synthetic-unexpected-file');
+    assertRuntimeCode(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+      deployment,
+      projectRoot
+    ));
+    fs.unlinkSync(unexpected);
+  }
+  const unexpectedBackup = path.join(deployment.dataPaths.root, 'backups');
+  fs.mkdirSync(unexpectedBackup);
+  assertRuntimeCode(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    deployment,
+    projectRoot
+  ));
+  fs.rmdirSync(unexpectedBackup);
+
+  fs.unlinkSync(deployment.dataPaths.sqliteFile);
+  fs.mkdirSync(deployment.dataPaths.sqliteFile);
+  assertRuntimeCode(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    deployment,
+    projectRoot
+  ));
+  fs.rmdirSync(deployment.dataPaths.sqliteFile);
+
+  const missingEnvironment = syntheticEnvironment({
+    SYNTHETIC_DATASET_ID: 'synthetic-no-marker',
+    SYNTHETIC_DATA_ROOT: path.join(tempRoot, 'tangguan-synthetic-no-marker'),
+    DATA_DIR: path.join(tempRoot, 'tangguan-synthetic-no-marker', 'data'),
+    SQLITE_FILE: path.join(
+      tempRoot, 'tangguan-synthetic-no-marker', 'data', 'hefei-points-synthetic.sqlite'
+    )
+  });
+  const missingDeployment = profile.validateSyntheticDeployment(missingEnvironment, { projectRoot });
+  fs.mkdirSync(missingDeployment.dataPaths.dataDir, { recursive: true });
+  assertRuntimeCode(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    missingDeployment,
+    projectRoot
+  ));
+
+  const aliasRoot = path.join(tempRoot, 'tangguan-synthetic-linked-root');
+  const aliasEnvironment = syntheticEnvironment({
+    SYNTHETIC_DATASET_ID: 'synthetic-linked-root',
+    SYNTHETIC_DATA_ROOT: aliasRoot,
+    DATA_DIR: path.join(aliasRoot, 'data'),
+    SQLITE_FILE: path.join(aliasRoot, 'data', 'hefei-points-synthetic.sqlite')
+  });
+  const aliasDeployment = profile.validateSyntheticDeployment(aliasEnvironment, { projectRoot });
+  const physicalTarget = path.join(tempRoot, 'synthetic-linked-physical-target');
+  fs.mkdirSync(path.join(physicalTarget, 'data'), { recursive: true });
+  fs.writeFileSync(
+    path.join(physicalTarget, runtimeFilesystem.SYNTHETIC_DATA_MARKER_FILENAME),
+    runtimeFilesystem.markerBufferFor(aliasDeployment),
+    { flag: 'wx' }
+  );
+  try {
+    fs.symlinkSync(physicalTarget, aliasRoot, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    if (!error || !['EPERM', 'EACCES', 'ENOSYS'].includes(error.code)) throw error;
+    t.diagnostic('junction/symlink creation is unavailable; static link rejection remains covered');
+    return;
+  }
+  assertRuntimeCode(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    aliasDeployment,
+    projectRoot
+  ));
+});
+
+test('synthetic runtime 首次启动与重启只创建合成默认家庭、SQLite 和独立 secret', () => {
+  const root = path.join(tempRoot, 'tangguan-synthetic-runtime-spawn');
+  const environment = syntheticEnvironment({
+    SYNTHETIC_DATASET_ID: 'synthetic-runtime-spawn',
+    SYNTHETIC_DATA_ROOT: root,
+    DATA_DIR: path.join(root, 'data'),
+    SQLITE_FILE: path.join(root, 'data', 'hefei-points-synthetic.sqlite'),
+    LOG_LEVEL: 'error'
+  });
+  createPhysicalSyntheticRoot(environment);
+  const program = [
+    "const fs=require('node:fs');",
+    "const path=require('node:path');",
+    "const {installLoopbackOnlyNetwork}=require('./server/test-support/loopback-only-network');",
+    'const restore=installLoopbackOnlyNetwork();',
+    'let server;',
+    'let closeDb=()=>{};',
+    '(async()=>{',
+    'try {',
+    "  const {createApp}=require('./server/index');",
+    '  const app=createApp();',
+    "  const connection=require('./server/db/connection');",
+    '  closeDb=connection.closeDb;',
+    '  const {getDb}=connection;',
+    "  const family=getDb().prepare(\"SELECT name FROM families WHERE id='default'\").get();",
+    "  if(!family||family.name!=='合成默认家庭')process.exitCode=11;",
+    "  const repositories=require('./server/db/repositories');",
+    "  const token=require('./server/lib/token');",
+    "  if(!repositories.users.findById('synthetic_admin'))repositories.users.insert({id:'synthetic_admin',name:'合成管理员',role:'admin',familyId:'default'});",
+    "  const headers={Authorization:'Bearer '+token.signToken('synthetic_admin','admin','default')};",
+    "  const secret=fs.readFileSync(path.join(process.env.DATA_DIR,'.secret'),'utf8');",
+    "  if(!/^[0-9a-f]{64}$/.test(secret))process.exitCode=12;",
+    "  if(fs.existsSync(path.join(process.env.SYNTHETIC_DATA_ROOT,'backups')))process.exitCode=13;",
+    "  if(fs.existsSync(path.join(process.env.DATA_DIR,'config.json')))process.exitCode=14;",
+    "  server=await new Promise((resolve,reject)=>{const value=app.listen(0,'127.0.0.1');value.once('listening',()=>resolve(value));value.once('error',reject);});",
+    "  const base='http://127.0.0.1:'+server.address().port;",
+    "  const anonymousList=await fetch(base+'/api/backups');",
+    "  if(anonymousList.status!==403)process.exitCode=15;",
+    "  const listed=await fetch(base+'/api/backups',{headers});",
+    '  const listBody=await listed.json();',
+    "  if(listed.status!==200||!listBody.success||listBody.backups.length!==0)process.exitCode=16;",
+    "  const anonymousCreate=await fetch(base+'/api/backup',{method:'POST'});",
+    "  if(anonymousCreate.status!==403)process.exitCode=17;",
+    "  const created=await fetch(base+'/api/backup',{method:'POST',headers});",
+    '  if(created.status!==409)process.exitCode=18;',
+    '} finally {',
+    '  if(server)await new Promise(resolve=>server.close(resolve));',
+    '  closeDb();',
+    '  restore();',
+    '}',
+    '})().catch(()=>{process.exitCode=20;});'
+  ].join('\n');
+  for (let run = 0; run < 2; run += 1) {
+    const result = spawnSync(process.execPath, ['-e', program], {
+      cwd: projectRoot,
+      env: { ...process.env, ...environment },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 20000
+    });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const secretFile = path.join(environment.DATA_DIR, '.secret');
+  const secretMetadata = fs.lstatSync(secretFile);
+  assert.ok(secretMetadata.isFile() && !secretMetadata.isSymbolicLink());
+  assert.equal(secretMetadata.nlink, 1);
+  assert.match(fs.readFileSync(secretFile, 'utf8'), /^[0-9a-f]{64}$/);
+  assert.equal(fs.existsSync(path.join(root, 'backups')), false);
+  assert.equal(fs.existsSync(path.join(environment.DATA_DIR, 'config.json')), false);
+});
+
+test('配对地址策略只接受 direct 空代理或显式 IP/CIDR allowlist', () => {
+  assertCode(
+    () => profile.validateSyntheticDeployment(syntheticEnvironment({
+      TRUSTED_PROXIES: '127.0.0.1/32'
+    }), { projectRoot }),
+    'SYNTHETIC_PROXY_POLICY_INVALID'
+  );
+  const proxied = profile.validateSyntheticDeployment(syntheticEnvironment({
+    PAIRING_CLIENT_IP_MODE: 'trusted_proxy',
+    TRUSTED_PROXIES: '127.0.0.1/32,::1/128'
+  }), { projectRoot });
+  assert.equal(proxied.proxyPolicy.mode, 'trusted_proxy');
+  assert.equal(proxied.proxyPolicy.trustedProxyCount, 2);
+  for (const proxies of [
+    '', '*', 'loopback', '127.0.0.1/99', '0.0.0.0/0', '::/0',
+    '192.0.2.0/23', '2001:db8::/63', '224.0.0.1', 'ff02::1',
+    '::ffff:0:0/96', '0:0:0:0:0:ffff:0:0/96', '::ffff:192.0.2.1/128',
+    '0:0:0:0:0:0:0:0/64', '::1/64', '::abcd/64'
+  ]) {
+    assertCode(
+      () => profile.validateSyntheticDeployment(syntheticEnvironment({
+        PAIRING_CLIENT_IP_MODE: 'trusted_proxy',
+        TRUSTED_PROXIES: proxies
+      }), { projectRoot }),
+      'SYNTHETIC_PROXY_POLICY_INVALID'
+    );
+  }
+});
+
+test('production tier 不能混入 synthetic 标记且公开身份必须精确', () => {
+  const production = {
+    NODE_ENV: 'production',
+    DEPLOYMENT_TIER: 'production',
+    API_PUBLIC_ORIGIN: profile.PRODUCTION_API_ORIGIN,
+    WX_APPID: profile.PRODUCTION_WECHAT_APP_ID,
+    ...Object.fromEntries(profile.PRODUCTION_LOCKED_CHILD_GATES.map(name => [name, 'false']))
+  };
+  assert.equal(profile.validateDeployment(production).deploymentTier, 'production');
+  assertCode(
+    () => profile.validateDeployment({ ...production, DEPLOYMENT_TIER: '' }),
+    'DEPLOYMENT_TIER_REQUIRED'
+  );
+  assertCode(
+    () => profile.validateDeployment({ ...production, SYNTHETIC_DATA_ACK: profile.SYNTHETIC_DATA_ACK }),
+    'PRODUCTION_CONFIG_INVALID'
+  );
+  for (const name of profile.PRODUCTION_LOCKED_CHILD_GATES) {
+    for (const value of [undefined, '0', 'FALSE', '1', 'true']) {
+      assertCode(
+        () => profile.validateDeployment({ ...production, [name]: value }),
+        'PRODUCTION_CHILD_FEATURES_LOCKED'
+      );
+    }
+  }
+  for (const name of profile.PRODUCTION_LOCKED_LEGAL_CONFIG) {
+    assertCode(
+      () => profile.validateDeployment({ ...production, [name]: 'synthetic-not-approved' }),
+      'PRODUCTION_LEGAL_FEATURES_LOCKED'
+    );
+  }
+  assertCode(
+    () => profile.validateDeployment({ ...production, API_PUBLIC_ORIGIN: 'https://example.com' }),
+    'PRODUCTION_CONFIG_INVALID'
+  );
+  assertCode(
+    () => profile.validateDeployment({ ...production, WX_APPID: 'wx0123456789abcdef' }),
+    'PRODUCTION_CONFIG_INVALID'
+  );
+  assertCode(
+    () => profile.validateDeployment({ ...production, NODE_ENV: 'prod' }),
+    'DEPLOYMENT_TIER_INVALID'
+  );
+  assertCode(
+    () => profile.validateDeployment({ NODE_ENV: 'test', DEPLOYMENT_TIER: 'synthetic' }),
+    'DEPLOYMENT_TIER_INVALID'
+  );
+});
+
+test('env loader 拒绝未知 NODE_ENV 且非生产不能声明 production/synthetic tier', () => {
+  for (const environment of [
+    { NODE_ENV: 'prod', DEPLOYMENT_TIER: 'production' },
+    { NODE_ENV: 'production ', DEPLOYMENT_TIER: 'production' },
+    { NODE_ENV: 'test', DEPLOYMENT_TIER: 'synthetic' }
+  ]) {
+    const result = spawnSync(process.execPath, ['-e', "require('./server/config/env')"], {
+      cwd: projectRoot,
+      env: { ...process.env, ...environment },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10000
+    });
+    assert.notEqual(result.status, 0);
+  }
+});
+
+test('离线 preflight 只原子发布无密配置形状证据', () => {
+  const environment = syntheticEnvironment();
+  const output = path.join(tempRoot, 'synthetic-api-preflight-evidence');
+  assert.deepEqual(preflight.parseArguments(['--output', output]), {
+    output,
+    help: false
+  });
+  assert.equal(
+    preflight.prepareEvidence({ output }, environment, fakeProvenance),
+    output
+  );
+  const evidenceFile = path.join(output, '.synthetic-api-preflight.json');
+  const raw = fs.readFileSync(evidenceFile, 'utf8');
+  const evidence = JSON.parse(raw);
+  assert.equal(evidence.schemaVersion, 3);
+  assert.equal(evidence.profile, 'synthetic-api-offline-preflight');
+  assert.equal(evidence.result, 'configuration-shape-validated');
+  assert.equal(evidence.sourceCommit, 'a'.repeat(40));
+  assert.equal(evidence.implementationIndexMatchesHead, true);
+  assert.equal(evidence.implementationWorktreeMatchesHead, true);
+  assert.equal(evidence.configuration.wechatSecretPresent, true);
+  assert.equal(
+    evidence.configuration.apiOriginSha256,
+    sha256(Buffer.from(environment.API_PUBLIC_ORIGIN, 'utf8'))
+  );
+  assert.equal(
+    evidence.configuration.wechatAppIdSha256,
+    sha256(Buffer.from(environment.WX_APPID, 'utf8'))
+  );
+  assert.deepEqual(evidence.productionChildGate, {
+    deployedStateVerified: false,
+    changeAttempted: false
+  });
+  for (const value of Object.values(evidence.externalVerification)) assert.equal(value, false);
+  for (const forbidden of [
+    environment.API_PUBLIC_ORIGIN,
+    environment.WX_APPID,
+    environment.WX_APPSECRET,
+    environment.SYNTHETIC_DATA_ROOT,
+    environment.DATA_DIR,
+    environment.SQLITE_FILE,
+    environment.GUARDIAN_RELATION_DECLARATION_PUBLIC_URL
+  ]) assert.equal(raw.includes(forbidden), false, forbidden);
+  assert.deepEqual(fs.readdirSync(output), ['.synthetic-api-preflight.json']);
+  for (const forbiddenModule of [
+    `${path.sep}server${path.sep}index.js`,
+    `${path.sep}server${path.sep}db${path.sep}connection.js`,
+    `${path.sep}server${path.sep}lib${path.sep}wx-auth.js`
+  ]) {
+    assert.equal(Object.keys(require.cache).some(filename => filename.endsWith(forbiddenModule)), false);
+  }
+});
+
+test('离线 preflight 在发布前再次拒绝 provenance 漂移并清理 staging', () => {
+  const output = path.join(tempRoot, 'synthetic-api-preflight-provenance-drift');
+  let calls = 0;
+  const driftingProvenance = () => ({
+    ...fakeProvenance(),
+    sourceCommit: (calls += 1) === 1 ? 'a'.repeat(40) : 'd'.repeat(40)
+  });
+  assert.throws(
+    () => preflight.prepareEvidence({ output }, syntheticEnvironment(), driftingProvenance),
+    /changed before evidence publication/
+  );
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(
+    fs.readdirSync(tempRoot).some(name => name.startsWith('.tangguan-api-preflight-stage-')),
+    false
+  );
+});
+
+test('离线 preflight 顶层 TEMP 失败只返回稳定脱敏错误', () => {
+  const sentinel = path.join(tempRoot, 'private-temp-sentinel-does-not-exist');
+  const result = spawnSync(process.execPath, [
+    path.join(projectRoot, 'scripts', 'preflight-synthetic-api.js'),
+    '--output',
+    path.join(sentinel, 'synthetic-preflight-output')
+  ], {
+    cwd: projectRoot,
+    env: { ...process.env, TEMP: sentinel, TMP: sentinel },
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10000
+  });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^Synthetic API offline preflight failed \([A-Z0-9_]+\)\.\r?\n$/);
+  assert.equal(result.stderr.includes(sentinel), false);
+  assert.equal(result.stderr.includes(projectRoot), false);
+});
+
+test('离线 preflight 写入失败不留下最终目录或 staging', () => {
+  const output = path.join(tempRoot, 'synthetic-api-preflight-failure');
+  const originalWrite = fs.writeFileSync;
+  fs.writeFileSync = function(filename, ...args) {
+    if (path.basename(String(filename)) === '.synthetic-api-preflight.json') {
+      throw new Error('synthetic injected evidence failure');
+    }
+    return originalWrite.call(fs, filename, ...args);
+  };
+  try {
+    assert.throws(
+      () => preflight.prepareEvidence({ output }, syntheticEnvironment(), fakeProvenance),
+      /synthetic injected evidence failure/
+    );
+  } finally {
+    fs.writeFileSync = originalWrite;
+  }
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(
+    fs.readdirSync(tempRoot).some(name => name.startsWith('.tangguan-api-preflight-stage-')),
+    false
+  );
+});
+
+test('离线 preflight 原子 rename 是成功路径最后文件系统操作', () => {
+  const output = path.join(tempRoot, 'synthetic-api-preflight-atomic');
+  const originals = new Map();
+  let published = false;
+  const originalRename = fs.renameSync;
+  fs.renameSync = function(from, to) {
+    if (published) throw new Error('post-publish filesystem operation: renameSync');
+    const result = originalRename.call(fs, from, to);
+    if (path.resolve(String(to)) === path.resolve(output)) published = true;
+    return result;
+  };
+  for (const name of [
+    'existsSync', 'lstatSync', 'statSync', 'readFileSync', 'readdirSync', 'realpathSync',
+    'writeFileSync', 'appendFileSync', 'mkdirSync', 'rmSync', 'unlinkSync', 'copyFileSync',
+    'chmodSync', 'openSync'
+  ]) {
+    const original = fs[name];
+    originals.set(name, original);
+    fs[name] = function(filename, ...args) {
+      if (published) throw new Error(`post-publish filesystem operation: ${name}`);
+      return original.call(fs, filename, ...args);
+    };
+  }
+  try {
+    assert.equal(
+      preflight.prepareEvidence({ output }, syntheticEnvironment(), fakeProvenance),
+      output
+    );
+    assert.equal(published, true);
+  } finally {
+    fs.renameSync = originalRename;
+    for (const [name, original] of originals) fs[name] = original;
+  }
+  assert.equal(fs.existsSync(path.join(output, '.synthetic-api-preflight.json')), true);
+});
+
+test('微信认证不再读取根 .env 或继承 synthetic 缺失 secret', () => {
+  const guard = path.join(tempRoot, 'deny-private-env-read.cjs');
+  fs.writeFileSync(guard, [
+    "const fs = require('node:fs');",
+    'for (const name of [\'existsSync\', \'readFileSync\']) {',
+    '  const original = fs[name];',
+    '  fs[name] = function(filename, ...args) {',
+    "    if (/(?:^|[\\\\/])\\.env(?:$|\.)/i.test(String(filename))) throw new Error('PRIVATE_ENV_READ');",
+    '    return original.call(fs, filename, ...args);',
+    '  };',
+    '}'
+  ].join('\n'));
+  const environment = { ...process.env, NODE_ENV: 'test' };
+  delete environment.WX_APPID;
+  delete environment.WX_APPSECRET;
+  const result = spawnSync(process.execPath, [
+    '--require', guard,
+    '-e',
+    "const wx=require('./server/lib/wx-auth');"
+      + "if(wx.WX_APPSECRET!==''||wx.WX_APPID!=='')process.exit(7);"
+  ], {
+    cwd: projectRoot,
+    env: environment,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10000
+  });
+  assert.equal(result.status, 0, result.stderr);
+});

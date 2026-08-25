@@ -9,6 +9,13 @@ const RealDate = global.Date;
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hefei-stage1-synthetic-e2e-'));
 const dataDir = path.join(tempRoot, 'data');
 
+for (const name of [
+  'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'
+]) {
+  delete process.env[name];
+}
+delete process.env.DEPLOYMENT_TIER;
 process.env.NODE_ENV = 'test';
 process.env.LOG_LEVEL = 'silent';
 process.env.PORT = '3002';
@@ -28,8 +35,32 @@ process.env.GUARDIAN_RELATION_DECLARATION_SHA256 = 'e'.repeat(64);
 process.env.GUARDIAN_RELATION_DECLARATION_PUBLIC_URL =
   `https://synthetic-stage1.invalid/legal/guardian-relation-declaration/`
   + `synthetic-relation-v1/${'e'.repeat(64)}.html`;
+process.env.WX_APPID = 'wxsynthetic_stage1_loopback_only';
+process.env.WX_APPSECRET = 'synthetic-only-stage1-loopback-secret';
 
-const { getDb, closeDb } = require('../db/connection');
+const { installLoopbackOnlyNetwork } = require('../test-support/loopback-only-network');
+const restoreNetwork = installLoopbackOnlyNetwork();
+let closeDatabase = () => {};
+let server;
+let baseUrl = '';
+let clockOverridden = false;
+
+after(async () => {
+  restoreClock();
+  try {
+    await stopServer();
+  } finally {
+    try {
+      closeDatabase();
+    } finally {
+      restoreNetwork();
+      removeSyntheticTempRoot();
+    }
+  }
+});
+
+const { getDb, closeDb: closeDatabaseImpl } = require('../db/connection');
+closeDatabase = closeDatabaseImpl;
 const repositories = require('../db/repositories');
 const { hashPwd } = require('../lib/token');
 const { createApp } = require('../index');
@@ -71,10 +102,6 @@ const legalTexts = Object.freeze([
     sha256: 'd'.repeat(64)
   }
 ]);
-
-let server;
-let baseUrl = '';
-let clockOverridden = false;
 
 async function startServer() {
   server = await new Promise((resolve, reject) => {
@@ -149,6 +176,7 @@ function seedSyntheticDatabase() {
   const createdAt = '2026-01-01T00:00:00.000Z';
   const password = hashPwd(SYNTHETIC_PASSWORD);
   for (const family of [
+    { id: 'default', name: '合成默认家庭' },
     { id: FAMILY_A, name: '合成端到端家庭 A' },
     { id: FAMILY_B, name: '合成端到端家庭 B' }
   ]) {
@@ -205,6 +233,21 @@ function restoreClock() {
   if (!clockOverridden) return;
   global.Date = RealDate;
   clockOverridden = false;
+}
+
+function removeSyntheticTempRoot() {
+  const resolvedTemp = path.resolve(os.tmpdir());
+  const resolvedRoot = path.resolve(tempRoot);
+  const relative = path.relative(resolvedTemp, resolvedRoot);
+  assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative),
+    'synthetic database root must remain inside the system temp directory');
+  assert.match(path.basename(resolvedRoot), /^hefei-stage1-synthetic-e2e-/,
+    'synthetic database root must retain its generated prefix');
+  const stat = fs.lstatSync(resolvedRoot);
+  assert.ok(stat.isDirectory() && !stat.isSymbolicLink(),
+    'synthetic database root must be a real directory');
+  fs.rmSync(resolvedRoot, { recursive: true });
+  assert.equal(fs.existsSync(resolvedRoot), false, 'synthetic database root must be removed');
 }
 
 async function login(userId) {
@@ -287,13 +330,6 @@ function sameSecret(left, right) {
   const rightHash = crypto.createHash('sha256').update(String(right)).digest();
   return crypto.timingSafeEqual(leftHash, rightHash);
 }
-
-after(async () => {
-  restoreClock();
-  await stopServer();
-  closeDb();
-  fs.rmSync(tempRoot, { recursive: true, force: true });
-});
 
 test('loopback synthetic stage 1 flow survives replay and enforces revocation isolation', async () => {
   seedSyntheticDatabase();

@@ -5,17 +5,44 @@ const crypto = require('crypto');
 const { DATA_DIR } = require('../db/connection');
 const { users } = require('../db/repositories');
 const features = require('../config/features');
+const { validateSyntheticDeployment } = require('../config/deployment-profile');
+const { validateSyntheticRuntimeFilesystem } = require('../config/synthetic-runtime-filesystem');
 const SECRET_FILE = path.join(DATA_DIR, '.secret');
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+
+function validateSyntheticTokenBoundary() {
+  if (process.env.NODE_ENV !== 'production' || process.env.DEPLOYMENT_TIER !== 'synthetic') {
+    return false;
+  }
+  const deployment = validateSyntheticDeployment(process.env, { projectRoot: PROJECT_ROOT });
+  validateSyntheticRuntimeFilesystem(deployment, PROJECT_ROOT);
+  return true;
+}
+
 let TOKEN_SECRET;
+const syntheticRuntime = process.env.NODE_ENV === 'production'
+  && process.env.DEPLOYMENT_TIER === 'synthetic';
 try {
+  validateSyntheticTokenBoundary();
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (fs.existsSync(SECRET_FILE)) {
     TOKEN_SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
   } else {
     TOKEN_SECRET = crypto.randomBytes(32).toString('hex');
-    fs.writeFileSync(SECRET_FILE, TOKEN_SECRET, 'utf8');
+    fs.writeFileSync(SECRET_FILE, TOKEN_SECRET, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600
+    });
+  }
+  validateSyntheticTokenBoundary();
+  if (syntheticRuntime && !/^[0-9a-f]{64}$/.test(TOKEN_SECRET)) {
+    const error = new Error('synthetic token secret shape is invalid');
+    error.code = 'SYNTHETIC_DATA_ROOT_UNSAFE';
+    throw error;
   }
 } catch (e) {
+  if (syntheticRuntime) throw e;
   TOKEN_SECRET = crypto.randomBytes(32).toString('hex');
 }
 

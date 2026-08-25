@@ -1,22 +1,10 @@
-const fs = require('fs');
-const path = require('path');
 const https = require('https');
 const querystring = require('querystring');
 const logger = require('./logger');
 
 // ============== 微信配置 ==============
-const WX_APPID = process.env.WX_APPID || 'wx90237ce600b51eea';
+const WX_APPID = process.env.WX_APPID || '';
 const WX_APPSECRET = process.env.WX_APPSECRET || (() => {
-  try {
-    const envFile = path.join(__dirname, '..', '..', '.env');
-    if (fs.existsSync(envFile)) {
-      const lines = fs.readFileSync(envFile, 'utf8').split('\n');
-      for (const line of lines) {
-        const m = line.match(/^WX_APPSECRET=(.+)$/);
-        if (m) return m[1].trim();
-      }
-    }
-  } catch (e) {}
   logger.warn({ event: 'config.wx_secret_missing' }, 'WX_APPSECRET is missing; wx-login is unavailable');
   return '';
 })();

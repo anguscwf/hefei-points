@@ -38,13 +38,22 @@ test('默认不信任可伪造的代理地址头', () => {
   assert.equal(createApp().get('trust proxy'), false);
 });
 
-test('生产开启设备配对时必须显式声明客户端地址信任边界', () => {
+test('生产儿童门保持关闭且配对误开时先要求显式地址信任边界', () => {
   const baseEnv = {
     ...process.env,
     NODE_ENV: 'production',
+    DEPLOYMENT_TIER: 'production',
+    API_PUBLIC_ORIGIN: 'https://hefeijifen.cn',
     DATA_DIR: tempDir,
+    WX_APPID: 'wx90237ce600b51eea',
     WX_APPSECRET: 'synthetic-app-secret',
+    HARMONY_CHILD_ENABLED: 'false',
+    CHILD_ENROLLMENT_ENABLED: 'false',
     DEVICE_PAIRING_ENABLED: '1',
+    POINT_REQUESTS_ENABLED: 'false',
+    CHILD_DATA_RIGHTS_ENABLED: 'false',
+    LEGACY_CHILD_LOGIN_ENABLED: 'false',
+    LEGACY_CHILD_MANAGEMENT_ENABLED: 'false',
     PAIRING_CLIENT_IP_MODE: '',
     TRUSTED_PROXIES: ''
   };
@@ -61,7 +70,8 @@ test('生产开启设备配对时必须显式声明客户端地址信任边界',
     env: { ...baseEnv, PAIRING_CLIENT_IP_MODE: 'direct' },
     encoding: 'utf8'
   });
-  assert.equal(direct.status, 0, direct.stderr);
+  assert.notEqual(direct.status, 0);
+  assert.match(direct.stderr, /production child feature gates must remain explicitly closed/);
 
   const proxied = spawnSync(process.execPath, ['-e', "require('./server/config/env')"], {
     cwd: path.join(__dirname, '..', '..'),
@@ -72,7 +82,8 @@ test('生产开启设备配对时必须显式声明客户端地址信任边界',
     },
     encoding: 'utf8'
   });
-  assert.equal(proxied.status, 0, proxied.stderr);
+  assert.notEqual(proxied.status, 0);
+  assert.match(proxied.stderr, /production child feature gates must remain explicitly closed/);
 });
 
 test('v2 外围 404、JSON、体积和限流错误使用稳定 code 与 requestId', async () => {

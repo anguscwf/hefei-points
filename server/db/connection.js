@@ -3,11 +3,29 @@ const path = require('path');
 const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { logicalDatabaseSha256 } = require('./logical-fingerprint');
+const { validateSyntheticDeployment } = require('../config/deployment-profile');
+const { validateSyntheticRuntimeFilesystem } = require('../config/synthetic-runtime-filesystem');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 const DB_FILE = process.env.SQLITE_FILE || path.join(DATA_DIR, 'hefei-points.sqlite');
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 let database;
+
+function validateSyntheticDatabaseBoundary() {
+  if (process.env.NODE_ENV !== 'production' || process.env.DEPLOYMENT_TIER !== 'synthetic') return;
+  const projectRoot = path.resolve(__dirname, '..', '..');
+  const deployment = validateSyntheticDeployment(process.env, { projectRoot });
+  const samePath = (left, right) => process.platform === 'win32'
+    ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
+    : path.resolve(left) === path.resolve(right);
+  if (!samePath(deployment.dataPaths.dataDir, DATA_DIR)
+      || !samePath(deployment.dataPaths.sqliteFile, DB_FILE)) {
+    const error = new Error('synthetic database path changed after module initialization');
+    error.code = 'SYNTHETIC_DATA_ROOT_UNSAFE';
+    throw error;
+  }
+  validateSyntheticRuntimeFilesystem(deployment, projectRoot);
+}
 
 function migrationFiles() {
   return fs.readdirSync(MIGRATIONS_DIR).filter(name => name.endsWith('.sql')).sort();
@@ -118,19 +136,29 @@ function applyMigrations(db) {
 
 function getDb() {
   if (database) return database;
+  validateSyntheticDatabaseBoundary();
   fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
-  database = new DatabaseSync(DB_FILE);
-  database.exec('PRAGMA foreign_keys = ON');
-  // INSERT OR REPLACE internally deletes conflicting rows. Recursive trigger
-  // delivery is required so immutable consent/session/request/ledger evidence
-  // cannot bypass their no-delete guards through REPLACE.
-  database.exec('PRAGMA recursive_triggers = ON');
-  database.exec('PRAGMA journal_mode = WAL');
-  database.exec('PRAGMA synchronous = FULL');
-  database.exec('PRAGMA busy_timeout = 5000');
-  validateProductionMigrationBackup(database);
-  applyMigrations(database);
-  return database;
+  const candidate = new DatabaseSync(DB_FILE);
+  try {
+    validateSyntheticDatabaseBoundary();
+    candidate.exec('PRAGMA foreign_keys = ON');
+    // INSERT OR REPLACE internally deletes conflicting rows. Recursive trigger
+    // delivery is required so immutable consent/session/request/ledger evidence
+    // cannot bypass their no-delete guards through REPLACE.
+    candidate.exec('PRAGMA recursive_triggers = ON');
+    candidate.exec('PRAGMA journal_mode = WAL');
+    candidate.exec('PRAGMA synchronous = FULL');
+    candidate.exec('PRAGMA busy_timeout = 5000');
+    validateSyntheticDatabaseBoundary();
+    validateProductionMigrationBackup(candidate);
+    applyMigrations(candidate);
+    validateSyntheticDatabaseBoundary();
+    database = candidate;
+    return database;
+  } catch (error) {
+    candidate.close();
+    throw error;
+  }
 }
 
 function closeDb() {
