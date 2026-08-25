@@ -2,14 +2,14 @@
 
 糖罐积分是面向家庭的任务与积分管理系统：家长创建家庭与孩子档案、审批任务和管理积分，孩子通过受控终端查看积分并申报任务。
 
-本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端，以及 HarmonyOS 孩子端的 S8 安全纵向切片。
+本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端，以及 HarmonyOS 孩子端的 S9 合成端到端就绪切片。
 
 ## 当前状态
 
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
-- HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；跟踪配置仍固定禁用网络并使用 `.invalid` 源，未连接生产或非生产业务服务，也不代表完整薄 MVP。
+- HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；S9 新增受控临时 synthetic profile 生成器和 loopback 全链验证，但跟踪配置仍固定禁用网络并使用 `.invalid` 源，尚未连接任何外部业务服务，也不代表完整薄 MVP。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
-- 阶段 1 已在本地完成 S0、安全前置、S1/006 授权建档、S2/007 设备配对与会话、S3 孩子本人只读、S4/008 积分申报审批、S5/009 数据行权与审计、S6 微信小程序监护端及安全加固、S7 HarmonyOS 配对/会话/本人只读，以及 S8 HarmonyOS 积分申报切片：服务端新增设备作用域的当前 reward-rule 最小快照；客户端只能从设备身份读取规则并提交文字申请，用独立 AssetStore 意图实现写前持久化、结果未知对账与原请求精确重放，同时展示本人申请。详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
+- 阶段 1 已在本地完成 S0、安全前置、S1/006 授权建档、S2/007 设备配对与会话、S3 孩子本人只读、S4/008 积分申报审批、S5/009 数据行权与审计、S6 微信小程序监护端及安全加固、S7 HarmonyOS 配对/会话/本人只读、S8 HarmonyOS 积分申报，以及 S9 合成 E2E 就绪切片。S9 使用生产 Express 入口和临时 SQLite 在 `127.0.0.1` 完成“授权 → 配对 → 申报 → 审批入账 → Refresh → 撤权”全链，并提供只在本机系统临时目录生成、禁止生产源和签名材料的 unsigned synthetic profile；它不是外部联网或真机 E2E。详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
 - 生产迁移已增加“旧库一致性快照 + 清单校验 + 无清单拒绝迁移”门禁；但正式法律文本、PIPIA、存量数据整改和 AppGallery 正式上架均未完成，所有儿童生产功能继续默认关闭。
 - 当前阶段 1 变更仍只存在于本地分支，不代表已部署、已上架或已清理远端历史。
 
@@ -69,12 +69,12 @@ npm run backup:pre-migration -- --database <旧库路径> --backup-root <备份�
 
 HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harmonyos/build-profile.json5` 含本机签名信息并被强制忽略；开发者必须在本机独立配置，严禁提交密码、证书、Profile 或绝对路径。
 
-HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 HUKS ECE，设备会话与未决积分申请使用相互独立、不可同步的 AssetStore 记录。当前只完成 unsigned ArkTS 单测、静态检查和本地合成协议验证；独立合成非生产 API、HUKS/AssetStore 成人受控设备验证、联网端到端 smoke 和签名包验证仍是硬门。
+HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 HUKS ECE，设备会话与未决积分申请使用相互独立、不可同步的 AssetStore 记录。`npm run prepare:harmonyos-synthetic` 只会把 Git 跟踪的 HarmonyOS 普通文件复制到本机系统临时目录，生成明确 unsigned、来源可追踪的临时 profile；它要求显式确认获批的非生产 canonical HTTPS 源，拒绝生产域、UNC、仓库内/非临时目录、符号链接和签名类输入，并且命令本身不联网。当前只完成 unsigned ArkTS 单测、静态检查、loopback HTTP 全链和临时 profile 编译；独立合成非生产 API、HUKS/AssetStore 成人受控设备验证、联网端到端 smoke 和签名包验证仍是硬门。
 
 ## 文档入口
 
 - [仓库工作规范](AGENTS.md)
-- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S8鸿蒙积分申报纵向切片交接-20260825.md)
+- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S9合成E2E就绪交接-20260825.md)
 - [HarmonyOS MVP 方案与推进计划](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)
 - [阶段 1 现有能力审计与首批实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)
 - [架构决策记录](docs/adr/README.md)

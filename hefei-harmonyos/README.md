@@ -1,6 +1,6 @@
 # 糖罐积分 HarmonyOS
 
-糖罐积分的原生 HarmonyOS 儿童客户端。当前 `0.2.0 (20000)` 已实现阶段 1 / S8 的安全纵向切片：设备配对、设备会话、本人积分摘要/流水、当前可申报规则、文字积分申报和“我的申请”。它不是完整薄 MVP，也未连接任何生产或非生产业务服务。
+糖罐积分的原生 HarmonyOS 儿童客户端。当前 `0.2.0 (20000)` 已实现阶段 1 / S9 的合成端到端就绪切片：设备配对、设备会话、本人积分摘要/流水、当前可申报规则、文字积分申报和“我的申请”，以及受控临时 synthetic profile。它不是完整薄 MVP，也未连接任何外部生产或非生产业务服务。
 
 ## 当前边界
 
@@ -9,6 +9,7 @@
 - 最低兼容：HarmonyOS 6.0.0 / API 20
 - 设备类型：Phone
 - 跟踪配置固定 `NETWORK_ENABLED=false`，API 源为保留的 `.invalid` 域名；当前业务按钮在联网前置未满足时保持禁用
+- 只有获批独立 synthetic HTTPS 源后，才允许用仓库根的生成器创建位于系统临时目录、明确 unsigned 的 `synthetic-approved` 副本；生成器不改跟踪源码、不读取私有根构建配置，也不发起网络请求
 - transport 只允许设备申领/完成配对、Refresh challenge/轮换、本人摘要/流水、设备 reward rules，以及本人积分申请创建/列表的固定方法与路径
 - 不提供家庭、儿童、设备或会话的客户端身份选择；身份只从服务端设备凭据推导
 - 不申请 `MANAGE_SCREEN_TIME_GUARD` ACL，不启用照片、Push、广告、支付、第三方统计或用机兑换
@@ -51,6 +52,18 @@
 npm run check
 ```
 
+独立 synthetic 源获批后，可生成受控临时编译副本；下面的命令只准备工作区，不联网、不安装依赖、不打包、不签名：
+
+```powershell
+$syntheticParent = Join-Path ([IO.Path]::GetTempPath()) `
+  ("tangguan-synthetic-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $syntheticParent | Out-Null
+npm run prepare:harmonyos-synthetic -- `
+  --origin https://approved-synthetic.example.com `
+  --output (Join-Path $syntheticParent 'harmony') `
+  --acknowledge-approved-synthetic-origin
+```
+
 只编译和运行 unsigned ArkTS 单元测试，不打包、不签名：
 
 ```powershell
@@ -61,11 +74,12 @@ Set-Location .\hefei-harmonyos
   test --no-daemon --no-incremental
 ```
 
-S8 本地结果为 Hypium 38/38、HarmonyOS 静态安全门 8/8、ArkTS CodeLinter 0 缺陷。根级 `npm test` 为 191/191。该结果只证明本地合成测试和 unsigned 编译，不代表 HUKS/AssetStore 真机行为、联网端到端链路、签名包或 AppGallery 包已经验证。
+S9 本地结果为根级 `npm test` 199/199、S9 定向回归 16/16、HarmonyOS 静态安全门 10/10，以及来自干净提交的临时 unsigned profile Hypium 39/39。S9 没有把 CodeLinter 计为有效新证据：本机 CLI 无法解析已安装的 HarmonyOS SDK；S8 的 0 缺陷记录仅是历史结果，发布候选前须修复工具链并重跑。以上结果只证明 loopback 合成链路、静态门和 unsigned 编译，不代表 HUKS/AssetStore 真机行为、外部联网端到端链路、签名包或 AppGallery 包已经验证。
 
 ## 尚未满足的发布硬门
 
-- 建立并审批独立合成非生产 API，通过受控编译时配置启用后完成联网端到端 smoke
+- 建立并审批物理、域名、凭据和数据均独立的合成非生产 API，使用受控临时 profile 完成联网端到端 smoke；当前生成器就绪不等于该 API 已存在
+- 修复本机 CodeLinter SDK 解析并对最终 ArkTS 主源码重跑 0 缺陷门
 - 在模拟器或成人受控 API 20+ 设备验证 HUKS、AssetStore、前后台、重启和清数据行为
 - 在设备作用域单条详情和写操作对账契约完成前，继续关闭申请补充、取消与重新提交；同时明确未决文字的保留期限及监护人授权安全放弃流程
 - 完成儿童易懂版隐私摘要、设置、审核测试家庭和成人预验收核心闭环
