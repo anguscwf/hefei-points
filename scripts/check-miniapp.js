@@ -1,6 +1,8 @@
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const vm = require('vm');
+const { execFileSync, spawnSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
 const miniappRoot = path.join(root, 'hefei-miniapp');
@@ -10,27 +12,124 @@ const projectConfigFile = path.join(miniappRoot, 'project.config.json');
 const runtimeEnvironmentFile = path.join(miniappRoot, 'utils', 'runtime-environment.js');
 const legalDocumentMarkup = path.join(miniappRoot, 'pages', 'legal-document', 'legal-document.wxml');
 const legalDocumentSource = path.join(miniappRoot, 'pages', 'legal-document', 'legal-document.js');
+const trackedMiniappPrefix = 'hefei-miniapp/';
+const forbiddenTrackedBasenames = new Set([
+  'project.private.config.json'
+]);
+const forbiddenTrackedExtensions = new Set([
+  '.cer', '.crt', '.key', '.p12', '.pem', '.pfx'
+]);
+const realpathSync = fs.realpathSync.native || fs.realpathSync;
+const auditedRuntimeEnvironmentSha256 = 'e64c1c3b7a80df66ad2c1d945b66fa75c5b8e7c8c8fafe35a0f166cee5749782';
 
-function filesIn(directory, predicate) {
-  const files = [];
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const filename = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...filesIn(filename, predicate));
-    else if (entry.isFile() && predicate(filename)) files.push(filename);
+function assertCanonicalGitRoot() {
+  const gitRoot = execFileSync(
+    'git', ['rev-parse', '--show-toplevel'],
+    { cwd: root, encoding: 'utf8', windowsHide: true }
+  ).trim();
+  if (!gitRoot || path.relative(realpathSync(root), realpathSync(gitRoot)) !== '') {
+    throw new Error('miniapp checks must run from the canonical repository');
   }
-  return files.sort();
+}
+
+function parseTrackedMiniappEntries(output) {
+  return output.split('\0').filter(Boolean).map(record => {
+    const match = /^(?:100644|100755) [0-9a-f]{40,64} 0\t(.+)$/.exec(record);
+    if (!match) throw new Error('miniapp inputs must contain only stage-zero regular files');
+    const filename = match[1];
+    const segments = filename.split('/');
+    const basename = segments[segments.length - 1].toLowerCase();
+    const extension = path.extname(basename).toLowerCase();
+    if (!filename.startsWith(trackedMiniappPrefix)
+        || filename.includes('\\') || path.isAbsolute(filename)
+        || segments.some(segment => !segment || segment === '.' || segment === '..')
+        || segments.some(segment => /[\u0000-\u001f\u007f:]/.test(segment)
+          || /[. ]$/.test(segment)
+          || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment))
+        || forbiddenTrackedBasenames.has(basename)
+        || basename === '.env' || basename.startsWith('.env.')
+        || forbiddenTrackedExtensions.has(extension)) {
+      throw new Error('miniapp inputs contain a private configuration or forbidden path');
+    }
+    return filename;
+  });
+}
+
+function assertCanonicalTrackedRelative(requested, resolved) {
+  const requestedKey = process.platform === 'win32' ? requested.toLowerCase() : requested;
+  const resolvedKey = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  const resolvedBasename = resolved.split('/').pop().toLowerCase();
+  const resolvedExtension = path.extname(resolvedBasename).toLowerCase();
+  if (requestedKey !== resolvedKey
+      || forbiddenTrackedBasenames.has(resolvedBasename)
+      || resolvedBasename === '.env' || resolvedBasename.startsWith('.env.')
+      || forbiddenTrackedExtensions.has(resolvedExtension)) {
+    throw new Error('tracked miniapp input resolved to a non-canonical or private path');
+  }
+}
+
+function validateTrackedMiniappFile(filename) {
+  const miniappMetadata = fs.lstatSync(miniappRoot);
+  if (!miniappMetadata.isDirectory() || miniappMetadata.isSymbolicLink()) {
+    throw new Error('tracked miniapp root must be a real directory');
+  }
+  const miniappRealRoot = realpathSync(miniappRoot);
+  const relativeName = filename.substring(trackedMiniappPrefix.length);
+  let current = miniappRoot;
+  const segments = relativeName.split('/');
+  for (let index = 0; index < segments.length; index += 1) {
+    current = path.join(current, segments[index]);
+    const metadata = fs.lstatSync(current);
+    const final = index === segments.length - 1;
+    if (metadata.isSymbolicLink()
+        || (final ? !metadata.isFile() : !metadata.isDirectory())) {
+      throw new Error('tracked miniapp inputs must contain only real regular files');
+    }
+  }
+  const relativeReal = path.relative(miniappRealRoot, realpathSync(current));
+  if (relativeReal === '..' || relativeReal.startsWith(`..${path.sep}`)
+      || path.isAbsolute(relativeReal)) {
+    throw new Error('tracked miniapp input escaped the canonical miniapp root');
+  }
+  assertCanonicalTrackedRelative(relativeName, relativeReal.split(path.sep).join('/'));
+  return current;
+}
+
+function trackedMiniappFiles() {
+  assertCanonicalGitRoot();
+  const output = execFileSync(
+    'git', ['ls-files', '--stage', '-z', '--', 'hefei-miniapp'],
+    { cwd: root, encoding: 'utf8', windowsHide: true }
+  );
+  const entries = parseTrackedMiniappEntries(output);
+  if (entries.length === 0) throw new Error('tracked miniapp project is empty');
+  return entries.map(validateTrackedMiniappFile).sort();
 }
 
 function relative(filename) {
-  return path.relative(root, filename).split(path.sep).join('/');
+  const value = path.relative(root, filename);
+  if (value === '..' || value.startsWith(`..${path.sep}`) || path.isAbsolute(value)) {
+    return 'external-test-fixture';
+  }
+  return value.split(path.sep).join('/');
 }
 
 function miniappJavaScriptFiles() {
-  return filesIn(miniappRoot, filename => path.extname(filename).toLowerCase() === '.js');
+  return trackedMiniappFiles().filter(
+    filename => path.extname(filename).toLowerCase() === '.js'
+  );
 }
 
 function miniappSourceFiles() {
-  return filesIn(miniappRoot, filename => sourceExtensions.has(path.extname(filename).toLowerCase()));
+  return trackedMiniappFiles().filter(
+    filename => sourceExtensions.has(path.extname(filename).toLowerCase())
+  );
+}
+
+function miniappMarkupFiles() {
+  return trackedMiniappFiles().filter(
+    filename => path.extname(filename).toLowerCase() === '.wxml'
+  );
 }
 
 function findMatching(source, openIndex, open, close) {
@@ -116,7 +215,7 @@ function checkJavaScriptSyntax(files = miniappJavaScriptFiles()) {
   for (const filename of files) {
     const result = spawnSync(process.execPath, ['--check', filename], { encoding: 'utf8' });
     if (result.status !== 0) {
-      errors.push(`${relative(filename)}: JavaScript syntax check failed\n${result.stderr || result.stdout}`);
+      errors.push(`${relative(filename)}: JavaScript syntax check failed`);
     }
   }
   return errors;
@@ -216,13 +315,57 @@ function checkProjectConfiguration(filename = projectConfigFile) {
   return errors;
 }
 
-function loadRuntimeEnvironment() {
-  delete require.cache[require.resolve(runtimeEnvironmentFile)];
-  return require(runtimeEnvironmentFile);
+function auditedRuntimeEnvironmentSource(filename = runtimeEnvironmentFile) {
+  let source;
+  try {
+    source = fs.readFileSync(filename, 'utf8');
+  } catch (_) {
+    return {
+      errors: [`${relative(filename)}: audited runtime environment source is unavailable`],
+      source: ''
+    };
+  }
+  if (source.replace(/\r\n/g, '').includes('\r')) {
+    return {
+      errors: [`${relative(filename)}: runtime environment source contains invalid line endings`],
+      source: ''
+    };
+  }
+  const normalized = source.replace(/\r\n/g, '\n');
+  const digest = crypto.createHash('sha256')
+    .update(normalized)
+    .digest('hex');
+  return digest === auditedRuntimeEnvironmentSha256
+    ? { errors: [], source: normalized }
+    : {
+        errors: [`${relative(filename)}: runtime environment source differs from the audited template`],
+        source: ''
+      };
 }
 
-function checkRuntimeEnvironmentPolicy(environment = loadRuntimeEnvironment()) {
+function checkRuntimeEnvironmentSource(filename = runtimeEnvironmentFile) {
+  return auditedRuntimeEnvironmentSource(filename).errors;
+}
+
+function evaluateAuditedRuntimeEnvironment(source) {
+  const sandbox = { module: { exports: {} } };
+  sandbox.exports = sandbox.module.exports;
+  vm.runInNewContext(source, sandbox, {
+    filename: 'audited-runtime-environment.js',
+    timeout: 1000,
+    codeGeneration: { strings: false, wasm: false }
+  });
+  return sandbox.module.exports;
+}
+
+function checkRuntimeEnvironmentPolicy(environment, files) {
   const errors = [];
+  if (environment === undefined) {
+    const audited = auditedRuntimeEnvironmentSource();
+    if (audited.errors.length) return audited.errors;
+    environment = evaluateAuditedRuntimeEnvironment(audited.source);
+  }
+  if (files === undefined) files = miniappSourceFiles();
   if (!environment || typeof environment.resolve !== 'function'
       || typeof environment.isProductionOrigin !== 'function') {
     return [`${relative(runtimeEnvironmentFile)}: runtime environment contract is incomplete`];
@@ -262,7 +405,7 @@ function checkRuntimeEnvironmentPolicy(environment = loadRuntimeEnvironment()) {
       || !environment.isProductionOrigin(release.apiBase)) {
     errors.push(`${relative(runtimeEnvironmentFile)}: release must use only the production API origin`);
   }
-  for (const filename of miniappSourceFiles()) {
+  for (const filename of files) {
     if (path.resolve(filename) === path.resolve(runtimeEnvironmentFile)) continue;
     if (fs.readFileSync(filename, 'utf8').includes(productionApiBase)) {
       errors.push(`${relative(filename)}: production API origin must be declared only in runtime-environment.js`);
@@ -275,10 +418,7 @@ function checkRuntimeEnvironmentPolicy(environment = loadRuntimeEnvironment()) {
   return errors;
 }
 
-function checkWebViewBoundary(files = filesIn(
-  miniappRoot,
-  filename => path.extname(filename).toLowerCase() === '.wxml'
-)) {
+function checkWebViewBoundary(files = miniappMarkupFiles()) {
   const errors = [];
   const occurrences = [];
   for (const filename of files) {
@@ -319,24 +459,34 @@ function runChecks() {
 }
 
 if (require.main === module) {
-  const errors = runChecks();
-  if (errors.length) {
-    errors.forEach(error => process.stderr.write(`${error}\n`));
+  try {
+    const errors = runChecks();
+    if (errors.length) {
+      errors.forEach(error => process.stderr.write(`${error}\n`));
+      process.exitCode = 1;
+    } else {
+      process.stdout.write('miniapp security checks passed\n');
+    }
+  } catch (_) {
+    process.stderr.write('miniapp security checks failed\n');
     process.exitCode = 1;
-  } else {
-    process.stdout.write('miniapp security checks passed\n');
   }
 }
 
 module.exports = {
+  parseTrackedMiniappEntries,
+  assertCanonicalTrackedRelative,
+  trackedMiniappFiles,
   miniappJavaScriptFiles,
   miniappSourceFiles,
+  miniappMarkupFiles,
   checkJavaScriptSyntax,
   checkRequestTokenFields,
   checkEmbeddedSecrets,
   checkSensitiveUiCalls,
   checkGuardianApiBoundary,
   checkProjectConfiguration,
+  checkRuntimeEnvironmentSource,
   checkRuntimeEnvironmentPolicy,
   checkWebViewBoundary,
   runChecks
