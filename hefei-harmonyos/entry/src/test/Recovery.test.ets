@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@ohos/hypium';
-import { ApiEnvironment } from '../main/ets/config/ApiEnvironment';
+import { ApiEnvironment, isCanonicalHttpsOrigin } from '../main/ets/config/ApiEnvironment';
 import {
   ApiTransport,
   ChildApiClient,
@@ -1245,7 +1245,7 @@ export default function recoveryTests(): void {
         expect(blockedPointVault.value.phase).assertEqual(PointRequestIntentPhase.CREATE_INTENT);
       });
 
-    it('keeps production networking disabled and compiles security adapters', 0, () => {
+    it('enforces the tracked or approved synthetic environment boundary', 0, () => {
       const identity: DeviceIdentity = new DeviceIdentity();
       const vault: SessionVault = new SessionVault();
       const pointVault: PointRequestVault = new PointRequestVault();
@@ -1257,7 +1257,15 @@ export default function recoveryTests(): void {
       expect(vault instanceof SessionVault).assertTrue();
       expect(pointVault instanceof PointRequestVault).assertTrue();
       expect(api instanceof ChildApiClient).assertTrue();
-      expect(ApiEnvironment.NETWORK_ENABLED).assertFalse();
+      if (ApiEnvironment.PROFILE === 'synthetic-approved') {
+        expect(ApiEnvironment.NETWORK_ENABLED).assertTrue();
+        expect(isCanonicalHttpsOrigin(ApiEnvironment.API_ORIGIN)).assertTrue();
+        ApiEnvironment.assertUsable();
+      } else {
+        expect(ApiEnvironment.PROFILE).assertEqual('develop-blocked');
+        expect(ApiEnvironment.NETWORK_ENABLED).assertFalse();
+        expect(ApiEnvironment.API_ORIGIN.endsWith('.invalid')).assertTrue();
+      }
     });
   });
 }

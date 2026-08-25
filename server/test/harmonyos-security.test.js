@@ -6,6 +6,29 @@ const path = require('node:path');
 
 const harmonyCheck = require('../../scripts/check-harmonyos');
 
+const SAFE_API_ENVIRONMENT = [
+  'const CANONICAL_HTTPS_ORIGIN: RegExp = /^https:\\/\\/[a-z0-9.-]+$/;',
+  'export function isCanonicalHttpsOrigin(value: string): boolean {',
+  '  if (!CANONICAL_HTTPS_ORIGIN.test(value)) return false;',
+  "  const hostname: string = value.substring('https://'.length);",
+  "  return !hostname.endsWith('.invalid')",
+  "    && !hostname.endsWith('.localhost')",
+  "    && !hostname.endsWith('.local')",
+  "    && !hostname.endsWith('.test');",
+  '}',
+  'export class ApiEnvironment {',
+  "  static readonly PROFILE: string = 'develop-blocked';",
+  '  static readonly NETWORK_ENABLED: boolean = false;',
+  "  static readonly API_ORIGIN: string = 'https://harmony-child.invalid';",
+  '  static assertUsable(): void {',
+  '    if (!ApiEnvironment.NETWORK_ENABLED) throw new Error(\'LOCAL_ENVIRONMENT_DISABLED\');',
+  '    if (!isCanonicalHttpsOrigin(ApiEnvironment.API_ORIGIN)) {',
+  "      throw new Error('LOCAL_ENVIRONMENT_INVALID');",
+  '    }',
+  '  }',
+  '}'
+].join('\n');
+
 function write(root, relativePath, source) {
   const filename = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -47,6 +70,7 @@ function createFixture() {
     'entry/src/main/ets/config/RuntimeEnvironment.ets',
     'export const NETWORK_ENABLED: boolean = false;'
   );
+  write(root, 'entry/src/main/ets/config/ApiEnvironment.ets', SAFE_API_ENVIRONMENT);
   write(root, 'entry/src/main/ets/network/ChildApi.ets', [
     "const CLAIM = '/api/v2/device-pairings/claim-by-code';",
     "const COMPLETE = '/api/v2/device-pairings/claim/complete';",
@@ -151,6 +175,14 @@ test('静态门拒绝动态日志、启网默认值及缺失 HUKS/AssetStore', (
       'entry/src/main/ets/config/RuntimeEnvironment.ets',
       'export const NETWORK_ENABLED: boolean = true;'
     );
+    write(
+      root,
+      'entry/src/main/ets/config/ApiEnvironment.ets',
+      SAFE_API_ENVIRONMENT.replace(
+        'static readonly NETWORK_ENABLED: boolean = false;',
+        'static readonly NETWORK_ENABLED: boolean = true;'
+      )
+    );
     write(root, 'entry/src/main/ets/security/SecureDevice.ets', [
       '// import { huks } from \'@kit.UniversalKeystoreKit\';',
       '// import { asset } from \'@kit.AssetStoreKit\';',
@@ -168,6 +200,52 @@ test('静态门拒绝动态日志、启网默认值及缺失 HUKS/AssetStore', (
     assertHas(errors, 'NETWORK_ENABLED must not be enabled');
     assertHas(errors, 'HUKS-backed device key usage is required');
     assertHas(errors, 'AssetStore-backed credential storage is required');
+  });
+});
+
+test('跟踪环境必须保留 invalid 源且启网前执行 canonical HTTPS 校验', () => {
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/config/ApiEnvironment.ets', [
+      'export class ApiEnvironment {',
+      "  static readonly PROFILE: string = 'synthetic-approved';",
+      "  static readonly API_ORIGIN: string = 'https://harmony-child.invalid' + '.evil.com';",
+      '  static readonly NETWORK_ENABLED: boolean = false;',
+      '  static assertUsable(): void {',
+      "    if (!ApiEnvironment.API_ORIGIN.startsWith('https://')) throw new Error('bad');",
+      '  }',
+      '}'
+    ].join('\n'));
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'enabled profiles must validate a canonical HTTPS origin');
+    assertHas(errors, 'tracked API_ORIGIN must remain a reserved .invalid origin');
+  });
+});
+
+test('静态门拒绝删除 ApiEnvironment 或把校验调用移出 assertUsable', () => {
+  withFixture(root => {
+    fs.rmSync(path.join(
+      root, 'entry', 'src', 'main', 'ets', 'config', 'ApiEnvironment.ets'
+    ));
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'ApiEnvironment.ets is required'
+    );
+  });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/config/ApiEnvironment.ets', [
+      SAFE_API_ENVIRONMENT,
+      'export function unrelated(): boolean {',
+      '  return isCanonicalHttpsOrigin(ApiEnvironment.API_ORIGIN);',
+      '}'
+    ].join('\n').replace(
+      "    if (!isCanonicalHttpsOrigin(ApiEnvironment.API_ORIGIN)) {",
+      "    if (!ApiEnvironment.API_ORIGIN.startsWith('https://')) {"
+    ));
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'enabled profiles must validate a canonical HTTPS origin'
+    );
   });
 });
 

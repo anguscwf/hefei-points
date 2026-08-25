@@ -1,3 +1,16 @@
+const CANONICAL_HTTPS_ORIGIN: RegExp = /^https:\/\/(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+export function isCanonicalHttpsOrigin(value: string): boolean {
+  if (!CANONICAL_HTTPS_ORIGIN.test(value)) {
+    return false;
+  }
+  const hostname: string = value.substring('https://'.length);
+  return !hostname.endsWith('.invalid')
+    && !hostname.endsWith('.localhost')
+    && !hostname.endsWith('.local')
+    && !hostname.endsWith('.test');
+}
+
 export class ApiEnvironment {
   static readonly PROFILE: string = 'develop-blocked';
   static readonly NETWORK_ENABLED: boolean = false;
@@ -9,7 +22,7 @@ export class ApiEnvironment {
     if (!ApiEnvironment.NETWORK_ENABLED) {
       throw new Error('LOCAL_ENVIRONMENT_DISABLED');
     }
-    if (!ApiEnvironment.API_ORIGIN.startsWith('https://')) {
+    if (!isCanonicalHttpsOrigin(ApiEnvironment.API_ORIGIN)) {
       throw new Error('LOCAL_ENVIRONMENT_INVALID');
     }
   }

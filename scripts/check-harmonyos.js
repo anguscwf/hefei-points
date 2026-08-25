@@ -459,6 +459,61 @@ function checkEnvironmentPolicy(harmonyRoot, files) {
   if (declarations.includes('true')) {
     errors.push('entry/src/main: NETWORK_ENABLED must not be enabled in tracked source');
   }
+  const environmentFilename = path.join(
+    harmonyRoot,
+    'entry', 'src', 'main', 'ets', 'config', 'ApiEnvironment.ets'
+  );
+  if (!files.includes(environmentFilename)) {
+    errors.push('entry/src/main: ApiEnvironment.ets is required');
+    return errors;
+  }
+
+  const environment = codeWithoutComments(fs.readFileSync(environmentFilename, 'utf8'));
+  const validatorSignature = /export\s+function\s+isCanonicalHttpsOrigin\s*\([^)]*\)/.exec(
+    environment
+  );
+  let validatorBlock = '';
+  if (validatorSignature) {
+    const open = environment.indexOf('{', validatorSignature.index);
+    const close = findMatching(environment, open, '{', '}');
+    if (open >= 0 && close > open) validatorBlock = environment.slice(open + 1, close);
+  }
+  const suffixes = ['.invalid', '.localhost', '.local', '.test'];
+  const validatorIsScoped = /\bCANONICAL_HTTPS_ORIGIN\s*\.\s*test\s*\(\s*value\s*\)/.test(
+    validatorBlock
+  ) && suffixes.every(suffix => new RegExp(
+    `hostname\\s*\\.\\s*endsWith\\s*\\(\\s*['"]\\${suffix}['"]\\s*\\)`
+  ).test(validatorBlock));
+
+  const assertSignature = /static\s+assertUsable\s*\([^)]*\)/.exec(environment);
+  let assertBlock = '';
+  if (assertSignature) {
+    const open = environment.indexOf('{', assertSignature.index);
+    const close = findMatching(environment, open, '{', '}');
+    if (open >= 0 && close > open) assertBlock = environment.slice(open + 1, close);
+  }
+  if (!validatorIsScoped
+      || !/if\s*\(\s*!\s*isCanonicalHttpsOrigin\s*\(\s*ApiEnvironment\.API_ORIGIN\s*\)\s*\)/.test(
+        assertBlock
+      )
+      || !/throw\s+new\s+Error\s*\(\s*['"]LOCAL_ENVIRONMENT_INVALID['"]\s*\)/.test(
+        assertBlock
+      )) {
+    errors.push('entry/src/main: enabled profiles must validate a canonical HTTPS origin');
+  }
+
+  const origin = /\bstatic\s+readonly\s+API_ORIGIN\s*:\s*string\s*=\s*(['"])([^'"]+)\1\s*;/.exec(
+    environment
+  );
+  if (!origin || origin[2] !== 'https://harmony-child.invalid') {
+    errors.push('entry/src/main: tracked API_ORIGIN must remain a reserved .invalid origin');
+  }
+  const profile = /\bstatic\s+readonly\s+PROFILE\s*:\s*string\s*=\s*(['"])([^'"]+)\1\s*;/.exec(
+    environment
+  );
+  if (!profile || profile[2] !== 'develop-blocked') {
+    errors.push('entry/src/main: tracked environment profile must remain develop-blocked');
+  }
   return errors;
 }
 

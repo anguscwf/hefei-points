@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@ohos/hypium';
+import { isCanonicalHttpsOrigin } from '../main/ets/config/ApiEnvironment';
 import { normalizeEcdsaSignature, utf8Encode } from '../main/ets/security/Encoding';
 import {
   parsePointRequestCreateRequest,
@@ -52,6 +53,23 @@ function proofText(): string {
 
 export default function protocolTests(): void {
   describe('Harmony child protocol contracts', () => {
+    it('accepts only canonical public HTTPS origins for an enabled build profile', 0, () => {
+      expect(isCanonicalHttpsOrigin('https://synthetic-api.example.com')).assertTrue();
+      for (const value of [
+        'http://synthetic-api.example.com',
+        'https://SYNTHETIC-api.example.com',
+        'https://user@synthetic-api.example.com',
+        'https://synthetic-api.example.com/',
+        'https://synthetic-api.example.com/path',
+        'https://synthetic-api.example.com?mode=test',
+        'https://127.0.0.1',
+        'https://harmony-child.invalid',
+        'https://synthetic-api.test'
+      ]) {
+        expect(isCanonicalHttpsOrigin(value)).assertFalse();
+      }
+    });
+
     it('verifies the exact six-line server signing payload', 0, () => {
       const challengeId: string = `proof_${'a'.repeat(32)}`;
       const challenge: string = 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc';
