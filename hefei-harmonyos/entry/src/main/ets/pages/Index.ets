@@ -1,6 +1,13 @@
 import { ApiEnvironment } from '../config/ApiEnvironment';
 import { ChildApiClient, HarmonyHttpTransport } from '../network/ApiClient';
 import { PointRequestDto, RewardRuleDto, TransactionDto } from '../network/ApiContracts';
+import {
+  PRIVACY_SAFETY_BOUNDARY,
+  PrivacySafetySection,
+  PrivacySafetySetting,
+  privacySafetySections,
+  privacySafetySettings
+} from '../privacy/PrivacySafetyShell';
 import { DeviceIdentity } from '../security/DeviceIdentity';
 import { PointRequestVault } from '../security/PointRequestVault';
 import { SessionVault } from '../security/SessionVault';
@@ -41,6 +48,7 @@ struct Index {
   @State pointRequests: Array<PointRequestDto> = [];
   @State hasMorePointRequests: boolean = false;
   @State pointRequestPending: boolean = false;
+  @State showPrivacySafety: boolean = false;
 
   aboutToAppear(): void {
     this.initialize();
@@ -55,6 +63,7 @@ struct Index {
   onPageHide(): void {
     this.shortCode = '';
     this.clearPointDraft();
+    this.showPrivacySafety = false;
     this.coordinator.lockForBackground();
     this.syncView();
   }
@@ -95,6 +104,12 @@ struct Index {
 
   private networkReady(): boolean {
     return ApiEnvironment.NETWORK_ENABLED;
+  }
+
+  private togglePrivacySafety(): void {
+    this.shortCode = '';
+    this.clearPointDraft();
+    this.showPrivacySafety = !this.showPrivacySafety;
   }
 
   private async pair(): Promise<void> {
@@ -216,13 +231,124 @@ struct Index {
       Text('儿童端 · 看自己的积分并提交申请')
         .fontSize(15)
         .fontColor('#796B61')
-      Text(this.statusText())
+      Text(this.showPrivacySafety
+        ? '纯本地说明，不读取或改变配对状态'
+        : this.statusText())
         .fontSize(14)
         .fontColor('#6A584A')
         .textAlign(TextAlign.Center)
+      Button(this.showPrivacySafety ? '返回积分页' : '设置与隐私')
+        .height(38)
+        .backgroundColor('#EADFD7')
+        .fontColor('#5B463A')
+        .onClick(() => this.togglePrivacySafety())
     }
     .width('100%')
     .padding({ top: 30, bottom: 18 })
+  }
+
+  @Builder
+  private privacySettingRow(setting: PrivacySafetySetting) {
+    Column({ space: 5 }) {
+      Row({ space: 12 }) {
+        Text(setting.label)
+          .fontSize(14)
+          .fontColor('#6F6057')
+          .layoutWeight(1)
+        Text(setting.value)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#3C3028')
+      }
+      .width('100%')
+      Text(setting.detail)
+        .width('100%')
+        .fontSize(12)
+        .fontColor('#88776B')
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(14)
+    .backgroundColor('#FFF8F3')
+    .borderRadius(12)
+  }
+
+  @Builder
+  private privacySectionCard(section: PrivacySafetySection) {
+    Column({ space: 10 }) {
+      Text(section.title)
+        .width('100%')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#3C3028')
+      ForEach(section.items, (item: string, index: number) => {
+        Row({ space: 8 }) {
+          Text('•')
+            .fontSize(14)
+            .fontColor('#B8663B')
+          Text(item)
+            .fontSize(14)
+            .fontColor('#62534A')
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+      }, (_item: string, index: number) => `${section.id}-${index}`)
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(18)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(16)
+  }
+
+  @Builder
+  private privacySafetyShell() {
+    Column({ space: 14 }) {
+      Column({ space: 8 }) {
+        Text('设置与数据安全')
+          .width('100%')
+          .fontSize(24)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#3C3028')
+        Text('工程安全说明 · 非正式法律文本')
+          .width('100%')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#8A4B2F')
+        Text(PRIVACY_SAFETY_BOUNDARY)
+          .width('100%')
+          .fontSize(13)
+          .fontColor('#735F3C')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding(18)
+      .backgroundColor('#FFF2CF')
+      .borderRadius(16)
+
+      Column({ space: 10 }) {
+        Text('固定安全设置')
+          .width('100%')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#3C3028')
+        ForEach(privacySafetySettings(this.networkReady()),
+          (setting: PrivacySafetySetting) => {
+            this.privacySettingRow(setting)
+          }, (setting: PrivacySafetySetting) => setting.id)
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding(18)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(16)
+
+      ForEach(privacySafetySections(), (section: PrivacySafetySection) => {
+        this.privacySectionCard(section)
+      }, (section: PrivacySafetySection) => section.id)
+    }
+    .width('100%')
   }
 
   @Builder
@@ -611,23 +737,27 @@ struct Index {
     Scroll() {
       Column({ space: 16 }) {
         this.header()
-        this.environmentNotice()
-        if (this.locked) {
-          this.lockedCard()
-        } else if (this.phase === EnvelopePhase.UNPAIRED || this.phase === 'BOOT') {
-          this.pairingCard()
-        } else if (this.pointRequestPending
-            || this.phase === EnvelopePhase.CLAIM_INTENT
-            || this.phase === EnvelopePhase.WAITING_GUARDIAN
-            || this.phase === EnvelopePhase.COMPLETE_RESULT_UNKNOWN
-            || this.phase === EnvelopePhase.REFRESH_ISSUE_INTENT
-            || this.phase === EnvelopePhase.REFRESH_COMPLETE_INTENT) {
-          this.pendingCard()
+        if (this.showPrivacySafety) {
+          this.privacySafetyShell()
         } else {
-          this.summaryCard()
-          this.pointRequestForm()
-          this.pointRequestList()
-          this.transactionList()
+          this.environmentNotice()
+          if (this.locked) {
+            this.lockedCard()
+          } else if (this.phase === EnvelopePhase.UNPAIRED || this.phase === 'BOOT') {
+            this.pairingCard()
+          } else if (this.pointRequestPending
+              || this.phase === EnvelopePhase.CLAIM_INTENT
+              || this.phase === EnvelopePhase.WAITING_GUARDIAN
+              || this.phase === EnvelopePhase.COMPLETE_RESULT_UNKNOWN
+              || this.phase === EnvelopePhase.REFRESH_ISSUE_INTENT
+              || this.phase === EnvelopePhase.REFRESH_COMPLETE_INTENT) {
+            this.pendingCard()
+          } else {
+            this.summaryCard()
+            this.pointRequestForm()
+            this.pointRequestList()
+            this.transactionList()
+          }
         }
         Text('儿童生产功能门、正式隐私文本和 PIPIA 完成前，本版本不开放生产使用。')
           .width('100%')

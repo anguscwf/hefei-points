@@ -12,10 +12,31 @@ const backupConfigRelative = path.join(
   'profile',
   'backup_config.json'
 );
+const mainPagesRelative = path.join(
+  mainSourceRelative,
+  'resources',
+  'base',
+  'profile',
+  'main_pages.json'
+);
+const privacyShellRelative = path.join(
+  mainSourceRelative,
+  'ets',
+  'privacy',
+  'PrivacySafetyShell.ets'
+);
+const indexPageRelative = path.join(
+  mainSourceRelative,
+  'ets',
+  'pages',
+  'Index.ets'
+);
 const textExtensions = new Set(['.ets', '.ts', '.js', '.json', '.json5']);
 const productionOriginPattern = /(?:https?:\/\/)?(?:www\.)?hefeijifen\.cn/i;
 const healthRoutePattern = /(?:^|["'`\s])\/(?:api\/)?health(?:\/|[?"'`\s]|$)/i;
 const identitySelectorPattern = /(?:["']?(?:familyId|childId|adultId|guardianId|userId|role|deviceId|deviceBindingId|sessionId)["']?\s*:)/i;
+const privacySideEffectPattern = /@kit\.|@ohos\.|\b(?:fetch|request|Web|WebView|Hyperlink|router|getRouter|openUrl|preferences|PersistentStorage|AppStorage|LocalStorage|Environment|globalThis|asset|huks|coordinator|api|vault|identity)\b/i;
+const privacyDynamicDataPattern = /\b(?:childName|familyId|childId|adultId|guardianId|userId|role|deviceId|devicePublicId|deviceBindingId|bindingId|sessionId|accessToken|refreshToken|publicKey|shortCode|balance|transactions|rewardRules|pointRequests|kid|subject|principal|sessionStore)\b/i;
 
 const allowedApiPaths = new Set([
   '/api/v2/device-pairings/claim-by-code',
@@ -108,6 +129,30 @@ function codeWithoutComments(source) {
     }
     result += char;
     if (char === '"' || char === "'" || char === '`') quote = char;
+  }
+  return result;
+}
+
+function codeStructureMask(source) {
+  const withoutComments = codeWithoutComments(source);
+  let result = '';
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index < withoutComments.length; index += 1) {
+    const char = withoutComments[index];
+    if (quote) {
+      result += char === '\n' ? '\n' : ' ';
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      result += ' ';
+      continue;
+    }
+    result += char;
   }
   return result;
 }
@@ -209,6 +254,111 @@ function findMatching(source, openIndex, open, close) {
     }
   }
   return -1;
+}
+
+function braceDepthAt(source, endIndex) {
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index < endIndex; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '{') depth += 1;
+    else if (char === '}') depth -= 1;
+  }
+  return depth;
+}
+
+function namedStructBlock(source, name) {
+  const structure = codeStructureMask(source);
+  const pattern = new RegExp(`(?:^|\\n)\\s*struct\\s+${name}\\s*\\{`, 'g');
+  const blocks = [];
+  let match;
+  while ((match = pattern.exec(structure))) {
+    const open = structure.indexOf('{', match.index);
+    const close = findMatching(structure, open, '{', '}');
+    if (open >= 0 && close > open) blocks.push(source.slice(open + 1, close));
+  }
+  return blocks.length === 1 ? blocks[0] : '';
+}
+
+function topLevelMethodDetails(structSource, name, requirePrivate) {
+  if (!structSource) return null;
+  const structure = codeStructureMask(structSource);
+  const visibility = requirePrivate ? 'private\\s+' : '';
+  const pattern = new RegExp(
+    `(?:^|\\n)\\s*${visibility}${name}\\s*\\([^)]*\\)[^\\n{]*\\{`,
+    'g'
+  );
+  const methods = [];
+  let match;
+  while ((match = pattern.exec(structure))) {
+    if (braceDepthAt(structure, match.index) !== 0) continue;
+    const open = structure.indexOf('{', match.index);
+    const close = findMatching(structure, open, '{', '}');
+    if (open >= 0 && close > open) {
+      methods.push({
+        body: structSource.slice(open + 1, close),
+        signature: structSource.slice(match.index, open).trim()
+      });
+    }
+  }
+  return methods.length === 1 ? methods[0] : null;
+}
+
+function topLevelMethodBlock(structSource, name, requirePrivate) {
+  const method = topLevelMethodDetails(structSource, name, requirePrivate);
+  return method ? method.body : '';
+}
+
+function hasUnexpectedBareCall(source, allowedNames) {
+  const pattern = /(?:^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g;
+  let match;
+  while ((match = pattern.exec(source))) {
+    if (!allowedNames.has(match[1])) return true;
+  }
+  return false;
+}
+
+function hasUnexpectedMemberCallRoot(source, allowedRoots) {
+  const pattern = /(?:^|[^\w$])([A-Za-z_$][\w$]*)\s*\.\s*[A-Za-z_$][\w$]*\s*\(/g;
+  let match;
+  while ((match = pattern.exec(source))) {
+    if (!allowedRoots.has(match[1])) return true;
+  }
+  return false;
+}
+
+function thisMemberNames(source) {
+  return [...source.matchAll(
+    /\bthis\s*(?:\?\.\s*|\.\s*)([A-Za-z_$][\w$]*)/g
+  )].map(match => match[1]);
+}
+
+function hasUnsafeThisSyntax(source) {
+  return /\bthis\s*(?:!|\?\.\s*\[|\[|\?\.)/.test(source);
+}
+
+function hasUnexpectedFreeIdentifier(source, allowedNames) {
+  const structure = codeStructureMask(source);
+  const pattern = /\b[A-Za-z_$][\w$]*\b/g;
+  let match;
+  while ((match = pattern.exec(structure))) {
+    let previous = match.index - 1;
+    while (previous >= 0 && /\s/.test(structure[previous])) previous -= 1;
+    if (previous >= 0 && structure[previous] === '.') continue;
+    if (!allowedNames.has(match[0])) return true;
+  }
+  return false;
 }
 
 function callExpressions(source, pattern) {
@@ -599,6 +749,332 @@ function checkMethodScopedMutation(harmonyRoot, files) {
   return [];
 }
 
+function checkPrivacySafetyShell(harmonyRoot, files) {
+  const errors = [];
+  const shellFilename = path.join(harmonyRoot, privacyShellRelative);
+  const indexFilename = path.join(harmonyRoot, indexPageRelative);
+  const mainPagesFilename = path.join(harmonyRoot, mainPagesRelative);
+
+  if (!files.includes(shellFilename)) {
+    errors.push('entry/src/main: local privacy safety shell is required');
+  } else {
+    const rawSource = fs.readFileSync(shellFilename, 'utf8');
+    const source = codeWithoutComments(rawSource);
+    const shellStructure = codeStructureMask(source);
+    const exportedNames = [...shellStructure.matchAll(
+      /\bexport\s+(?:const|interface|function|class|type|enum)\s+([A-Za-z_$][\w$]*)/g
+    )].map(match => match[1]).sort();
+    const allowedExports = [
+      'PRIVACY_SAFETY_BOUNDARY',
+      'PRIVACY_SAFETY_SHELL_MARKER',
+      'PrivacySafetySection',
+      'PrivacySafetySetting',
+      'privacySafetySections',
+      'privacySafetySettings'
+    ].sort();
+    const declaredFunctions = [...shellStructure.matchAll(
+      /\b(?:export\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g
+    )].map(match => match[1]).sort();
+    const declaredConstants = [...shellStructure.matchAll(
+      /\b(?:export\s+)?const\s+([A-Za-z_$][\w$]*)/g
+    )].map(match => match[1]).sort();
+    if (exportedNames.join('|') !== allowedExports.join('|')
+        || declaredFunctions.join('|') !== 'privacySafetySections|privacySafetySettings'
+        || declaredConstants.join('|') !== 'PRIVACY_SAFETY_BOUNDARY|PRIVACY_SAFETY_SHELL_MARKER'
+        || /\bexport\s+(?:default\b|\{|\*|namespace\b|module\b)/.test(shellStructure)
+        || /\b(?:let|var)\s+[A-Za-z_$]/.test(shellStructure)
+        || /=>/.test(shellStructure)
+        || hasUnexpectedBareCall(shellStructure, new Set([
+          'privacySafetySections',
+          'privacySafetySettings'
+        ]))
+        || hasUnexpectedMemberCallRoot(shellStructure, new Set())
+        || !/export\s+function\s+privacySafetySettings\s*\(\s*networkEnabled\s*:\s*boolean\s*\)\s*:\s*Array<PrivacySafetySetting>/.test(shellStructure)
+        || !/export\s+function\s+privacySafetySections\s*\(\s*\)\s*:\s*Array<PrivacySafetySection>/.test(shellStructure)) {
+      errors.push('entry/src/main: privacy safety shell must expose only fixed local data builders');
+    }
+    if (!/S10_LOCAL_SAFETY_SHELL_NOT_FORMAL_LEGAL_TEXT/.test(source)
+        || !/不是正式隐私政策/.test(source)
+        || !/儿童生产功能保持关闭/.test(source)) {
+      errors.push('entry/src/main: privacy safety shell must remain explicitly non-formal');
+    }
+    if (/\bimport\s+/.test(source)
+        || /\/\/|\/\*/.test(rawSource)
+        || /https?:\/\//i.test(source)
+        || /\/api\//i.test(source)
+        || privacySideEffectPattern.test(source)
+        || /\b(?:async|Promise)\b/.test(source)) {
+      errors.push('entry/src/main: privacy safety shell must remain local-only without navigation, network or storage code');
+    }
+    if (/\b(?:childName|familyId|childId|adultId|guardianId|userId|role|deviceId|devicePublicId|deviceBindingId|bindingId|sessionId|accessToken|refreshToken|publicKey|shortCode)\b/i.test(source)) {
+      errors.push('entry/src/main: privacy safety shell must not accept or expose dynamic identity or session data');
+    }
+    if (/(?:\b1[3-9]\d{9}\b|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|我同意|接受并继续|已完成备案|已完成合规|立即完整删除|永久保存)/i.test(source)) {
+      errors.push('entry/src/main: privacy safety shell must not contain fake legal, contact or retention claims');
+    }
+  }
+
+  if (!files.includes(indexFilename)) {
+    errors.push('entry/src/main: Index.ets must expose the local privacy safety shell');
+  } else {
+    const rawIndexSource = fs.readFileSync(indexFilename, 'utf8');
+    const indexSource = codeWithoutComments(rawIndexSource);
+    const indexStructure = codeStructureMask(indexSource);
+    const indexImports = [];
+    const indexImportPattern = /(?:^|\n)\s*import\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]\s*;/g;
+    let indexImportMatch;
+    while ((indexImportMatch = indexImportPattern.exec(indexSource))) {
+      const keywordIndex = indexSource.indexOf('import', indexImportMatch.index);
+      if (indexStructure.slice(keywordIndex, keywordIndex + 6) !== 'import') continue;
+      const names = indexImportMatch[1].split(',').map(value => value.trim()).sort();
+      indexImports.push(`${indexImportMatch[2]}:${names.join(',')}`);
+    }
+    const expectedIndexImports = [
+      '../config/ApiEnvironment:ApiEnvironment',
+      '../network/ApiClient:ChildApiClient,HarmonyHttpTransport',
+      '../network/ApiContracts:PointRequestDto,RewardRuleDto,TransactionDto',
+      '../privacy/PrivacySafetyShell:PRIVACY_SAFETY_BOUNDARY,PrivacySafetySection,PrivacySafetySetting,privacySafetySections,privacySafetySettings',
+      '../security/DeviceIdentity:DeviceIdentity',
+      '../security/PointRequestVault:PointRequestVault',
+      '../security/SessionVault:SessionVault',
+      '../session/ChildSessionCoordinator:ChildSessionCoordinator,StrictDeviceProofVerifier,StrictSecureIdGenerator',
+      '../session/SessionEnvelope:EnvelopePhase'
+    ].sort();
+    const indexImportsValid = indexImports.sort().join('|') === expectedIndexImports.join('|');
+    const entryStructMatch = /@Entry\s*@Component\s*struct\s+Index\s*\{/.exec(indexStructure);
+    let moduleShapeValid = false;
+    if (entryStructMatch) {
+      const structOpen = indexStructure.indexOf('{', entryStructMatch.index);
+      const structClose = findMatching(indexStructure, structOpen, '{', '}');
+      const prefix = indexStructure.slice(0, entryStructMatch.index).replace(
+        /(?:^|\n)\s*import\s*\{[^}]*\}\s*from\s*[^;]*;/g,
+        ''
+      );
+      const suffix = structClose >= 0 ? indexStructure.slice(structClose + 1) : indexStructure;
+      moduleShapeValid = prefix.trim() === '' && suffix.trim() === '';
+    }
+    const indexBlock = namedStructBlock(indexSource, 'Index');
+    const privateMethod = name => topLevelMethodDetails(indexBlock, name, true);
+    const lifecycleMethod = name => topLevelMethodDetails(indexBlock, name, false);
+    const privacySettingRowMethod = privateMethod('privacySettingRow');
+    const privacySectionCardMethod = privateMethod('privacySectionCard');
+    const privacySafetyShellMethod = privateMethod('privacySafetyShell');
+    const toggleMethod = privateMethod('togglePrivacySafety');
+    const clearPointDraftMethod = privateMethod('clearPointDraft');
+    const networkReadyMethod = privateMethod('networkReady');
+    const headerMethod = privateMethod('header');
+    const buildMethod = lifecycleMethod('build');
+    const hideMethod = lifecycleMethod('onPageHide');
+    if (!indexImportsValid
+        || !indexBlock
+        || !moduleShapeValid
+        || (indexStructure.match(/@Entry\b/g) || []).length !== 1
+        || (indexStructure.match(/@Entry\s*@Component\s*struct\s+Index\s*\{/g) || []).length !== 1
+        || !/@State\s+showPrivacySafety\s*:\s*boolean\s*=\s*false/.test(indexBlock)
+        || !privacySafetyShellMethod
+        || privacySafetyShellMethod.signature !== 'private privacySafetyShell()'
+        || !/设置与隐私/.test(indexBlock)
+        || !/this\.showPrivacySafety\s*\?\s*['"]纯本地说明，不读取或改变配对状态['"]/.test(
+          indexBlock
+        )) {
+      errors.push('entry/src/main: Index.ets must expose the privacy safety shell as a local view');
+    }
+    const toggleBlock = toggleMethod ? toggleMethod.body : '';
+    const clearPointDraftBlock = clearPointDraftMethod ? clearPointDraftMethod.body : '';
+    if (!toggleMethod || toggleMethod.signature !== 'private togglePrivacySafety(): void'
+        || !clearPointDraftMethod
+        || clearPointDraftMethod.signature !== 'private clearPointDraft(): void'
+        || !/^\s*this\.selectedRuleId\s*=\s*['"]['"]\s*;\s*this\.requestedPoints\s*=\s*['"]['"]\s*;\s*this\.description\s*=\s*['"]['"]\s*;\s*$/.test(
+          clearPointDraftBlock
+        )
+        || !/^\s*this\.shortCode\s*=\s*['"]['"]\s*;\s*this\.clearPointDraft\s*\(\s*\)\s*;\s*this\.showPrivacySafety\s*=\s*!\s*this\.showPrivacySafety\s*;\s*$/.test(
+      toggleBlock
+    )) {
+      errors.push('entry/src/main: privacy safety view toggle must not touch session, network or storage state');
+    }
+    const renderBlocks = [
+      privacySettingRowMethod ? privacySettingRowMethod.body : '',
+      privacySectionCardMethod ? privacySectionCardMethod.body : '',
+      privacySafetyShellMethod ? privacySafetyShellMethod.body : ''
+    ];
+    const renderSource = renderBlocks.join('\n');
+    const allowedThisReferences = new Set([
+      'networkReady',
+      'privacySettingRow',
+      'privacySectionCard'
+    ]);
+    const unsafeThisReference = thisMemberNames(renderSource)
+      .some(name => !allowedThisReferences.has(name));
+    const networkReadyBlock = networkReadyMethod ? networkReadyMethod.body : '';
+    if (renderBlocks.some(block => block.length === 0)
+        || !privacySettingRowMethod
+        || privacySettingRowMethod.signature !== 'private privacySettingRow(setting: PrivacySafetySetting)'
+        || !privacySectionCardMethod
+        || privacySectionCardMethod.signature !== 'private privacySectionCard(section: PrivacySafetySection)'
+        || !privacySafetyShellMethod
+        || privacySafetyShellMethod.signature !== 'private privacySafetyShell()'
+        || !networkReadyMethod
+        || networkReadyMethod.signature !== 'private networkReady(): boolean'
+        || unsafeThisReference
+        || !/^\s*return\s+ApiEnvironment\.NETWORK_ENABLED\s*;\s*$/.test(networkReadyBlock)
+        || /\/\/|\/\*/.test(rawIndexSource)
+        || /https?:\/\//i.test(renderSource)
+        || /\/api\//i.test(renderSource)
+        || privacySideEffectPattern.test(renderSource)
+        || privacyDynamicDataPattern.test(renderSource)
+        || hasUnsafeThisSyntax(renderSource)
+        || /`/.test(renderSource.replace(/`\$\{section\.id\}-\$\{index\}`/g, ''))
+        || hasUnexpectedBareCall(renderSource, new Set([
+          'Column',
+          'ForEach',
+          'Row',
+          'Text',
+          'privacySafetySections',
+          'privacySafetySettings'
+        ]))
+        || hasUnexpectedMemberCallRoot(renderSource, new Set(['this']))
+        || hasUnexpectedFreeIdentifier(renderSource, new Set([
+          'Column',
+          'FontWeight',
+          'ForEach',
+          'HorizontalAlign',
+          'PRIVACY_SAFETY_BOUNDARY',
+          'PrivacySafetySection',
+          'PrivacySafetySetting',
+          'Row',
+          'Text',
+          'VerticalAlign',
+          '_item',
+          'index',
+          'item',
+          'number',
+          'privacySafetySections',
+          'privacySafetySettings',
+          'section',
+          'setting',
+          'space',
+          'string',
+          'this'
+        ]))
+        || /\bButton\s*\(|\.on[A-Z][A-Za-z]*\s*\(/.test(renderSource)) {
+      errors.push('entry/src/main: privacy safety builders must render fixed local content without actions or session data');
+    }
+    const headerBlock = headerMethod ? headerMethod.body : '';
+    const buildBlock = buildMethod ? buildMethod.body : '';
+    const headerClickCount = (headerBlock.match(/\.onClick\s*\(/g) || []).length;
+    const headerEventCount = (headerBlock.match(/\.on[A-Z][A-Za-z]*\s*\(/g) || []).length;
+    const headerStatusCount = (headerBlock.match(/this\.statusText\s*\(/g) || []).length;
+    const headerToggleCount = (headerBlock.match(/this\.togglePrivacySafety\s*\(/g) || []).length;
+    const allowedHeaderThisReferences = new Set([
+      'showPrivacySafety',
+      'statusText',
+      'togglePrivacySafety'
+    ]);
+    const unsafeHeaderThisReference = thisMemberNames(headerBlock)
+      .some(name => !allowedHeaderThisReferences.has(name));
+    if (!headerMethod || headerMethod.signature !== 'private header()'
+        || unsafeHeaderThisReference
+        || headerStatusCount !== 1
+        || headerToggleCount !== 1
+        || privacySideEffectPattern.test(headerBlock)
+        || privacyDynamicDataPattern.test(headerBlock)
+        || hasUnsafeThisSyntax(headerBlock)
+        || hasUnexpectedBareCall(headerBlock, new Set(['Button', 'Column', 'Text']))
+        || hasUnexpectedMemberCallRoot(headerBlock, new Set(['this']))
+        || hasUnexpectedFreeIdentifier(headerBlock, new Set([
+          'Button',
+          'Column',
+          'FontWeight',
+          'Text',
+          'TextAlign',
+          'bottom',
+          'space',
+          'this',
+          'top'
+        ]))
+        || !/this\.showPrivacySafety\s*\?\s*['"]纯本地说明，不读取或改变配对状态['"]\s*:\s*this\.statusText\s*\(\s*\)/.test(
+          headerBlock
+        )) {
+      errors.push('entry/src/main: privacy safety header must not expose business or session state');
+    }
+    if (headerClickCount !== 1 || headerEventCount !== 1
+        || !/\.onClick\s*\(\s*\(\s*\)\s*=>\s*this\.togglePrivacySafety\s*\(\s*\)\s*\)/.test(
+          headerBlock
+        )) {
+      errors.push('entry/src/main: privacy safety entry must bind only the local toggle');
+    }
+    const shellIf = /if\s*\(\s*this\.showPrivacySafety\s*\)/.exec(buildBlock);
+    let shellBranchValid = false;
+    if (shellIf && buildMethod && buildMethod.signature === 'build()') {
+      const trueOpen = buildBlock.indexOf('{', shellIf.index);
+      const trueClose = findMatching(buildBlock, trueOpen, '{', '}');
+      const afterTrue = trueClose >= 0 ? buildBlock.slice(trueClose + 1) : '';
+      const elseMatch = /^\s*else\s*/.exec(afterTrue);
+      const elseStart = elseMatch ? trueClose + 1 : -1;
+      const elseOpen = elseStart >= 0 ? buildBlock.indexOf('{', elseStart) : -1;
+      const elseClose = findMatching(buildBlock, elseOpen, '{', '}');
+      if (trueOpen >= 0 && trueClose > trueOpen && elseOpen > trueClose
+          && elseClose > elseOpen) {
+        const trueBlock = buildBlock.slice(trueOpen + 1, trueClose);
+        const outside = buildBlock.slice(0, shellIf.index)
+          + buildBlock.slice(elseClose + 1);
+        const outsideThisReferences = thisMemberNames(outside);
+        shellBranchValid = /^\s*this\.privacySafetyShell\s*\(\s*\)\s*;?\s*$/.test(
+          trueBlock
+        )
+          && (buildBlock.match(/this\.privacySafetyShell\s*\(/g) || []).length === 1
+          && outsideThisReferences.every(name => name === 'header')
+          && !privacySideEffectPattern.test(outside)
+          && !privacyDynamicDataPattern.test(outside)
+          && !hasUnsafeThisSyntax(outside)
+          && !hasUnexpectedBareCall(outside, new Set(['Column', 'Scroll', 'Text']))
+          && !hasUnexpectedMemberCallRoot(outside, new Set(['this']))
+          && !hasUnexpectedFreeIdentifier(outside, new Set([
+            'BarState',
+            'Column',
+            'Scroll',
+            'Text',
+            'TextAlign',
+            'bottom',
+            'left',
+            'right',
+            'space',
+            'this',
+            'top'
+          ]))
+          && !/\b(?:childName|balance|transactions|rewardRules|pointRequests|phase|statusCode|coordinator|api|vault|identity|fetch|request|router|getRouter)\b/i.test(
+            outside
+          );
+      }
+    }
+    if (!shellBranchValid) {
+      errors.push('entry/src/main: privacy safety build must isolate the shell from every business view');
+    }
+    const hideBlock = hideMethod ? hideMethod.body : '';
+    if (!hideMethod || hideMethod.signature !== 'onPageHide(): void'
+        || !/^\s*this\.shortCode\s*=\s*['"]['"]\s*;\s*this\.clearPointDraft\s*\(\s*\)\s*;\s*this\.showPrivacySafety\s*=\s*false\s*;\s*this\.coordinator\.lockForBackground\s*\(\s*\)\s*;\s*this\.syncView\s*\(\s*\)\s*;\s*$/.test(
+      hideBlock
+    )) {
+      errors.push('entry/src/main: privacy safety shell must reset when the page is hidden');
+    }
+  }
+
+  if (!files.includes(mainPagesFilename)) {
+    errors.push('entry/src/main: main_pages.json is required');
+  } else {
+    try {
+      const pages = JSON.parse(fs.readFileSync(mainPagesFilename, 'utf8'));
+      if (!pages || !Array.isArray(pages.src)
+          || pages.src.length !== 1 || pages.src[0] !== 'pages/Index') {
+        errors.push('entry/src/main: privacy safety shell must not add a route or second entry page');
+      }
+    } catch (error) {
+      errors.push('entry/src/main: main_pages.json must remain valid JSON');
+    }
+  }
+  return errors;
+}
+
 function scan(options = {}) {
   const harmonyRoot = path.resolve(options.harmonyRoot || defaultHarmonyRoot);
   const mainRoot = path.join(harmonyRoot, mainSourceRelative);
@@ -616,7 +1092,8 @@ function scan(options = {}) {
     ...checkSecurityPrimitives(harmonyRoot, files),
     ...checkEnvironmentPolicy(harmonyRoot, files),
     ...checkApiBoundary(harmonyRoot, files),
-    ...checkMethodScopedMutation(harmonyRoot, files)
+    ...checkMethodScopedMutation(harmonyRoot, files),
+    ...checkPrivacySafetyShell(harmonyRoot, files)
   ];
 }
 
@@ -643,5 +1120,6 @@ module.exports = {
   checkEnvironmentPolicy,
   checkApiBoundary,
   checkMethodScopedMutation,
+  checkPrivacySafetyShell,
   isAllowedApiPath
 };

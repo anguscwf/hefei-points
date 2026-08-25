@@ -29,6 +29,53 @@ const SAFE_API_ENVIRONMENT = [
   '}'
 ].join('\n');
 
+function safePrivacyIndex(options = {}) {
+  const entry = options.entry === false ? [] : ['@Entry'];
+  return [
+    "import { ApiEnvironment } from '../config/ApiEnvironment';",
+    "import { ChildApiClient, HarmonyHttpTransport } from '../network/ApiClient';",
+    "import { PointRequestDto, RewardRuleDto, TransactionDto } from '../network/ApiContracts';",
+    "import { PRIVACY_SAFETY_BOUNDARY, PrivacySafetySection, PrivacySafetySetting, privacySafetySections, privacySafetySettings } from '../privacy/PrivacySafetyShell';",
+    "import { DeviceIdentity } from '../security/DeviceIdentity';",
+    "import { PointRequestVault } from '../security/PointRequestVault';",
+    "import { SessionVault } from '../security/SessionVault';",
+    "import { ChildSessionCoordinator, StrictDeviceProofVerifier, StrictSecureIdGenerator } from '../session/ChildSessionCoordinator';",
+    "import { EnvelopePhase } from '../session/SessionEnvelope';",
+    ...entry,
+    '@Component',
+    'struct Index {',
+    '  @State showPrivacySafety: boolean = false;',
+    "  private clearPointDraft(): void { this.selectedRuleId = ''; this.requestedPoints = ''; this.description = ''; }",
+    '  private networkReady(): boolean { return ApiEnvironment.NETWORK_ENABLED; }',
+    '  private privacySettingRow(setting: PrivacySafetySetting) { Text(setting.id); }',
+    '  private privacySectionCard(section: PrivacySafetySection) { Text(section.id); }',
+    '  private privacySafetyShell() {',
+    "    Text('设置与隐私');",
+    '    Text(PRIVACY_SAFETY_BOUNDARY);',
+    '  }',
+    '  private togglePrivacySafety(): void {',
+    "    this.shortCode = '';",
+    '    this.clearPointDraft();',
+    '    this.showPrivacySafety = !this.showPrivacySafety;',
+    '  }',
+    '  private header() {',
+    "    Text(this.showPrivacySafety ? '纯本地说明，不读取或改变配对状态' : this.statusText());",
+    "    Button('设置与隐私').onClick(() => this.togglePrivacySafety());",
+    '  }',
+    '  build() {',
+    '    if (this.showPrivacySafety) { this.privacySafetyShell() } else { }',
+    '  }',
+    '  onPageHide(): void {',
+    "    this.shortCode = '';",
+    '    this.clearPointDraft();',
+    '    this.showPrivacySafety = false;',
+    '    this.coordinator.lockForBackground();',
+    '    this.syncView();',
+    '  }',
+    '}'
+  ].join('\n');
+}
+
 function write(root, relativePath, source) {
   const filename = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -71,6 +118,23 @@ function createFixture() {
     'export const NETWORK_ENABLED: boolean = false;'
   );
   write(root, 'entry/src/main/ets/config/ApiEnvironment.ets', SAFE_API_ENVIRONMENT);
+  write(root, 'entry/src/main/resources/base/profile/main_pages.json', JSON.stringify({
+    src: ['pages/Index']
+  }));
+  write(root, 'entry/src/main/ets/privacy/PrivacySafetyShell.ets', [
+    "export const PRIVACY_SAFETY_SHELL_MARKER: string = 'S10_LOCAL_SAFETY_SHELL_NOT_FORMAL_LEGAL_TEXT';",
+    "export const PRIVACY_SAFETY_BOUNDARY: string = '不是正式隐私政策；儿童生产功能保持关闭';",
+    'export interface PrivacySafetySetting { id: string; }',
+    'export interface PrivacySafetySection { id: string; }',
+    'export function privacySafetySettings(networkEnabled: boolean): Array<PrivacySafetySetting> {',
+    '  void networkEnabled;',
+    '  return [];',
+    '}',
+    'export function privacySafetySections(): Array<PrivacySafetySection> {',
+    '  return [];',
+    '}'
+  ].join('\n'));
+  write(root, 'entry/src/main/ets/pages/Index.ets', safePrivacyIndex());
   write(root, 'entry/src/main/ets/network/ChildApi.ets', [
     "const CLAIM = '/api/v2/device-pairings/claim-by-code';",
     "const COMPLETE = '/api/v2/device-pairings/claim/complete';",
@@ -313,5 +377,323 @@ test('静态门拒绝嵌入凭据与凭据文件引用', () => {
     assertHas(errors, 'embedded AppSecret assignment');
     assertHas(errors, 'embedded device bearer credential');
     assertHas(errors, 'forbidden credential file reference');
+  });
+});
+
+test('儿童设置与隐私安全壳必须保持纯本地、非正式且无第二路由', () => {
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/privacy/PrivacySafetyShell.ets', [
+      "import { ChildApiClient } from '../network/ApiClient';",
+      "export const MARKER = 'formal notice';",
+      "const childName = 'synthetic-child';",
+      "const url = 'https://example.invalid/api/v2/legal-texts/current';",
+      'export async function load(): Promise<string> {',
+      '  await fetch(url);',
+      '  return childName;',
+      '}',
+      'void ChildApiClient;'
+    ].join('\n'));
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'privacy safety shell must expose only fixed local data builders');
+    assertHas(errors, 'privacy safety shell must remain explicitly non-formal');
+    assertHas(errors, 'privacy safety shell must remain local-only');
+    assertHas(errors, 'privacy safety shell must not accept or expose dynamic identity');
+  });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/privacy/PrivacySafetyShell.ets', [
+      "export const MARKER = 'S10_LOCAL_SAFETY_SHELL_NOT_FORMAL_LEGAL_TEXT';",
+      "export const BOUNDARY = '不是正式隐私政策';",
+      "export const HARD_GATE = '儿童生产功能保持关闭';",
+      'export function unsafe(deviceId: string): string {',
+      "  AppStorage.setOrCreate('unsafe', deviceId);",
+      '  return deviceId;',
+      '}'
+    ].join('\n'));
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'privacy safety shell must expose only fixed local data builders');
+    assertHas(errors, 'privacy safety shell must remain local-only');
+    assertHas(errors, 'privacy safety shell must not accept or expose dynamic identity');
+  });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/pages/Index.ets', [
+      "const title = '设置与隐私';",
+      '@State showPrivacySafety: boolean = true;',
+      'onPageHide(): void { }'
+    ].join('\n'));
+    write(root, 'entry/src/main/resources/base/profile/main_pages.json', JSON.stringify({
+      src: ['pages/Index', 'pages/UnsafePrivacy']
+    }));
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'Index.ets must expose the privacy safety shell as a local view');
+    assertHas(errors, 'privacy safety view toggle must not touch session, network or storage state');
+    assertHas(errors, 'privacy safety header must not expose business or session state');
+    assertHas(errors, 'privacy safety entry must bind only the local toggle');
+    assertHas(errors, 'privacy safety build must isolate the shell from every business view');
+    assertHas(errors, 'privacy safety shell must reset when the page is hidden');
+    assertHas(errors, 'privacy safety shell must not add a route or second entry page');
+  });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/pages/Index.ets', [
+      "import { PRIVACY_SAFETY_BOUNDARY, PrivacySafetySection, PrivacySafetySetting, privacySafetySections, privacySafetySettings } from '../privacy/PrivacySafetyShell';",
+      '@Entry',
+      '@Component',
+      'struct Index {',
+      '  @State showPrivacySafety: boolean = false;',
+      '  private privacySettingRow() { }',
+      '  private privacySectionCard() { }',
+      '  private privacySafetyShell() {',
+      '    Text(this.childName);',
+      "    Button('unsafe').onClick(() => this.coordinator.refreshSelf());",
+      '  }',
+      '  private togglePrivacySafety(): void {',
+      "    this.shortCode = '';",
+      '    this.clearPointDraft();',
+      '    this.showPrivacySafety = !this.showPrivacySafety;',
+      '  }',
+      "  private header() { Button('设置与隐私').onClick(() => this.pair()); }",
+      '  build() { this.privacySafetyShell(); }',
+      '  onPageHide(): void { this.showPrivacySafety = false; }',
+      '  private boundary: string = PRIVACY_SAFETY_BOUNDARY;',
+      '}'
+    ].join('\n'));
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'privacy safety builders must render fixed local content without actions or session data'
+    );
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'privacy safety entry must bind only the local toggle'
+    );
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'privacy safety build must isolate the shell from every business view'
+    );
+  });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/pages/Index.ets', [
+      "import { PRIVACY_SAFETY_BOUNDARY, PrivacySafetySection, PrivacySafetySetting, privacySafetySections, privacySafetySettings } from '../privacy/PrivacySafetyShell';",
+      'class SafeDecoy {',
+      "  private privacySettingRow() { Text('fixed setting'); }",
+      "  private privacySectionCard() { Text('fixed section'); }",
+      "  private privacySafetyShell() { Text('fixed shell'); }",
+      '  private togglePrivacySafety(): void {',
+      "    this.shortCode = '';",
+      '    this.clearPointDraft();',
+      '    this.showPrivacySafety = !this.showPrivacySafety;',
+      '  }',
+      '  private header() {',
+      "    Text(this.showPrivacySafety ? '纯本地说明，不读取或改变配对状态' : this.statusText());",
+      "    Button('设置与隐私').onClick(() => this.togglePrivacySafety());",
+      '  }',
+      '  build() {',
+      '    this.header();',
+      '    if (this.showPrivacySafety) { this.privacySafetyShell() } else { }',
+      '  }',
+      '  onPageHide(): void {',
+      "    this.shortCode = '';",
+      '    this.clearPointDraft();',
+      '    this.showPrivacySafety = false;',
+      '    this.coordinator.lockForBackground();',
+      '  }',
+      '}',
+      '@Entry',
+      '@Component',
+      'struct Index {',
+      '  @State showPrivacySafety: boolean = false;',
+      "  private privacySettingRow() { Text('fixed setting'); }",
+      "  private privacySectionCard() { Text('fixed section'); }",
+      '  private privacySafetyShell() {',
+      '    Text(PRIVACY_SAFETY_BOUNDARY);',
+      "    AppStorage.setOrCreate('unsafe', 'subject');",
+      '    publishSubject();',
+      '    this .pair();',
+      '    this?.pair();',
+      "    this['pair']();",
+      '  }',
+      '  private togglePrivacySafety(): void {',
+      "    this.shortCode = '';",
+      '    this.clearPointDraft();',
+      '    this.showPrivacySafety = !this.showPrivacySafety;',
+      '  }',
+      '  private header() {',
+      "    Text(this.showPrivacySafety ? '纯本地说明，不读取或改变配对状态' : this.statusText());",
+      '    Text(this.childName);',
+      "    Button('设置与隐私')",
+      '      .onClick(() => this.togglePrivacySafety())',
+      '      .onChange(() => publishSubject());',
+      '  }',
+      '  build() {',
+      '    this.header();',
+      '    if (this.showPrivacySafety) { this.privacySafetyShell() } else { }',
+      '    this.summaryCard();',
+      '  }',
+      '  onPageHide(): void {',
+      "    this.shortCode = '';",
+      '    this.clearPointDraft();',
+      '    this.showPrivacySafety = false;',
+      '    this.coordinator.lockForBackground();',
+      '  }',
+      '}'
+    ].join('\n'));
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'privacy safety builders must render fixed local content without actions or session data');
+    assertHas(errors, 'privacy safety header must not expose business or session state');
+    assertHas(errors, 'privacy safety entry must bind only the local toggle');
+    assertHas(errors, 'privacy safety build must isolate the shell from every business view');
+  });
+
+  withFixture(root => {
+    const shellPath = path.join(root, 'entry/src/main/ets/privacy/PrivacySafetyShell.ets');
+    const shell = fs.readFileSync(shellPath, 'utf8');
+    write(root, 'entry/src/main/ets/privacy/PrivacySafetyShell.ets', [
+      shell,
+      "let mirror: string = '';",
+      'const setMirror = (value: string): void => { mirror = value; };',
+      'export { mirror, setMirror };'
+    ].join('\n'));
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'privacy safety shell must expose only fixed local data builders'
+    );
+  });
+
+  withFixture(root => {
+    const shellPath = path.join(root, 'entry/src/main/ets/privacy/PrivacySafetyShell.ets');
+    const shell = fs.readFileSync(shellPath, 'utf8').replace(
+      'void networkEnabled;',
+      "/[//]/; AppStorage.setOrCreate('unsafe', networkEnabled);"
+    );
+    write(root, 'entry/src/main/ets/privacy/PrivacySafetyShell.ets', shell);
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'privacy safety shell must remain local-only'
+    );
+  });
+
+  withFixture(root => {
+    const unsafeIndex = safePrivacyIndex()
+      .replace(
+        "from '../privacy/PrivacySafetyShell';",
+        "from '../privacy/PrivacySafetyShell';\nlet mirror: string = '';\nconst bridge = { value: (): string => mirror };"
+      )
+      .replace('struct Index {', 'struct Index {\n  aboutToAppear(): void { mirror = this.childName; }')
+      .replace(
+        'Text(PRIVACY_SAFETY_BOUNDARY);',
+        "Text(bridge.value()); Text(bridge.value); Text(mirror); Text(this['childName']);"
+      );
+    write(root, 'entry/src/main/ets/pages/Index.ets', unsafeIndex);
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'privacy safety builders must render fixed local content without actions or session data'
+    );
+  });
+
+  withFixture(root => {
+    const shadowedIndex = safePrivacyIndex()
+      .replace('@Entry', "let setting: string = '';\n@Entry")
+      .replace('struct Index {', 'struct Index {\n  aboutToAppear(): void { setting = this.childName; }')
+      .replace('Text(PRIVACY_SAFETY_BOUNDARY);', 'Text(`${setting}`);');
+    write(root, 'entry/src/main/ets/pages/Index.ets', shadowedIndex);
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'Index.ets must expose the privacy safety shell as a local view');
+    assertHas(errors, 'privacy safety builders must render fixed local content without actions or session data');
+  });
+
+  withFixture(root => {
+    const unsafeSignatures = safePrivacyIndex()
+      .replace(
+        'private privacySafetyShell()',
+        'private privacySafetyShell(setting: string = this.childName)'
+      )
+      .replace(
+        'private togglePrivacySafety(): void',
+        'private togglePrivacySafety(space: boolean = this.coordinator.refreshSelf()): void'
+      )
+      .replace('private header()', 'private header(space: string = this.childName)');
+    write(root, 'entry/src/main/ets/pages/Index.ets', unsafeSignatures);
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'Index.ets must expose the privacy safety shell as a local view');
+    assertHas(errors, 'privacy safety view toggle must not touch session, network or storage state');
+    assertHas(errors, 'privacy safety builders must render fixed local content without actions or session data');
+    assertHas(errors, 'privacy safety header must not expose business or session state');
+  });
+
+  withFixture(root => {
+    const unsafeHelpers = safePrivacyIndex()
+      .replace(
+        'private networkReady(): boolean { return ApiEnvironment.NETWORK_ENABLED; }',
+        'private networkReady(): boolean { this.coordinator.refreshSelf(); return ApiEnvironment.NETWORK_ENABLED; }'
+      )
+      .replace(
+        "this.description = ''; }",
+        "this.description = ''; this.coordinator.refreshSelf(); }"
+      )
+      .replace(
+        'Text(PRIVACY_SAFETY_BOUNDARY);',
+        "/[//]/; AppStorage.setOrCreate('unsafe', this.childName); Text(PRIVACY_SAFETY_BOUNDARY);"
+      )
+      .replace('this.syncView();', 'this.syncView(); this.coordinator.refreshSelf();');
+    write(root, 'entry/src/main/ets/pages/Index.ets', unsafeHelpers);
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'privacy safety view toggle must not touch session, network or storage state');
+    assertHas(errors, 'privacy safety builders must render fixed local content without actions or session data');
+    assertHas(errors, 'privacy safety shell must reset when the page is hidden');
+  });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/pages/Index.ets', [
+      safePrivacyIndex({ entry: false }),
+      '@Entry',
+      '@Component',
+      'struct LivePage {',
+      '  build() { Text(this.childName); }',
+      '}'
+    ].join('\n'));
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'Index.ets must expose the privacy safety shell as a local view'
+    );
+  });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/pages/Index.ets', [
+      "import { PRIVACY_SAFETY_BOUNDARY, PrivacySafetySection, PrivacySafetySetting, privacySafetySections, privacySafetySettings } from '../privacy/PrivacySafetyShell';",
+      '@Entry',
+      '@Component',
+      'struct Index {',
+      '  @State showPrivacySafety: boolean = false;',
+      '  private decoy: string = `',
+      "    private privacySettingRow() { Text('fixed setting'); }",
+      "    private privacySectionCard() { Text('fixed section'); }",
+      "    private privacySafetyShell() { Text('设置与隐私'); }",
+      '    private togglePrivacySafety(): void {',
+      "      this.shortCode = '';",
+      '      this.clearPointDraft();',
+      '      this.showPrivacySafety = !this.showPrivacySafety;',
+      '    }',
+      '    private header() {',
+      "      Text(this.showPrivacySafety ? '纯本地说明，不读取或改变配对状态' : this.statusText());",
+      "      Button('设置与隐私').onClick(() => this.togglePrivacySafety());",
+      '    }',
+      '  `;',
+      "  privacySettingRow() { Text('unsafe'); }",
+      "  privacySectionCard() { Text('unsafe'); }",
+      '  privacySafetyShell() { Text(this.childName); }',
+      '  togglePrivacySafety(): void { this.showPrivacySafety = true; }',
+      "  header() { Button('unsafe').onClick(() => this.pair()); }",
+      '  build() {',
+      '    if (this.showPrivacySafety) { this.privacySafetyShell() } else { }',
+      '  }',
+      '  onPageHide(): void { this.showPrivacySafety = false; }',
+      '}'
+    ].join('\n'));
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(errors, 'Index.ets must expose the privacy safety shell as a local view');
+    assertHas(errors, 'privacy safety builders must render fixed local content without actions or session data');
+    assertHas(errors, 'privacy safety entry must bind only the local toggle');
   });
 });
