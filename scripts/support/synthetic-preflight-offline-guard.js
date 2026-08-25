@@ -354,7 +354,7 @@ function assertNoDynamicModuleSource(source) {
     /\beval\s*\(/,
     /\bFunction\s*\(/,
     /\.constructor\b/,
-    /\bprocess\s*\.\s*(?:binding|_linkedBinding|dlopen|getBuiltinModule|loadEnvFile)\s*\(/
+    /\bprocess\s*\.\s*(?:binding|_linkedBinding|dlopen|execve|getBuiltinModule|loadEnvFile)\s*\(/
   ]) {
     if (pattern.test(source)) throw forbidden();
   }
@@ -704,7 +704,7 @@ function installOfflineGuard() {
     });
   }
   for (const key of [
-    'getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'loadEnvFile'
+    'getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'execve', 'loadEnvFile'
   ]) {
     if (typeof process[key] !== 'function') continue;
     Object.defineProperty(process, key, {

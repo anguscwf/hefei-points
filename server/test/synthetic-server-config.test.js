@@ -199,6 +199,7 @@ test('committed preflight guard 阻断网络、非 Git 子进程和边界外写�
     "  ()=>process['bind'+'ing']('fs'),",
     "  ()=>process['_linked'+'Binding']('fs'),",
     "  ()=>process['dl'+'open'](),",
+    "  ()=>process['exec'+'ve']('\\0',[],{}),",
     "  ()=>process['loadEnv'+'File'](process.env.GUARD_TEST_DOTENV),",
     "  ()=>process.report.writeReport(process.env.GUARD_TEST_OUTSIDE),",
     "  ()=>module['constr'+'uctor']['register'+'Hooks']({resolve(){return {url:'node:sqlite',shortCircuit:true};}}),",
