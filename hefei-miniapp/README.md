@@ -19,7 +19,7 @@
 
 ## v2 请求边界
 
-- 历史页面暂时继续使用 `app.fetchAPI`；新增监护、设备、家庭待办和数据权利页面只能调用 `app.guardianApi`，不得自行拼接 v2 URL 或认证头。
+- 历史页面暂时继续使用 `app.fetchAPI`，但它只接受严格规范化的相对 `/api/...` 路径；userinfo、绝对 URL、反斜杠、双斜线、fragment 和编码路径穿越会以 `CLIENT_REQUEST_INVALID` 在本地拒绝且零请求。新增监护、设备、家庭待办和数据权利页面只能调用 `app.guardianApi`，不得自行拼接 v2 URL 或认证头。
 - `app.requestV2` 只接受固定 HTTPS 源下的相对 `/api/v2/...` 路径。公开法律文本请求不发送认证头，其他家长端请求只发送成人 Bearer Token，不在 body 或 query 重复 Token。
 - 只有服务端返回 `401 AUTH_REQUIRED` 且响应对应的 Token 仍是当前会话时才清除登录态。`FEATURE_DISABLED`、`FORBIDDEN_SCOPE` 和 `REAUTH_REQUIRED` 必须原样交给页面处理。
 - v2 写请求不自动重试。页面应在一次用户动作开始时通过 `app.guardianApi.createIdempotencyKey(scope)` 生成密码学安全幂等键；网络失败、超时、网关 5xx 或畸形响应都按结果不确定处理，只允许用户显式复用同一个键重试。资料权利请求一旦出现未知结果便不能“放弃后换新键”，必须按持久恢复句柄向服务端对账。
@@ -31,7 +31,7 @@
 
 当前 v2 客户端仅用于合成家庭的封闭验证。正式法律文本、PIPIA、存量数据整改及各项生产硬门未完成前，不得开启儿童生产功能门。
 
-## S6 封闭预发布边界
+## S6/S11 封闭预发布边界
 
 - 正式版只绑定 `https://hefeijifen.cn`，且不显示新增儿童、设备配对和家庭待办等新流程入口；公开法律文本与家庭隐私安全入口保持可发现。
 - 开发版/体验版的 API 与法律源由只读代码 profile 绑定。仓库尚无已批准的独立非生产端点，因此当前 profile 指向不可路由的 `.invalid` 合成源、关闭监护预览并在本地返回 `API_ENVIRONMENT_INVALID`，不会发出 `wx.request`，更不会回退生产域。真实非生产域建立并完成微信合法域名配置前不得执行联网流程烟测。
@@ -40,6 +40,10 @@
 - 公开法律文本 `web-view` 只接受当前环境精确 origin 下 `/legal/<type>/<version>/<sha256>.html` 的叶子路径，拒绝跨类型、端口、query、fragment 与路径穿越，并用 `binderror` 清空失败 URL。正式内容不可变托管、重定向/CSP、微信 business-domain 和真机验证仍是生产硬门。
 - 设备人工核对完整显示 64 位 SHA-256，每 8 位一组；无效指纹不截断展示。
 - 根测试和静态扫描不能替代微信开发者工具 WXML/WXSS 编译、合法域名校验、受控成人账号设备烟测和发布审核。
+
+S11 新增 `npm run prepare:miniapp-synthetic`，仅用于生成成人受控预发布的系统临时工程。命令要求获批的 canonical 非生产 HTTPS origin、格式正确且与跟踪工程不同的 synthetic AppID、全新系统临时输出目录，以及两项显式确认；它不会读取或复制被忽略的 `project.private.config.json`，不会连接 origin，也不会启动 DevTools、preview、upload 或部署。生成的 develop/trial profile 只指向 synthetic origin，release/unknown 固定使用不可路由源；`urlCheck` 保持开启并关闭 upload sourcemap。
+
+生成 manifest 中“AppID 字符串不同、操作员已确认”不等于独立 AppID 已注册或当前开发者已有权限。执行真实 smoke 前仍必须外部验证 AppID provisioning、开发者授权、request 合法域名、法律 `web-view` business domain、DNS/TLS、基础设施隔离，并人工确认 DevTools 私有配置未关闭域名/TLS 校验。每次小程序跟踪源码变化后，必须重新审计并更新 S11 固定源码树摘要，不能绕过失败门。
 
 ## 主要入口
 
@@ -55,6 +59,7 @@ components/action-sheet/            记分操作面板
 utils/rules-view-model.js           规则展示与兼容视图模型
 utils/session.js                    登录态恢复、提交与清理
 utils/v2-request.js                 严格 v2 HTTPS 传输与稳定结果
+utils/legacy-request-path.js        legacy 相对 API 路径规范化与 origin 防逃逸
 utils/guardian-api.js               家长端 v2 端点白名单
 utils/guardian-operation-recovery.js 授权写入的非秘密恢复标记
 utils/device-pairing-recovery.js     配对生成的非秘密恢复标记
