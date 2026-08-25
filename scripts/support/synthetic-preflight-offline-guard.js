@@ -28,6 +28,7 @@ const arrayFrom = Array.from;
 const arraySlice = Function.call.bind(Array.prototype.slice);
 const arraySome = Function.call.bind(Array.prototype.some);
 const bufferEquals = Function.call.bind(Buffer.prototype.equals);
+const bufferAlloc = Buffer.alloc.bind(Buffer);
 const bufferFrom = Buffer.from.bind(Buffer);
 const bufferIndexOf = Function.call.bind(Buffer.prototype.indexOf);
 const bufferIsBuffer = Buffer.isBuffer;
@@ -419,8 +420,12 @@ function installOfflineGuard() {
     throw forbidden();
   });
   const evidenceOpenSync = fs.openSync;
+  const evidenceReadSync = fs.readSync;
   const evidenceWriteSync = fs.writeSync;
   const evidenceCloseSync = fs.closeSync;
+  const evidenceFstatSync = fs.fstatSync;
+  const evidenceLstatSync = fs.lstatSync;
+  const evidenceStatSync = fs.statSync;
 
   replace(fs, 'mkdtempSync', original => function guardedMkdtempSync(prefix, options) {
     if (gitStep !== 8 || staging || published || options !== undefined
@@ -439,7 +444,7 @@ function installOfflineGuard() {
     realStaging = real;
     return created;
   });
-  replace(fs, 'readFileSync', original => function guardedReadFileSync(filename, options) {
+  replace(fs, 'readFileSync', () => function guardedReadFileSync(filename, options) {
     const allowedImplementation = typeof filename === 'string'
       && arraySome(implementationFiles, item => samePath(
         filename,
@@ -450,7 +455,48 @@ function installOfflineGuard() {
     if ((!allowedImplementation && !allowedEvidence) || !safeReadOptions(options)) {
       throw forbidden();
     }
-    return original.call(this, filename, options);
+    const pathMetadata = reflectApply(evidenceLstatSync, fs, [filename]);
+    if (!pathMetadata.isFile() || pathMetadata.isSymbolicLink() || pathMetadata.nlink !== 1
+        || !samePath(realpathSync(filename), filename)) {
+      throw forbidden();
+    }
+    let descriptor;
+    let content;
+    try {
+      descriptor = reflectApply(evidenceOpenSync, fs, [filename, 'r']);
+      const descriptorMetadata = reflectApply(evidenceFstatSync, fs, [descriptor]);
+      const currentPathMetadata = reflectApply(evidenceStatSync, fs, [filename]);
+      if (!descriptorMetadata.isFile() || descriptorMetadata.nlink !== 1
+          || descriptorMetadata.size < 0 || descriptorMetadata.size > 16 * 1024 * 1024
+          || descriptorMetadata.dev !== currentPathMetadata.dev
+          || descriptorMetadata.ino !== currentPathMetadata.ino) {
+        throw forbidden();
+      }
+      content = bufferAlloc(descriptorMetadata.size);
+      let offset = 0;
+      while (offset < content.length) {
+        const read = reflectApply(evidenceReadSync, fs, [
+          descriptor,
+          content,
+          offset,
+          content.length - offset,
+          null
+        ]);
+        if (!numberIsSafeInteger(read) || read <= 0) throw forbidden();
+        offset += read;
+      }
+      const finalMetadata = reflectApply(evidenceFstatSync, fs, [descriptor]);
+      if (finalMetadata.size !== descriptorMetadata.size
+          || finalMetadata.mtimeMs !== descriptorMetadata.mtimeMs) {
+        throw forbidden();
+      }
+    } finally {
+      if (descriptor !== undefined) reflectApply(evidenceCloseSync, fs, [descriptor]);
+    }
+    const encoding = typeof options === 'string'
+      ? options
+      : options && options.encoding;
+    return encoding ? bufferToString(content, 'utf8') : content;
   });
   replace(fs, 'writeFileSync', () => function guardedWriteFileSync(filename, data, options) {
     if (gitStep !== 8) throw forbidden(`WRITE_GIT_STEP_${gitStep}`);
@@ -822,6 +868,8 @@ function installOfflineGuard() {
   block(workerThreads, 'Worker');
 
   for (const target of [
+    fs.Stats && fs.Stats.prototype,
+    fs.Dirent && fs.Dirent.prototype,
     fs.promises,
     fs,
     path,
