@@ -34,12 +34,15 @@ const bufferIsBuffer = Buffer.isBuffer;
 const bufferSubarray = Function.call.bind(Buffer.prototype.subarray);
 const bufferToString = Function.call.bind(Buffer.prototype.toString);
 const hasOwn = Function.call.bind(Object.prototype.hasOwnProperty);
+const numberFrom = Number;
+const numberIsSafeInteger = Number.isSafeInteger;
 const objectKeys = Object.keys;
 const pathRelative = path.relative.bind(path);
 const pathResolve = path.resolve.bind(path);
 const pathIsAbsolute = path.isAbsolute.bind(path);
 const regexpExec = Function.call.bind(RegExp.prototype.exec);
 const regexpTest = Function.call.bind(RegExp.prototype.test);
+const reflectApply = Reflect.apply;
 const setHas = Function.call.bind(Set.prototype.has);
 const stringEndsWith = Function.call.bind(String.prototype.endsWith);
 const stringSlice = Function.call.bind(String.prototype.slice);
@@ -309,11 +312,11 @@ function assertBatchOutput(output, entries) {
       /^((?:[0-9a-f]{40}|[0-9a-f]{64})) blob (0|[1-9][0-9]*)$/,
       bufferToString(bufferSubarray(output, offset, headerEnd), 'utf8')
     );
-    const length = match ? Number(match[2]) : -1;
+    const length = match ? numberFrom(match[2]) : -1;
     const start = headerEnd + 1;
     const end = start + length;
     if (!match || !validObjectId(match[1]) || match[1] !== entry.oid
-        || !Number.isSafeInteger(length) || length < 0
+        || !numberIsSafeInteger(length) || length < 0
         || length > output.length - start - 1 || output[end] !== 0x0a) {
       throw forbidden();
     }
@@ -415,6 +418,9 @@ function installOfflineGuard() {
   const block = (target, key) => replace(target, key, () => function blockedOperation() {
     throw forbidden();
   });
+  const evidenceOpenSync = fs.openSync;
+  const evidenceWriteSync = fs.writeSync;
+  const evidenceCloseSync = fs.closeSync;
 
   replace(fs, 'mkdtempSync', original => function guardedMkdtempSync(prefix, options) {
     if (gitStep !== 8 || staging || published || options !== undefined
@@ -446,7 +452,7 @@ function installOfflineGuard() {
     }
     return original.call(this, filename, options);
   });
-  replace(fs, 'writeFileSync', original => function guardedWriteFileSync(filename, data, options) {
+  replace(fs, 'writeFileSync', () => function guardedWriteFileSync(filename, data, options) {
     if (gitStep !== 8) throw forbidden(`WRITE_GIT_STEP_${gitStep}`);
     if (!staging) throw forbidden('WRITE_STAGING_MISSING');
     if (evidenceWritten) throw forbidden('WRITE_ALREADY_COMPLETED');
@@ -457,9 +463,28 @@ function installOfflineGuard() {
     if (!exactKeys(options, ['flag']) || options.flag !== 'wx') {
       throw forbidden('WRITE_OPTIONS_INVALID');
     }
-    const result = original.call(this, filename, data, options);
+    if (!bufferIsBuffer(data)) throw forbidden('WRITE_DATA_INVALID');
+    let descriptor;
+    try {
+      descriptor = reflectApply(evidenceOpenSync, fs, [filename, 'wx', 0o600]);
+      let offset = 0;
+      while (offset < data.length) {
+        const written = reflectApply(evidenceWriteSync, fs, [
+          descriptor,
+          data,
+          offset,
+          data.length - offset
+        ]);
+        if (!numberIsSafeInteger(written) || written <= 0) {
+          throw forbidden('WRITE_INCOMPLETE');
+        }
+        offset += written;
+      }
+    } finally {
+      if (descriptor !== undefined) reflectApply(evidenceCloseSync, fs, [descriptor]);
+    }
     evidenceWritten = true;
-    return result;
+    return undefined;
   });
   replace(fs, 'renameSync', original => function guardedRenameSync(source, destination) {
     if (gitViolation || gitStep !== expectedGitOperations.length
@@ -815,6 +840,7 @@ function installOfflineGuard() {
     Array,
     Set,
     Function,
+    Number,
     JSON,
     Object
   ].filter(Boolean)) Object.freeze(target);
