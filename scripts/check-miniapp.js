@@ -23,6 +23,7 @@ const forbiddenTrackedExtensions = new Set([
 const realpathSync = fs.realpathSync.native || fs.realpathSync;
 const auditedRuntimeEnvironmentSha256 = 'e64c1c3b7a80df66ad2c1d945b66fa75c5b8e7c8c8fafe35a0f166cee5749782';
 const readOnlyGitPrefix = [
+  '--no-pager',
   '--no-optional-locks',
   '-c', 'core.fsmonitor=false',
   '-c', `safe.directory=${path.resolve(root).split(path.sep).join('/')}`
@@ -63,12 +64,14 @@ function readOnlyGitEnvironment() {
     const normalized = key.toUpperCase();
     if (repositoryOverrides.has(normalized)
         || normalized === 'GIT_CONFIG_COUNT'
+        || normalized === 'GIT_CONFIG_PARAMETERS'
         || /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(normalized)
         || normalized.startsWith('GIT_TRACE')) {
       delete environment[key];
     }
   }
   environment.GIT_OPTIONAL_LOCKS = '0';
+  environment.GIT_NO_LAZY_FETCH = '1';
   environment.GIT_TERMINAL_PROMPT = '0';
   return environment;
 }

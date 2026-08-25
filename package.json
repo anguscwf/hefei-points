@@ -13,6 +13,7 @@
     "backup": "node scripts/backup-sqlite.js",
     "backup:pre-migration": "node scripts/pre-migration-backup.js",
     "prepare:harmonyos-synthetic": "node scripts/prepare-harmonyos-synthetic-workspace.js",
+    "prepare:miniapp-synthetic": "node scripts/prepare-miniapp-synthetic-workspace.js",
     "test": "node --test --test-concurrency=1",
     "pm2:logrotate": "node scripts/configure-pm2-logrotate.js",
     "check": "node scripts/check-rename.js && node scripts/check-miniapp.js && node scripts/check-harmonyos.js",
