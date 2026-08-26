@@ -9,8 +9,8 @@ const projectRoot = path.resolve(__dirname, '..');
 const realpathSync = fs.realpathSync.native || fs.realpathSync;
 const implementationFiles = Object.freeze([
   'package.json',
-  'scripts/prepare-synthetic-data-root.js',
   'scripts/preflight-synthetic-api.js',
+  'scripts/prepare-synthetic-data-root.js',
   'scripts/support/synthetic-data-root-tools.js',
   'scripts/support/synthetic-preflight-offline-guard.js',
   'scripts/verify-synthetic-api-preflight.js',
