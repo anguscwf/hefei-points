@@ -14,9 +14,12 @@ const preflight = require('../../scripts/preflight-synthetic-api');
 const committedPreflightVerifier = require('../../scripts/verify-synthetic-api-preflight');
 const committedPreflightImplementationFiles = Object.freeze([
   'package.json',
+  'scripts/prepare-synthetic-data-root.js',
   'scripts/preflight-synthetic-api.js',
+  'scripts/support/synthetic-data-root-tools.js',
   'scripts/support/synthetic-preflight-offline-guard.js',
   'scripts/verify-synthetic-api-preflight.js',
+  'scripts/verify-synthetic-data-root.js',
   'server/config/defaults.js',
   'server/config/deployment-profile.js',
   'server/config/env.js',
