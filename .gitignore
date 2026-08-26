@@ -25,6 +25,10 @@ hefei-miniapp/project.private.config.json
 /blobs/
 /clipboard-images/
 
+# Git recovery artifacts must stay outside the working tree
+/.git-backup*/
+/*.bundle
+
 # HarmonyOS local state, build output and signing material
 /.hvigor/
 /.idea/

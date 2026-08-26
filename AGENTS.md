@@ -5,17 +5,22 @@
 ## 1. 唯一真源与操作边界
 
 - 本仓库 `hefei-points` 是糖罐积分源码与核心文档的唯一 canonical 仓库。
+- 保留 `C:\Users\ANGUS\projects\hefei-points\.git` 作为独立仓库元数据；父仓必须忽略并停止跟踪整个 `/hefei-points/`，不得改成 submodule、gitlink 或再次逐文件纳管。
 - 不要从父目录 `C:\Users\ANGUS\projects` 管理本项目，也不要在资料目录 `Documents\糖罐积分` 建立另一套源码历史。
 - 未经安总明确授权，不修改父仓、远程地址、远端分支或历史。
 - 工作区可能包含用户尚未提交的改动；禁止 `reset --hard`、`checkout --`、`clean`、未经授权的 `stash`，也禁止覆盖或丢弃现有修改。
 
 ## 2. Git 规则
 
-- Codex 分支默认使用 `codex/` 前缀。
+- `origin` 当前过渡性指向 `git@github.com:anguscwf/projects.git`；其中 `master` 专属于父 monorepo，与本仓历史无共同祖先。本仓禁止创建、检出、合并或推送 `master`，也不得把 `origin/master` 合入任何本仓分支。
+- 本仓长期稳定分支为 `main`，阶段 1 汇总分支为 `codex/stage1`；普通 Codex 主题分支必须使用 `codex/<topic>-YYYYMMDD`。禁止使用含糊的 `master`、`dev`、`tmp` 或无前缀远端分支。
+- 每次获准 push 前必须先执行 `git fetch --prune origin`，再用 `git ls-remote --heads origin` 核对目标 ref 和 `master` 未被意外改写。
+- push 只能使用完整显式 refspec，例如 `git push origin <local>:refs/heads/<remote>`；禁止裸 `git push`、`git push --all`、`git push --mirror`、任何 force/force-with-lease，以及删除或覆盖 `master`。
+- 本地必须设置 `push.default=nothing`，使遗漏显式 refspec 的 push 直接失败。若未来迁移到专用 `hefei-points` 远端，必须先记录决策、核对默认分支和全部 ref OID，再修改 `origin`。
 - 只精确暂存本次主题涉及的路径；禁止 `git add .` 与 `git add -A`。
 - 每个提交只包含一个主题，提交前检查 `git diff --cached --stat` 和 `git diff --cached`。
 - 未经明确授权不得 push、force-push、改远端 refs 或重写历史。
-- 当前父仓双重跟踪、远端 `main`/`master` 并存及敏感历史问题，按 `docs/adr/` 记录另案处理。
+- 父仓历史中的运行数据和旧 `master` 敏感对象属于单独响应事项；普通摘除提交不会清除历史对象，禁止借本规则擅自重写远端历史。
 
 ## 3. 永不入库的数据与凭据
 
@@ -52,4 +57,3 @@ npm run check
 - 上架前只使用成人受控设备、模拟器、合成数据和自动化测试。
 - 儿童数据处理、监护人授权、隐私文本、备案和发布门以最新 MVP 方案为准；不得用技术测试绕过未成年人模式。
 - 部署、生产迁移、正式提交 AppGallery、发送通知等外部状态变更均需安总单独授权。
-
