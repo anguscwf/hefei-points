@@ -2,16 +2,16 @@
 
 糖罐积分是面向家庭的任务与积分管理系统：家长创建家庭与孩子档案、审批任务和管理积分，孩子通过受控终端查看积分并申报任务。
 
-本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端的 S10 本地设置与隐私安全壳，以及 S11 小程序受控 synthetic 工作区。
+本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S13 的受控 synthetic 本地准备能力。
 
 ## 当前状态
 
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
 - HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；S9 新增受控临时 synthetic profile 生成器和 loopback 全链验证，S10 又加入纯本地“设置与数据安全”说明。该说明明确不是正式隐私政策、儿童规则、用户协议或同意页面，不读取动态儿童/设备/会话信息，也不提供假解绑或删除按钮。跟踪配置仍固定禁用网络并使用 `.invalid` 源，尚未连接任何外部业务服务，也不代表完整薄 MVP。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
-- 阶段 1 已在本地完成 S0、安全前置、S1/006 授权建档、S2/007 设备配对与会话、S3 孩子本人只读、S4/008 积分申报审批、S5/009 数据行权与审计、S6 微信小程序监护端及安全加固、S7 HarmonyOS 配对/会话/本人只读、S8 HarmonyOS 积分申报、S9 合成 E2E 就绪、S10 本地设置与隐私安全壳，以及 S11 小程序受控 synthetic 工作区。S11 只从与 `HEAD` 完全一致的 Git index blob 生成系统临时副本，以独立 synthetic AppID 和获批非生产源替换两份编译配置；不读取工作树或私有项目配置，不联网、不启动 DevTools、不 preview/upload。它只推进成人受控预发布准备，不是外部联网或儿童可用版本。详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
+- 阶段 1 已完成 S0～S12 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片；S13 合成数据根离线 prepare/verify 也已在本地主题分支完成，最终验证结果以最新交接为准。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；它不自动接管中断残根，不打开数据库、不联网、不启动服务、不部署，也不证明 AppID、DNS/TLS、ACL、OS 账号、磁盘/备份或数据库内容已经外部验证。详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
 - 生产迁移已增加“旧库一致性快照 + 清单校验 + 无清单拒绝迁移”门禁；但正式法律文本、PIPIA、存量数据整改和 AppGallery 正式上架均未完成，所有儿童生产功能继续默认关闭。
-- 当前阶段 1 变更仍只存在于本地分支，不代表已部署、已上架或已清理远端历史。
+- S0～S12 及 Git 迁移收尾已安全存在于专用远端；S13 已在本地主题分支完成，尚未推送。远端落盘或本地完成都不代表已经部署、联网、上架或开放儿童功能。
 
 ## 目录
 
@@ -67,6 +67,8 @@ npm run backup:pre-migration -- --database <旧库路径> --backup-root <备份�
 
 `npm run prepare:miniapp-synthetic` 只在操作员同时确认获批 synthetic origin 和独立 synthetic AppID 后，向全新的系统临时目录生成 develop/trial 专用副本；release/unknown 在副本中固定 fail closed。生成器锁定完整小程序源码树和仅有的 legacy/v2/legal 网络链路，禁用 Git pager、fsmonitor、lazy fetch 与可选锁，并让原子目录 rename 成为成功路径的最后一步。manifest 明确标记 AppID provisioning、开发者权限、request/business domain、DevTools 私有配置和基础设施连通均未外部验证；这些仍是联网 smoke 的前置硬门。
 
+`npm run prepare:synthetic-data-root` 只在完整 S12 synthetic 配置、候选根现存真实父目录和一次性准备确认都精确匹配时，排他创建全新的空数据根、唯一 `data` 子目录和精确 marker；任何既有或中断残根都拒绝接管。`npm run verify:synthetic-data-root` 只做两轮物理边界核验并输出脱敏 schema 1 readiness 结果。两条命令都不打开 SQLite、不生成运行 secret、不联网、不启动服务、不部署；操作手册见 [受控 synthetic 数据根准备与核验](docs/runbooks/受控-synthetic-数据根准备与核验.md)。
+
 服务端公开法律证据还要求显式配置精确 HTTPS 源 `LEGAL_PUBLIC_ORIGIN`。四类文本和监护关系声明的 URL 必须严格等于 `/legal/<固定文本类型>/<版本>/<小写 SHA-256>.html`；配置缺失、跨域、类型/版本/摘要路径不匹配时统一视为 `LEGAL_TEXTS_UNAVAILABLE`。正式文本、重定向、CSP、微信业务域名及真机加载验证仍属于生产硬门。
 
 HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harmonyos/build-profile.json5` 含本机签名信息并被强制忽略；开发者必须在本机独立配置，严禁提交密码、证书、Profile 或绝对路径。
@@ -76,7 +78,8 @@ HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 
 ## 文档入口
 
 - [仓库工作规范](AGENTS.md)
-- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S11小程序合成工作区交接-20260826.md)
+- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S13合成数据根就绪交接-20260827.md)
+- [S13 数据根操作手册](docs/runbooks/受控-synthetic-数据根准备与核验.md)
 - [HarmonyOS MVP 方案与推进计划](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)
 - [阶段 1 现有能力审计与首批实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)
 - [架构决策记录](docs/adr/README.md)
