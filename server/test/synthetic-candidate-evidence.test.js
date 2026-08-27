@@ -92,7 +92,7 @@ function environmentFor(label, overrides = {}) {
 
 function provenanceFor(label) {
   const implementationFiles = [
-    ...Array.from({ length: 26 }, (_, index) => ({
+    ...Array.from({ length: 29 }, (_, index) => ({
       path: `scripts/synthetic-fixture-${String(index).padStart(2, '0')}.js`,
       sha256: digest(`${label} implementation ${index}`)
     })),
@@ -220,7 +220,7 @@ test('候选机器 subject 精确绑定 S12/S13/S14 与实时只读最小数据�
   ]);
   assert.equal(subject.profile, 'synthetic-candidate-machine-subject');
   assert.equal(subject.result, 'offline-machine-evidence-validated');
-  assert.equal(subject.implementationFileCount, 36);
+  assert.equal(subject.implementationFileCount, 39);
   assert.equal(subject.migrationCount, 10);
   assert.equal(subject.checks.bootstrapSourceCommitBound, true);
   assert.equal(subject.checks.currentDatabasePristine, true);
@@ -796,5 +796,5 @@ test('真实两阶段 CLI 使用已提交 provenance 且只输出单行脱敏 JS
       forbidden
     );
   }
-  assert.equal(subject.implementationFileCount, 36);
+  assert.equal(subject.implementationFileCount, 39);
 });
