@@ -130,10 +130,10 @@ schema 1 中所有外部核验项必须保持 `false`。这些值不能由 prepa
 4. **磁盘与备份**：存储位置、快照、复制、备份、恢复和到期清理与生产隔离；不会被通用生产备份任务收集，也不会把生产备份恢复进 synthetic 根。
 5. **数据库内容**：初始数据库为空或只含批准的合成家庭；已检查数据库、WAL、SHM、导入来源和迁移输入，不含生产数据、备份、日志、真实手机号、设备标识或凭据。
 6. **基础设施**：端口、反向代理、可信代理范围、边缘限流、最小监控、日志等级、审计和清理责任经过批准；日志不记录秘密或儿童敏感正文。
-7. **运行线与预检**：批准的 Node.js 运行线与仓库声明一致；候选已提交 commit 上的 S12 preflight 通过，schema 3 证据无秘密且仍把外部事实如实标为未验证。
+7. **运行线与预检**：批准的 Node.js 运行线与仓库声明一致；候选已提交 commit 上的 S12 preflight 通过，当前 schema 4 证据无秘密且仍把外部事实如实标为未验证。
 8. **独立审批**：只有数据根、外部清单和 S12 preflight 均通过，才可由有权人员另行批准一次受控 synthetic 部署。
 
-任何一项只能由受权人员依据实际证据关闭。不得把 schema 1、schema 3、摘要相等、配置字符串形态正确或命令退出码为零当成外部硬门已通过。
+任何一项只能由受权人员依据实际证据关闭。不得把 schema 1、schema 4、摘要相等、配置字符串形态正确或命令退出码为零当成外部硬门已通过。
 
 ## 8. 禁止事项
 
@@ -168,15 +168,16 @@ schema 1 中所有外部核验项必须保持 `false`。这些值不能由 prepa
 
 ## 10. 完整执行顺序
 
-1. 完成并留存不入库的人工批准记录；
-2. 通过受控方式向当前进程注入完整 S12 配置、批准父目录和 prepare 确认；
-3. 运行 `npm run prepare:synthetic-data-root`；
-4. 在 prepare 成功后单独运行 `npm run verify:synthetic-data-root`；
-5. 人工核对脱敏 schema 1，并确认所有 `external=false` 仍被当作未关闭硬门；
-6. 由各权威系统逐项完成 AppID、域名、DNS/TLS、账号/ACL、磁盘/备份、数据库内容和基础设施外部核验；
-7. 在批准的已提交候选上运行 S12 的 `npm run verify:synthetic-api-preflight`，人工核对无秘密 schema 3 证据；
-8. 取得独立部署授权后才执行受控 synthetic 部署；
-9. 部署后仅使用受控临时客户端工程，在模拟器或成人受控设备完成 synthetic E2E 与 HUKS/AssetStore smoke；
-10. 所有生产儿童门继续保持关闭，直到总体方案中的工程、合规、数据、备案、审核和发布硬门全部关闭。
+1. 完成并留存不入库的人工批准记录，提交并固定候选；
+2. 注入同一套完整 S12 配置，运行 `npm run verify:synthetic-api-preflight` 完成提交实现和 offline guard 的内部 fixture 自检；该命令不会保留实际候选 artifact；
+3. 运行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>`，保存实际候选 schema 4 artifact；
+4. 通过受控方式向当前进程继续注入相同配置、批准父目录和 prepare 确认，运行 `npm run prepare:synthetic-data-root`；
+5. 在 prepare 成功后单独运行 `npm run verify:synthetic-data-root`；
+6. 人工核对脱敏 schema 1，并确认所有 `external=false` 仍被当作未关闭硬门；
+7. 按 S14 手册只从第 3 步 artifact 机械提取 provenance 并 bootstrap；在任何运行状态演进前按 S15 capture；
+8. 严格按 S15 的 19 项表完成 AppID、域名、DNS/TLS、账号/ACL、磁盘/备份、数据库、DevTools 域名/TLS、生产根隔离等真实观察，再封装未认证声明；
+9. S15 finalize 不验证身份或外部事实。只有外部系统完成认证并签发独立部署授权后，才执行受控 synthetic 部署；
+10. 部署后仅使用受控临时客户端工程，在模拟器或成人受控设备完成 synthetic E2E 与 HUKS/AssetStore smoke；
+11. 所有生产儿童门继续保持关闭，直到总体方案中的工程、合规、数据、备案、审核和发布硬门全部关闭。
 
 prepare 成功、verify 成功或 synthetic smoke 成功，都不是生产部署、正式发布或儿童可用的证据。

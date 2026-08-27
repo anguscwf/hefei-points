@@ -4,6 +4,8 @@
 >
 > 本手册不授权联网、部署、使用生产资源、录入真实家庭数据或开放生产儿童功能。只有获批操作员可在受控非生产环境执行。
 
+> S15 兼容性说明：迁移 `010_synthetic_bootstrap_receipt.sql` 在尚无外部 S14 数据库或部署的前提下扩展了来源与凭据绑定。任何由较早 S14 版本创建的数据库都不是当前候选输入，必须隔离并从当前已提交候选的全新 S13 根重新 bootstrap；禁止补列、升级、复制或接管旧库。
+
 ## 1. 目的与边界
 
 `npm run bootstrap:synthetic-database` 只完成以下本地动作：
@@ -27,7 +29,7 @@
 - `SYNTHETIC_DATASET_ID`、API/法律 origin、微信 AppID/AppSecret 只属于本次独立 synthetic 候选，绝非生产资源；
 - 监护关系声明和四类法律页面是获批的 synthetic 测试内容，版本、内容 SHA-256 和 canonical URL 已由责任人核对；
 - 管理员标识和批准引用只描述合成对象，不含姓名、手机号、OpenID、设备标识或其他真实身份；
-- 当前候选 commit 已完成安全复核；迁移目录与已提交预检清单精确一致；
+- 当前候选 commit 已完成安全复核；当前 S12 schema 4 artifact 锁定的 34 个实现文件与 10 个迁移精确一致；
 - 操作员知道：bootstrap 成功只证明本地最小种子和回执，不证明任何外部硬门已经关闭。
 
 不得先启动服务“让它迁移空库”。synthetic runtime 会在任何可写 SQLite 打开、迁移或 secret 创建之前要求有效且与当前环境绑定的完成回执。
@@ -54,6 +56,7 @@ SYNTHETIC_BOOTSTRAP_ACK=initialize-new-synthetic-database-v1
 - `requestId`：`synthetic-bootstrap-` 前缀的本次唯一请求标识；
 - `datasetId`：精确等于 `SYNTHETIC_DATASET_ID`；
 - `approvalReference`：`synthetic-approval-` 前缀的脱敏批准引用；
+- `candidateProvenance`：精确包含同一次 S12 schema 4 artifact 的 `sourceCommit`、`implementationTreeSha256` 和 `configurationSha256`；三值必须机械提取，禁止手填、猜测或跨候选拼接；
 - `administrator.id`：`synthetic_admin_` 前缀的合成管理员标识；
 - `administrator.password`：24～128 个可打印 ASCII 字符，至少覆盖四类字符中的三类，且不得包含管理员 ID；
 - `administrator.credentialPurpose`：精确为 `synthetic-only-never-production-v1`；
@@ -63,8 +66,10 @@ SYNTHETIC_BOOTSTRAP_ACK=initialize-new-synthetic-database-v1
 以下只是字段形状说明，故意含有无效占位符，不能直接执行，也不得把真实密码补进仓库文档：
 
 ```json
-{"schemaVersion":1,"requestId":"<synthetic-bootstrap-唯一请求>","datasetId":"<与环境一致>","approvalReference":"<synthetic-approval-脱敏引用>","administrator":{"id":"<synthetic_admin_合成标识>","password":"<由秘密管理器在内存中注入；禁止落盘>","credentialPurpose":"synthetic-only-never-production-v1"},"legalEvidence":{"effectiveAt":"<规范 ISO 时间>","texts":[{"type":"privacy_policy","version":"<synthetic-版本>","contentSha256":"<获批合成页面内容 SHA-256>"},{"type":"child_personal_information_rules","version":"<synthetic-版本>","contentSha256":"<获批合成页面内容 SHA-256>"},{"type":"child_user_agreement","version":"<synthetic-版本>","contentSha256":"<获批合成页面内容 SHA-256>"},{"type":"sensitive_information_notice","version":"<synthetic-版本>","contentSha256":"<获批合成页面内容 SHA-256>"}]}}
+{"schemaVersion":1,"requestId":"<synthetic-bootstrap-唯一请求>","datasetId":"<与环境一致>","approvalReference":"<synthetic-approval-脱敏引用>","candidateProvenance":{"sourceCommit":"<同一 S12 artifact 的 sourceCommit>","implementationTreeSha256":"<同一 S12 artifact 的 implementationTreeSha256>","configurationSha256":"<同一 S12 artifact 的 configurationSha256>"},"administrator":{"id":"<synthetic_admin_合成标识>","password":"<由秘密管理器在内存中注入；禁止落盘>","credentialPurpose":"synthetic-only-never-production-v1"},"legalEvidence":{"effectiveAt":"<规范 ISO 时间>","texts":[{"type":"privacy_policy","version":"<synthetic-版本>","contentSha256":"<获批合成页面内容 SHA-256>"},{"type":"child_personal_information_rules","version":"<synthetic-版本>","contentSha256":"<获批合成页面内容 SHA-256>"},{"type":"child_user_agreement","version":"<synthetic-版本>","contentSha256":"<获批合成页面内容 SHA-256>"},{"type":"sensitive_information_notice","version":"<synthetic-版本>","contentSha256":"<获批合成页面内容 SHA-256>"}]}}
 ```
+
+bootstrap 只校验这三个 provenance 值的格式并原样固化到不可变回执；它不会重新认证 S12 artifact，也不证明该 commit 已获外部批准。S15 Phase A 才把回执中的三值与当前已提交 HEAD、当前 S12 配置聚合和 live pristine 数据库/receipt 精确绑定。
 
 必须由获批秘密管理器、命名管道或等价的不落盘内存生产者直接连接 stdin，再运行：
 
@@ -80,6 +85,7 @@ npm run bootstrap:synthetic-database
 
 - `purpose=synthetic_initial_bootstrap`；
 - `receipt.status=completed` 且 `immutable=true`；
+- `receipt.sourceCommit`、`receipt.implementationTreeSha256` 和 `receipt.preflightConfigurationSha256` 精确等于本次 S12 artifact 的三个 provenance 值；
 - `administrator.role=admin`、`credentialWritten=true`；
 - `legalEvidence.textCount=4`、`metadataWritten=true`；
 - migration、家庭、管理员、法律元数据和回执写入数符合最小种子；
@@ -89,11 +95,11 @@ npm run bootstrap:synthetic-database
 
 输出只可保存到获批的无秘密证据位置。保存前仍应人工搜索是否意外包含密码、管理员 ID、origin、AppID、AppSecret、绝对路径或法律正文；发现任何一项立即停止并按安全事件流程处理。
 
-回执绑定当前 deployment 摘要、S13 marker、schema、dataset 和监护关系声明。把环境 A 的 SQLite 复制到环境 B，即使 B 的 marker 合法，runtime 也会以 `SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH` 拒绝，并且不会创建 `.secret`。
+回执绑定当前 deployment 摘要、S13 marker、schema、dataset 和监护关系声明；其中任一已绑定值变化时，runtime 会以 `SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH` 拒绝，并且不会创建 `.secret`。S14 fingerprint 不含绝对根、主机或 inode，因此相同配置与 marker 下的物理复制不保证由 S14 单独识别。S15 能阻止旧 machine subject 跨物理根复用，但在复制根上重新 capture 仍不能证明根合法，必须依赖 `filesystem_acl`、`filesystem_owner` 和 `production_root_isolation` 的外部核验。
 
 ## 6. 幂等、结果未知与后续演进
 
-只有在“首次执行结果未知、且数据库尚未进入正常运行演进”时，才可用完全相同的 canonical 请求和完全相同的密码重试：
+只有在“首次执行结果未知、且数据库尚未进入正常运行演进”时，才可用完全相同的 canonical 请求、完全相同的 provenance 和完全相同的密码重试：
 
 - 已提交时返回 `outcome=replayed`；本次写入计数为 `0`，现存行计数仍为最小种子；
 - 未提交且工具确认完整回滚时，工具移除本次排他创建的空 SQLite，原请求可重新 `created`；
@@ -146,12 +152,14 @@ stderr 只应包含一个稳定码；stdout 失败时必须为空。不得把数
 
 1. 关闭所有 production 儿童门，保持客户端跟踪配置零联网；
 2. 完成外部批准记录，但不把秘密或基础设施明文写入仓库；
-3. 按 S13 手册 prepare 全新数据根并 verify；
-4. 在干净、已提交候选上运行 S12 `npm run verify:synthetic-api-preflight`，确认 31 个实现文件与 10 个迁移的审计集合精确匹配；
-5. 通过受控进程注入完整 S12/S14 配置和不落盘 stdin，运行 bootstrap；
-6. 核对脱敏 schema 1 输出，立即移除 `SYNTHETIC_BOOTSTRAP_ACK`；
-7. 再次执行 S13 只读数据根 verify，并分别完成 AppID、权限、AppSecret、域名、DNS/TLS、OS 账号、ACL、磁盘/备份、法律发布与数据库内容的外部核验；
-8. 只有全部外部硬门关闭并取得独立部署批准后，才可执行受控 synthetic 部署；
-9. 部署后仅在模拟器或成人受控设备使用 S9/S11 临时客户端做合成 E2E 和 HUKS/AssetStore smoke。
+3. 提交并固定候选，在该 HEAD 上运行 `npm run verify:synthetic-api-preflight`，完成提交实现和 offline guard 的内部 fixture 自检；该命令不会保留实际候选 artifact；
+4. 在同一候选配置上运行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>`，保存实际 schema 4 脱敏 artifact，并确认 34 个实现文件与 10 个迁移精确匹配；
+5. 按 S13 手册 prepare 全新数据根并 verify，保存 bootstrap 前的空根 schema 1 evidence；
+6. 只从第 4 步同一 S12 artifact 机械提取三个 provenance 值；
+7. 通过受控进程注入完整 S12/S14 配置和不落盘 stdin，运行 bootstrap；
+8. 核对脱敏 S14 schema 1 输出，立即移除 `SYNTHETIC_BOOTSTRAP_ACK`；在启动服务、登录、创建 `.secret`、绑定微信或写入业务状态前，按 S15 手册执行 Phase A capture；
+9. 严格按 S15 的 19 项表（包括 DevTools 域名/TLS 校验）完成真实观察，并在 30 分钟 subject 窗口内形成未认证声明信封；
+10. S15 finalize 只核验信封契约，不认证声明或授权部署。只有外部系统另行验证事实、认证责任人并签发独立部署批准后，才可执行受控 synthetic 部署；
+11. 部署后仅在模拟器或成人受控设备使用 S9/S11 临时客户端做合成 E2E 和 HUKS/AssetStore smoke。
 
 bootstrap 成功、runtime 能启动或 synthetic smoke 通过，都不是生产发布、正式法律合规、AppGallery 上架或儿童实际可用的证据。

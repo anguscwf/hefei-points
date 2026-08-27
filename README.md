@@ -2,16 +2,16 @@
 
 糖罐积分是面向家庭的任务与积分管理系统：家长创建家庭与孩子档案、审批任务和管理积分，孩子通过受控终端查看积分并申报任务。
 
-本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S14 的受控 synthetic 本地准备能力。
+本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S15 的受控 synthetic 本地准备与候选证据封装能力。
 
 ## 当前状态
 
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
 - HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；S9 新增受控临时 synthetic profile 生成器和 loopback 全链验证，S10 又加入纯本地“设置与数据安全”说明。该说明明确不是正式隐私政策、儿童规则、用户协议或同意页面，不读取动态儿童/设备/会话信息，也不提供假解绑或删除按钮。跟踪配置仍固定禁用网络并使用 `.invalid` 源，尚未连接任何外部业务服务，也不代表完整薄 MVP。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
-- 阶段 1 已完成 S0～S14 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 再为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执。两者都不自动接管残根，不联网、不部署，也不证明 AppID、DNS/TLS、ACL、OS 账号、磁盘/备份或法律页面已经外部验证。最终验证结果以最新交接为准，详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
+- 阶段 1 已完成 S0～S15 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 再为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执，并把同一 S12 artifact 的来源 commit、实现树摘要和配置摘要固化进回执。S15 仅把 S12/S13/S14 artifact、当前已提交 34 文件/10 迁移、当前 S12 配置聚合，以及另行核验的物理根上下文和只读 pristine SQLite/receipt 绑定成 30 分钟 machine subject，再把 19 项固定顺序的外部声明包装成未认证信封。它不证明历史执行顺序、声明人身份或外部事实，不授予部署或儿童使用。最终验证结果以最新交接为准，详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
 - 生产迁移已增加“旧库一致性快照 + 清单校验 + 无清单拒绝迁移”门禁；但正式法律文本、PIPIA、存量数据整改和 AppGallery 正式上架均未完成，所有儿童生产功能继续默认关闭。
-- S0～S12 及 Git 迁移收尾已安全存在于专用远端；S13～S14 已在本地主题分支完成，尚未推送。远端落盘或本地完成都不代表已经部署、联网、上架或开放儿童功能。
+- S0～S12 及 Git 迁移收尾已安全存在于专用远端；S13～S15 已在本地主题分支完成，尚未推送。远端落盘或本地完成都不代表已经部署、联网、上架或开放儿童功能。
 
 ## 目录
 
@@ -71,6 +71,8 @@ npm run backup:pre-migration -- --database <旧库路径> --backup-root <备份�
 
 `npm run bootstrap:synthetic-database` 只接受非 TTY stdin 上最多 16 KiB 的单行 canonical JSON，并要求显式 `SYNTHETIC_BOOTSTRAP_ACK=initialize-new-synthetic-database-v1`。管理员密码不得来自参数、环境变量、普通文件或日志；命令只接受 SQLite 路径此前不存在的全新数据根，在同一事务中完成迁移、一个合成成人管理员、四类获批合成法律元数据和不可变回执，故障完整回滚。结果未知时，同一请求与同一凭据可在状态演进前安全恢复；任何内容变化、并发锁、残留 secret、既有 SQLite、未知表或业务数据都 fail closed。服务端 synthetic runtime 没有与当前环境绑定的完成回执时，会在可写打开、迁移和 secret 创建前拒绝启动；操作手册见 [受控 synthetic 初始管理员与法律证据引导](docs/runbooks/受控-synthetic-初始管理员与法律证据引导.md)。
 
+`npm run capture:synthetic-candidate-evidence` 与 `npm run finalize:synthetic-candidate-evidence` 只接受非 TTY stdin 上最多 256 KiB 的单行 canonical JSON，并要求显式 `SYNTHETIC_CANDIDATE_EVIDENCE_ACK=assemble-review-only-not-deployment-v1`。Phase A 使用 schema 4 S12 preflight、S13 空根证据、S14 bootstrap 证据和当前只读数据库生成 30 分钟脱敏 subject；Phase B 重新核验机器状态，只检查 19 个声明信封的顺序、字段、subject 绑定与时效。摘要没有签名，声明未认证，命令不会持久化证据、联网、写 synthetic 数据库或部署；输出始终保留 `externalFactsVerifiedByThisCommand=false`、`deploymentAuthorization=not_granted`、`productionChildGateState=not_observed` 和 `childUseAuthorization=not_granted`。操作手册见 [候选机器证据与未认证声明信封](docs/runbooks/受控-synthetic-候选机器证据与未认证声明信封.md)。
+
 服务端公开法律证据还要求显式配置精确 HTTPS 源 `LEGAL_PUBLIC_ORIGIN`。四类文本和监护关系声明的 URL 必须严格等于 `/legal/<固定文本类型>/<版本>/<小写 SHA-256>.html`；配置缺失、跨域、类型/版本/摘要路径不匹配时统一视为 `LEGAL_TEXTS_UNAVAILABLE`。正式文本、重定向、CSP、微信业务域名及真机加载验证仍属于生产硬门。
 
 HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harmonyos/build-profile.json5` 含本机签名信息并被强制忽略；开发者必须在本机独立配置，严禁提交密码、证书、Profile 或绝对路径。
@@ -80,9 +82,10 @@ HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 
 ## 文档入口
 
 - [仓库工作规范](AGENTS.md)
-- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S14合成初始引导交接-20260827.md)
+- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S15合成候选证据封装交接-20260828.md)
 - [S13 数据根操作手册](docs/runbooks/受控-synthetic-数据根准备与核验.md)
 - [S14 初始引导操作手册](docs/runbooks/受控-synthetic-初始管理员与法律证据引导.md)
+- [S15 候选证据操作手册](docs/runbooks/受控-synthetic-候选机器证据与未认证声明信封.md)
 - [HarmonyOS MVP 方案与推进计划](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)
 - [阶段 1 现有能力审计与首批实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)
 - [架构决策记录](docs/adr/README.md)
