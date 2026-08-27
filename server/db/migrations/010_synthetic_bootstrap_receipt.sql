@@ -22,6 +22,21 @@ CREATE TABLE synthetic_bootstrap_receipts (
       length(request_fingerprint_sha256) = 64
       AND request_fingerprint_sha256 NOT GLOB '*[^0-9a-f]*'
     ),
+  source_commit TEXT NOT NULL
+    CHECK (
+      length(source_commit) IN (40, 64)
+      AND source_commit NOT GLOB '*[^0-9a-f]*'
+    ),
+  implementation_tree_sha256 TEXT NOT NULL
+    CHECK (
+      length(implementation_tree_sha256) = 64
+      AND implementation_tree_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+  preflight_configuration_sha256 TEXT NOT NULL
+    CHECK (
+      length(preflight_configuration_sha256) = 64
+      AND preflight_configuration_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
   deployment_fingerprint_sha256 TEXT NOT NULL
     CHECK (
       length(deployment_fingerprint_sha256) = 64

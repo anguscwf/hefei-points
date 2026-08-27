@@ -107,6 +107,11 @@ function syntheticCase(t, label) {
     requestId: `synthetic-bootstrap-request_${id}_abcdef0123456789`,
     datasetId: environment.SYNTHETIC_DATASET_ID,
     approvalReference: `synthetic-approval-case_${id}_abcdef`,
+    candidateProvenance: {
+      sourceCommit: '0123456789abcdef0123456789abcdef01234567',
+      implementationTreeSha256: sha256(`synthetic implementation tree ${id}`),
+      configurationSha256: sha256(`synthetic preflight configuration ${id}`)
+    },
     administrator: {
       id: `synthetic_admin_case_${id}`,
       password,
@@ -308,6 +313,15 @@ test('全新 synthetic 库原子写入最小管理员、四类法律证据和不
   const value = syntheticCase(t, 'success');
   const result = bootstrapFromDocument(value.environment, value.input, { now: fixedNow });
   assert.equal(result.outcome, 'created');
+  assert.equal(result.receipt.sourceCommit, value.input.candidateProvenance.sourceCommit);
+  assert.equal(
+    result.receipt.implementationTreeSha256,
+    value.input.candidateProvenance.implementationTreeSha256
+  );
+  assert.equal(
+    result.receipt.preflightConfigurationSha256,
+    value.input.candidateProvenance.configurationSha256
+  );
   assert.equal(result.administrator.credentialWritten, true);
   assert.equal(result.database.migrationCount, migrationFiles().length);
   assert.equal(result.database.childOrBusinessRowsWritten, 0);

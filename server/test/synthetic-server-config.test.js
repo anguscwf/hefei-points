@@ -20,9 +20,12 @@ const {
 const committedPreflightImplementationFiles = Object.freeze([
   'package.json',
   'scripts/bootstrap-synthetic-database.js',
+  'scripts/capture-synthetic-candidate-evidence.js',
+  'scripts/finalize-synthetic-candidate-evidence.js',
   'scripts/preflight-synthetic-api.js',
   'scripts/prepare-synthetic-data-root.js',
   'scripts/support/synthetic-bootstrap.js',
+  'scripts/support/synthetic-candidate-evidence.js',
   'scripts/support/synthetic-data-root-tools.js',
   'scripts/support/synthetic-preflight-offline-guard.js',
   'scripts/verify-synthetic-api-preflight.js',
@@ -807,6 +810,15 @@ test('synthetic runtime 只在 bootstrap 后启动且重启复用独立 secret',
     requestId: 'synthetic-bootstrap-runtime_abcdef0123456789',
     datasetId: environment.SYNTHETIC_DATASET_ID,
     approvalReference: 'synthetic-approval-runtime_abcdef',
+    candidateProvenance: {
+      sourceCommit: crypto.createHash('sha256').update('synthetic runtime commit').digest('hex'),
+      implementationTreeSha256: crypto.createHash('sha256')
+        .update('synthetic runtime implementation tree')
+        .digest('hex'),
+      configurationSha256: crypto.createHash('sha256')
+        .update('synthetic runtime preflight configuration')
+        .digest('hex')
+    },
     administrator: {
       id: 'synthetic_admin_runtime',
       password: 'S14!Runtime-Synthetic-Password-Aa9',

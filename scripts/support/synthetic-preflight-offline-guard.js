@@ -52,9 +52,12 @@ const stringStartsWith = Function.call.bind(String.prototype.startsWith);
 const implementationFiles = Object.freeze([
   'package.json',
   'scripts/bootstrap-synthetic-database.js',
+  'scripts/capture-synthetic-candidate-evidence.js',
+  'scripts/finalize-synthetic-candidate-evidence.js',
   'scripts/preflight-synthetic-api.js',
   'scripts/prepare-synthetic-data-root.js',
   'scripts/support/synthetic-bootstrap.js',
+  'scripts/support/synthetic-candidate-evidence.js',
   'scripts/support/synthetic-data-root-tools.js',
   'scripts/support/synthetic-preflight-offline-guard.js',
   'scripts/verify-synthetic-api-preflight.js',

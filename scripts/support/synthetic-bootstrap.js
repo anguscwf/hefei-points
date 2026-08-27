@@ -276,6 +276,12 @@ function repeatedDigest(value) {
   return /^([0-9a-f])\1{63}$/.test(value);
 }
 
+function validCommit(value) {
+  return typeof value === 'string'
+    && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)
+    && !/^([0-9a-f])\1+$/.test(value);
+}
+
 function decodeCanonicalInput(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) fail('STDIN_REQUIRED');
   if (buffer.length > MAX_STDIN_BYTES) fail('STDIN_TOO_LARGE');
@@ -368,6 +374,7 @@ function normalizeInput(document, context, now = new Date()) {
     'requestId',
     'datasetId',
     'approvalReference',
+    'candidateProvenance',
     'administrator',
     'legalEvidence'
   ]);
@@ -377,6 +384,18 @@ function normalizeInput(document, context, now = new Date()) {
       || !/^synthetic-bootstrap-[a-z0-9][a-z0-9_-]{15,78}$/.test(document.requestId)
       || typeof document.approvalReference !== 'string'
       || !/^synthetic-approval-[a-z0-9][a-z0-9_-]{5,78}$/.test(document.approvalReference)) {
+    fail('BOOTSTRAP_INPUT_INVALID');
+  }
+  exactKeys(document.candidateProvenance, [
+    'sourceCommit',
+    'implementationTreeSha256',
+    'configurationSha256'
+  ]);
+  if (!validCommit(document.candidateProvenance.sourceCommit)
+      || !SHA256.test(document.candidateProvenance.implementationTreeSha256)
+      || repeatedDigest(document.candidateProvenance.implementationTreeSha256)
+      || !SHA256.test(document.candidateProvenance.configurationSha256)
+      || repeatedDigest(document.candidateProvenance.configurationSha256)) {
     fail('BOOTSTRAP_INPUT_INVALID');
   }
   exactKeys(document.administrator, ['id', 'password', 'credentialPurpose']);
@@ -425,6 +444,7 @@ function normalizeInput(document, context, now = new Date()) {
     requestId: document.requestId,
     datasetId: document.datasetId,
     approvalReference: document.approvalReference,
+    candidateProvenance: Object.freeze({ ...document.candidateProvenance }),
     administrator: Object.freeze({
       id: document.administrator.id,
       name: ADMINISTRATOR_NAME,
@@ -443,6 +463,7 @@ function normalizeInput(document, context, now = new Date()) {
     requestId: canonical.requestId,
     datasetId: canonical.datasetId,
     approvalReference: canonical.approvalReference,
+    candidateProvenance: canonical.candidateProvenance,
     administrator: {
       id: canonical.administrator.id,
       name: canonical.administrator.name,
@@ -562,6 +583,9 @@ function receiptStaticValues(input, context, schemaFingerprintSha256) {
     status: 'completed',
     request_id_sha256: input.requestIdSha256,
     request_fingerprint_sha256: input.requestFingerprintSha256,
+    source_commit: input.candidateProvenance.sourceCommit,
+    implementation_tree_sha256: input.candidateProvenance.implementationTreeSha256,
+    preflight_configuration_sha256: input.candidateProvenance.configurationSha256,
     deployment_fingerprint_sha256: context.deploymentFingerprintSha256,
     marker_sha256: context.filesystem.markerSha256,
     schema_fingerprint_sha256: schemaFingerprintSha256,
@@ -659,6 +683,11 @@ function validateSyntheticRuntimeBootstrap(db, environment, options = {}) {
   };
   if (!sameStaticReceipt(row, expectedBinding)
       || typeof row.completed_at !== 'string' || !row.completed_at
+      || !validCommit(row.source_commit)
+      || !SHA256.test(row.implementation_tree_sha256)
+      || repeatedDigest(row.implementation_tree_sha256)
+      || !SHA256.test(row.preflight_configuration_sha256)
+      || repeatedDigest(row.preflight_configuration_sha256)
       || typeof row.administrator_id !== 'string'
       || row.administrator_id_sha256 !== sha256(row.administrator_id)) {
     fail('SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
@@ -679,6 +708,52 @@ function validateSyntheticRuntimeBootstrap(db, environment, options = {}) {
     fail('SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
   }
   return Object.freeze({ context, receipt: Object.freeze({ ...row }) });
+}
+
+function validateSyntheticCandidateDatabase(db, environment, provenance, options = {}) {
+  if (!provenance || typeof provenance !== 'object'
+      || !validCommit(provenance.sourceCommit)
+      || !SHA256.test(provenance.implementationTreeSha256)
+      || repeatedDigest(provenance.implementationTreeSha256)
+      || !SHA256.test(provenance.configurationSha256)
+      || repeatedDigest(provenance.configurationSha256)) {
+    fail('SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
+  }
+  const validated = validateSyntheticRuntimeBootstrap(db, environment, options);
+  const { context, receipt } = validated;
+  const completedAtEpoch = Date.parse(receipt.completed_at);
+  if (receipt.source_commit !== provenance.sourceCommit
+      || receipt.implementation_tree_sha256 !== provenance.implementationTreeSha256
+      || receipt.preflight_configuration_sha256 !== provenance.configurationSha256
+      || !Number.isFinite(completedAtEpoch)
+      || new Date(completedAtEpoch).toISOString() !== receipt.completed_at) {
+    fail('SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
+  }
+  assertExactInitialSeedCounts(db, 'SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
+  const administrator = db.prepare(`
+    SELECT name, role, family_id, openid, bound_at, tokens_valid_after
+    FROM users WHERE family_id = 'default' AND id = ?
+  `).get(receipt.administrator_id);
+  const relationDeclaration = {
+    version: context.deployment.legalSource.version,
+    contentSha256: context.deployment.legalSource.sha256,
+    publicUrl: context.deployment.legalSource.publicUrl
+  };
+  const liveLegalByType = new Map(legalRows(db).map(row => [row.type, row]));
+  const liveLegalEvidence = LEGAL_TEXT_TYPES.map(type => liveLegalByType.get(type));
+  if (!administrator || administrator.name !== ADMINISTRATOR_NAME
+      || administrator.role !== 'admin' || administrator.family_id !== 'default'
+      || administrator.openid !== null || administrator.bound_at !== null
+      || Number(administrator.tokens_valid_after) !== 0
+      || receipt.legal_evidence_sha256 !== canonicalHash({
+        texts: liveLegalEvidence,
+        relationDeclaration
+      })
+      || db.prepare('PRAGMA integrity_check').get().integrity_check !== 'ok'
+      || db.prepare('PRAGMA foreign_key_check').all().length !== 0) {
+    fail('SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
+  }
+  return validated;
 }
 
 function assertExactInitialSeedCounts(db, errorCode) {
@@ -713,6 +788,9 @@ function evidence(outcome, row, input, context) {
       status: 'completed',
       requestIdSha256: row.request_id_sha256,
       requestFingerprintSha256: row.request_fingerprint_sha256,
+      sourceCommit: row.source_commit,
+      implementationTreeSha256: row.implementation_tree_sha256,
+      preflightConfigurationSha256: row.preflight_configuration_sha256,
       deploymentFingerprintSha256: row.deployment_fingerprint_sha256,
       schemaFingerprintSha256: row.schema_fingerprint_sha256,
       markerSha256: row.marker_sha256,
@@ -947,6 +1025,7 @@ function insertSeed(db, input, context, now, options) {
     INSERT INTO synthetic_bootstrap_receipts(
       singleton_id, schema_version, status,
       request_id_sha256, request_fingerprint_sha256,
+      source_commit, implementation_tree_sha256, preflight_configuration_sha256,
       deployment_fingerprint_sha256, marker_sha256, schema_fingerprint_sha256,
       dataset_id_sha256, approval_reference_sha256,
       family_id, administrator_id, administrator_id_sha256,
@@ -954,13 +1033,16 @@ function insertSeed(db, input, context, now, options) {
       relation_declaration_version, relation_declaration_sha256,
       relation_declaration_public_url, completed_at
     ) VALUES (
-      1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `).run(
     receipt.schema_version,
     receipt.status,
     receipt.request_id_sha256,
     receipt.request_fingerprint_sha256,
+    receipt.source_commit,
+    receipt.implementation_tree_sha256,
+    receipt.preflight_configuration_sha256,
     receipt.deployment_fingerprint_sha256,
     receipt.marker_sha256,
     receipt.schema_fingerprint_sha256,
@@ -1093,5 +1175,6 @@ module.exports = {
   safeErrorCode,
   sameFileIdentity,
   validateBootstrapEnvironment,
+  validateSyntheticCandidateDatabase,
   validateSyntheticRuntimeBootstrap
 };
