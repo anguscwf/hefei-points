@@ -221,6 +221,13 @@ function sameFilesystemPath(left, right) {
     : leftResolved === rightResolved;
 }
 
+function isCanonicalAbsolutePath(value) {
+  return typeof value === 'string'
+    && path.isAbsolute(value)
+    && path.normalize(value) === value
+    && path.resolve(value) === value;
+}
+
 function assertUnlinkedPathSegments(filename, finalKind) {
   const root = path.parse(filename).root;
   const relative = path.relative(root, filename);
@@ -264,7 +271,8 @@ function readTrustPolicyFile(environment) {
       || !validDigest(expectedSha256)) {
     fail('SYNTHETIC_EXTERNAL_APPROVAL_TRUST_ROOT_UNAVAILABLE');
   }
-  if (!path.isAbsolute(filename) || !path.isAbsolute(approvedParent)
+  if (!isCanonicalAbsolutePath(filename)
+      || !isCanonicalAbsolutePath(approvedParent)
       || isWindowsNetworkOrDevicePath(filename)
       || isWindowsNetworkOrDevicePath(approvedParent)
       || !sameFilesystemPath(
@@ -275,8 +283,6 @@ function readTrustPolicyFile(environment) {
         path.parse(approvedParent).root,
         path.parse(PROJECT_ROOT).root
       )
-      || path.resolve(filename) !== path.normalize(filename)
-      || path.resolve(approvedParent) !== path.normalize(approvedParent)
       || path.dirname(filename) !== approvedParent) {
     fail('SYNTHETIC_EXTERNAL_APPROVAL_TRUST_POLICY_UNSAFE');
   }
@@ -307,7 +313,7 @@ function readTrustPolicyFile(environment) {
   const dataRoot = environment.SYNTHETIC_DATA_ROOT;
   if (typeof dataRoot === 'string' && path.isAbsolute(dataRoot)) {
     if (isWindowsNetworkOrDevicePath(dataRoot)
-        || path.resolve(dataRoot) !== path.normalize(dataRoot)
+        || !isCanonicalAbsolutePath(dataRoot)
         || !sameFilesystemPath(
           path.parse(dataRoot).root,
           path.parse(PROJECT_ROOT).root

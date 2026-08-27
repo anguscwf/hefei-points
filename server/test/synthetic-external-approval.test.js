@@ -936,6 +936,43 @@ test('信任策略路径的任一祖先 junction 或 symlink 都在读取前拒�
   );
 });
 
+test('信任策略与数据根只接受无 dot-segment 的 canonical 绝对路径', () => {
+  const policyAlias = fixture('policy-dot-segment');
+  const canonicalParent = policyAlias.environment
+    .SYNTHETIC_APPROVAL_TRUST_POLICY_APPROVED_PARENT;
+  const aliasedParent = `${path.dirname(canonicalParent)}${path.sep}.`
+    + `${path.sep}${path.basename(canonicalParent)}`;
+  policyAlias.environment.SYNTHETIC_APPROVAL_TRUST_POLICY_APPROVED_PARENT =
+    aliasedParent;
+  policyAlias.environment.SYNTHETIC_APPROVAL_TRUST_POLICY_FILE =
+    `${aliasedParent}${path.sep}trust-policy.json`;
+  assertCode(
+    () => verify(policyAlias),
+    'SYNTHETIC_EXTERNAL_APPROVAL_TRUST_POLICY_UNSAFE'
+  );
+
+  const dataRootAlias = fixture('data-root-dot-segment');
+  dataRootAlias.environment.SYNTHETIC_DATA_ROOT =
+    `${tempRoot}${path.sep}.${path.sep}synthetic-data-root`;
+  assertCode(
+    () => verify(dataRootAlias),
+    'SYNTHETIC_EXTERNAL_APPROVAL_TRUST_POLICY_UNSAFE'
+  );
+
+  if (process.platform === 'win32') {
+    const mixed = fixture('policy-mixed-separators');
+    mixed.environment.SYNTHETIC_APPROVAL_TRUST_POLICY_APPROVED_PARENT =
+      mixed.environment.SYNTHETIC_APPROVAL_TRUST_POLICY_APPROVED_PARENT
+        .replaceAll('\\', '/');
+    mixed.environment.SYNTHETIC_APPROVAL_TRUST_POLICY_FILE =
+      mixed.environment.SYNTHETIC_APPROVAL_TRUST_POLICY_FILE.replaceAll('\\', '/');
+    assertCode(
+      () => verify(mixed),
+      'SYNTHETIC_EXTERNAL_APPROVAL_TRUST_POLICY_UNSAFE'
+    );
+  }
+});
+
 test('输出有效期截断到撤销 checkpoint 与实际使用密钥的最早失效点', () => {
   const checkpoint = fixture('checkpoint-short', {
     mutateRevocation(checkpointValue) {
