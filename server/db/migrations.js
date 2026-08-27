@@ -2,11 +2,41 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
+const EXPECTED_MIGRATION_FILES = Object.freeze([
+  '001_init.sql',
+  '002_token_revocation.sql',
+  '003_transaction_soft_delete.sql',
+  '004_family_rules_history.sql',
+  '005_transaction_rule_ids.sql',
+  '006_guardian_consent_enrollment.sql',
+  '007_device_pairing_sessions.sql',
+  '008_point_requests_transaction_sources.sql',
+  '009_data_rights_audit.sql',
+  '010_synthetic_bootstrap_receipt.sql'
+]);
+
+function assertExpectedMigrationFiles(entries) {
+  const actual = [...entries].sort();
+  if (actual.length !== EXPECTED_MIGRATION_FILES.length
+      || actual.some((name, index) => name !== EXPECTED_MIGRATION_FILES[index])) {
+    const error = new Error('migration directory does not match the audited manifest');
+    error.code = 'MIGRATION_SET_INVALID';
+    throw error;
+  }
+  return EXPECTED_MIGRATION_FILES;
+}
 
 function migrationFiles() {
-  return fs.readdirSync(MIGRATIONS_DIR)
-    .filter(name => name.endsWith('.sql'))
-    .sort();
+  const entries = fs.readdirSync(MIGRATIONS_DIR, { withFileTypes: true });
+  if (entries.some(entry => entry.name.endsWith('.sql')
+      && (!entry.isFile() || entry.isSymbolicLink()))) {
+    const error = new Error('migration directory contains an unsafe SQL entry');
+    error.code = 'MIGRATION_SET_INVALID';
+    throw error;
+  }
+  return assertExpectedMigrationFiles(
+    entries.filter(entry => entry.name.endsWith('.sql')).map(entry => entry.name)
+  );
 }
 
 function tableExists(db, table) {
@@ -22,6 +52,17 @@ function appliedMigrations(db) {
     .map(row => row.version);
 }
 
+function assertAppliedMigrationsPrefix(db) {
+  const applied = appliedMigrations(db);
+  if (applied.length > EXPECTED_MIGRATION_FILES.length
+      || applied.some((filename, index) => filename !== EXPECTED_MIGRATION_FILES[index])) {
+    const error = new Error('migration ledger is not an audited ordered prefix');
+    error.code = 'MIGRATION_LEDGER_INVALID';
+    throw error;
+  }
+  return applied;
+}
+
 function applyMigrationsInCurrentTransaction(db, {
   now = () => new Date(),
   afterMigration
@@ -32,6 +73,7 @@ function applyMigrationsInCurrentTransaction(db, {
       applied_at TEXT NOT NULL
     )
   `);
+  assertAppliedMigrationsPrefix(db);
   const insert = db.prepare(
     'INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)'
   );
@@ -57,7 +99,10 @@ function applyMigrations(db, options) {
 }
 
 module.exports = {
+  EXPECTED_MIGRATION_FILES,
   MIGRATIONS_DIR,
+  assertAppliedMigrationsPrefix,
+  assertExpectedMigrationFiles,
   appliedMigrations,
   applyMigrations,
   applyMigrationsInCurrentTransaction,

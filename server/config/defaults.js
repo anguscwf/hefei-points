@@ -4,6 +4,9 @@ const path = require('path');
 const repositories = require('../db/repositories');
 const { DATA_DIR, getDb } = require('../db/connection');
 const logger = require('../lib/logger');
+const {
+  validateSyntheticRuntimeBootstrap
+} = require('../../scripts/support/synthetic-bootstrap');
 
 function generateInviteCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -60,27 +63,9 @@ function initData() {
       error.code = 'SYNTHETIC_BOOTSTRAP_IN_PROGRESS';
       throw error;
     }
-    const receipt = getDb().prepare(`
-      SELECT receipt.schema_version, receipt.status,
-             family.name AS family_name,
-             family.invite_code, family.invite_json
-      FROM synthetic_bootstrap_receipts AS receipt
-      JOIN families AS family ON family.id = receipt.family_id
-      WHERE receipt.singleton_id = 1
-    `).get();
-    const adultAdmin = getDb().prepare(`
-      SELECT 1 FROM users
-      WHERE family_id = 'default' AND role = 'admin'
-      LIMIT 1
-    `).get();
-    if (!receipt || receipt.schema_version !== 1 || receipt.status !== 'completed'
-        || receipt.family_name !== '合成默认家庭'
-        || receipt.invite_code !== null || receipt.invite_json !== null
-        || !adultAdmin) {
-      const error = new Error('synthetic database bootstrap is required');
-      error.code = 'SYNTHETIC_BOOTSTRAP_REQUIRED';
-      throw error;
-    }
+    validateSyntheticRuntimeBootstrap(getDb(), process.env, {
+      projectRoot: path.resolve(__dirname, '..', '..')
+    });
     // Synthetic startup must not silently add invite codes, default rules, or
     // backup artifacts. Operators configure test rules explicitly after login.
     logger.info({ event: 'backup.synthetic_skipped' }, 'automatic backup is disabled for synthetic data');

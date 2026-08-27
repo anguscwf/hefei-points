@@ -39,6 +39,23 @@ const implementationFiles = Object.freeze([
   'server/lib/wx-auth.js',
   'server/routes/backup.js'
 ]);
+const migrationImplementationFiles = Object.freeze(
+  implementationFiles.filter(filename => filename.startsWith('server/db/migrations/'))
+);
+
+function assertExactMigrationDirectory() {
+  const entries = fs.readdirSync(
+    path.join(projectRoot, 'server', 'db', 'migrations'),
+    { withFileTypes: true }
+  );
+  const sqlEntries = entries.filter(entry => entry.name.endsWith('.sql'));
+  const actual = sqlEntries.map(entry => `server/db/migrations/${entry.name}`).sort();
+  if (sqlEntries.some(entry => !entry.isFile() || entry.isSymbolicLink())
+      || actual.length !== migrationImplementationFiles.length
+      || actual.some((filename, index) => filename !== migrationImplementationFiles[index])) {
+    fail('MIGRATION_SET_INVALID');
+  }
+}
 const verificationPrefix = 'tangguan-synthetic-api-preflight-verification-';
 const stagingPrefix = '.tangguan-api-preflight-stage-';
 const evidenceName = '.synthetic-api-preflight.json';
@@ -266,6 +283,7 @@ function sha256(content) {
 }
 
 function captureExpectedProvenance() {
+  assertExactMigrationDirectory();
   const canonicalRoot = realpathSync(projectRoot);
   const rootOutput = git(['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   const rootMatch = /^([^\r\n]+)\n$/.exec(rootOutput);
@@ -286,6 +304,7 @@ function captureExpectedProvenance() {
     treeDigest.update(Buffer.from(`${input.filename}\0${input.content.length}\0`, 'utf8'));
     treeDigest.update(input.content);
   }
+  assertExactMigrationDirectory();
   return Object.freeze({
     sourceCommit,
     indexSignature: snapshot.indexSignature,

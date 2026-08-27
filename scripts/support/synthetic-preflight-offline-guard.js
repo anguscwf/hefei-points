@@ -82,6 +82,9 @@ const implementationFiles = Object.freeze([
   'server/lib/wx-auth.js',
   'server/routes/backup.js'
 ]);
+const migrationImplementationFiles = Object.freeze(
+  implementationFiles.filter(filename => filename.startsWith('server/db/migrations/'))
+);
 
 function forbidden(reason = '') {
   const error = new Error('synthetic preflight offline guard rejected an operation');
@@ -379,6 +382,21 @@ function assertNoDynamicModuleSource(source) {
 }
 
 function assertAuditedSourceShape() {
+  const migrationEntries = fs.readdirSync(
+    path.join(projectRoot, 'server', 'db', 'migrations'),
+    { withFileTypes: true }
+  );
+  const sqlEntries = migrationEntries.filter(entry => entry.name.endsWith('.sql'));
+  const actualMigrations = sqlEntries
+    .map(entry => `server/db/migrations/${entry.name}`)
+    .sort();
+  if (sqlEntries.some(entry => !entry.isFile() || entry.isSymbolicLink())
+      || actualMigrations.length !== migrationImplementationFiles.length
+      || actualMigrations.some((filename, index) => (
+        filename !== migrationImplementationFiles[index]
+      ))) {
+    throw forbidden('MIGRATION_SET_INVALID');
+  }
   for (const filename of [
     preflightPath,
     path.join(projectRoot, 'server', 'config', 'deployment-profile.js')

@@ -40,6 +40,25 @@ const implementationFiles = Object.freeze([
   'server/lib/wx-auth.js',
   'server/routes/backup.js'
 ]);
+const migrationImplementationFiles = Object.freeze(
+  implementationFiles.filter(filename => filename.startsWith('server/db/migrations/'))
+);
+
+function assertExactMigrationDirectory(entries = fs.readdirSync(
+  path.join(projectRoot, 'server', 'db', 'migrations'),
+  { withFileTypes: true }
+)) {
+  const sqlEntries = entries.filter(entry => entry.name.endsWith('.sql'));
+  const actual = sqlEntries.map(entry => `server/db/migrations/${entry.name}`).sort();
+  if (sqlEntries.some(entry => !entry.isFile() || entry.isSymbolicLink())
+      || actual.length !== migrationImplementationFiles.length
+      || actual.some((filename, index) => filename !== migrationImplementationFiles[index])) {
+    const error = new Error('migration directory does not match committed preflight manifest');
+    error.code = 'MIGRATION_SET_INVALID';
+    throw error;
+  }
+  return true;
+}
 
 function runtimeRoots() {
   const projectRealRoot = realpathSync(projectRoot);
@@ -307,6 +326,7 @@ function assertRunningImplementation(inputs) {
 }
 
 function committedProvenance() {
+  assertExactMigrationDirectory();
   const { projectRealRoot } = runtimeRoots();
   const rootOutput = git(['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   const rootMatch = /^([^\r\n]+)\n$/.exec(rootOutput);
@@ -327,6 +347,7 @@ function committedProvenance() {
     throw new Error('preflight implementation changed during provenance capture');
   }
   assertRunningImplementation(inputs);
+  assertExactMigrationDirectory();
   return Object.freeze({
     sourceCommit,
     implementationIndexMatchesHead: true,
@@ -482,6 +503,7 @@ function runCli(argv = process.argv.slice(2), environment = process.env) {
 if (require.main === module) process.exitCode = runCli();
 
 module.exports = {
+  assertExactMigrationDirectory,
   committedProvenance,
   evidenceFor,
   parseArguments,

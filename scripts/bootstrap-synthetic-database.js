@@ -7,15 +7,18 @@ const {
   parseArguments,
   readStdin,
   releaseBootstrapLock,
-  safeErrorCode
+  safeErrorCode,
+  validateBootstrapEnvironment
 } = require('./support/synthetic-bootstrap');
 
 function usage() {
   return [
     'Usage:',
-    '  node scripts/bootstrap-synthetic-database.js < canonical-bootstrap.json',
+    '  npm run bootstrap:synthetic-database',
     '',
-    'The command accepts no arguments. It reads one canonical JSON document from non-TTY stdin.',
+    'The command accepts no arguments. Connect non-TTY stdin directly to an approved',
+    'in-memory secret broker or equivalent non-persistent producer.',
+    'Never use an ordinary file, argv, an environment variable, or shell history.',
     'The administrator password is consumed in process memory and is never written to output.'
   ].join('\n');
 }
@@ -28,13 +31,14 @@ async function main(argv = process.argv.slice(2), environment = process.env, str
       streams.stdout.write(`${usage()}\n`);
       return 0;
     }
+    // Reject an invalid deployment shape and secret channel before accepting
+    // credential bytes. Physical paths are validated under the lock below.
+    validateBootstrapEnvironment(environment);
+    inputBuffer = await readStdin(streams.stdin);
+    const document = decodeCanonicalInput(inputBuffer);
     const lock = acquireBootstrapLock(environment);
     try {
-      // Validate the complete physical root while the exclusive bootstrap lock
-      // is held, before accepting the credential from stdin.
       const context = createContext(environment);
-      inputBuffer = await readStdin(streams.stdin);
-      const document = decodeCanonicalInput(inputBuffer);
       const now = new Date();
       const input = normalizeInput(document, context, now);
       const result = bootstrapSyntheticDatabase(context, input, { now });

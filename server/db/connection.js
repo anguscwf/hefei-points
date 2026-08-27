@@ -4,13 +4,18 @@ const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { logicalDatabaseSha256 } = require('./logical-fingerprint');
 const {
-  appliedMigrations,
   applyMigrations,
+  assertAppliedMigrationsPrefix,
   migrationFiles,
   tableExists
 } = require('./migrations');
 const { validateSyntheticDeployment } = require('../config/deployment-profile');
 const { validateSyntheticRuntimeFilesystem } = require('../config/synthetic-runtime-filesystem');
+const {
+  databaseFileIdentity,
+  sameFileIdentity,
+  validateSyntheticRuntimeBootstrap
+} = require('../../scripts/support/synthetic-bootstrap');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 const DB_FILE = process.env.SQLITE_FILE || path.join(DATA_DIR, 'hefei-points.sqlite');
@@ -18,6 +23,12 @@ let database;
 
 function validateSyntheticDatabaseBoundary() {
   if (process.env.NODE_ENV !== 'production' || process.env.DEPLOYMENT_TIER !== 'synthetic') return;
+  if (String(process.env.SYNTHETIC_BOOTSTRAP_ACK || '').trim()
+      || typeof process.env.SYNTHETIC_BOOTSTRAP_PASSWORD === 'string') {
+    const error = new Error('synthetic bootstrap controls must be removed before runtime');
+    error.code = 'SYNTHETIC_BOOTSTRAP_CONTROL_ACTIVE';
+    throw error;
+  }
   const projectRoot = path.resolve(__dirname, '..', '..');
   const deployment = validateSyntheticDeployment(process.env, { projectRoot });
   if (fs.existsSync(path.join(DATA_DIR, '.synthetic-bootstrap.lock'))) {
@@ -35,6 +46,67 @@ function validateSyntheticDatabaseBoundary() {
     throw error;
   }
   validateSyntheticRuntimeFilesystem(deployment, projectRoot);
+}
+
+function validateSyntheticBootstrapBeforeWritableOpen() {
+  if (process.env.NODE_ENV !== 'production' || process.env.DEPLOYMENT_TIER !== 'synthetic') return;
+  if (!fs.existsSync(DB_FILE)) {
+    const error = new Error('synthetic database bootstrap is required');
+    error.code = 'SYNTHETIC_BOOTSTRAP_REQUIRED';
+    throw error;
+  }
+  let candidate;
+  try {
+    const identity = databaseFileIdentity(DB_FILE);
+    candidate = new DatabaseSync(DB_FILE, { readOnly: true });
+    if (!sameFileIdentity(identity, databaseFileIdentity(DB_FILE))) {
+      const error = new Error('synthetic database identity changed before read validation');
+      error.code = 'SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH';
+      throw error;
+    }
+    candidate.exec('PRAGMA foreign_keys = ON');
+    candidate.exec('PRAGMA recursive_triggers = ON');
+    candidate.exec('BEGIN DEFERRED');
+    if (process.env.NODE_ENV === 'production' && process.env.DEPLOYMENT_TIER === 'synthetic') {
+      validateSyntheticRuntimeBootstrap(candidate, process.env, {
+        projectRoot: path.resolve(__dirname, '..', '..')
+      });
+    }
+    if (!sameFileIdentity(identity, databaseFileIdentity(DB_FILE))) {
+      const error = new Error('synthetic database identity changed during read validation');
+      error.code = 'SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH';
+      throw error;
+    }
+    candidate.exec('COMMIT');
+    return identity;
+  } catch (error) {
+    if (candidate) {
+      try { candidate.exec('ROLLBACK'); } catch (_) {}
+    }
+    if (error && [
+      'MIGRATION_LEDGER_INVALID',
+      'MIGRATION_SET_INVALID',
+      'SYNTHETIC_BOOTSTRAP_REQUIRED',
+      'SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH',
+      'SYNTHETIC_CONFIG_INVALID',
+      'SYNTHETIC_DATA_ROOT_UNSAFE'
+    ].includes(error.code)) throw error;
+    const failure = new Error('synthetic bootstrap context is invalid');
+    failure.code = 'SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH';
+    throw failure;
+  } finally {
+    if (candidate) candidate.close();
+  }
+}
+
+function assertSyntheticDatabaseIdentity(expected) {
+  if (!expected) return;
+  try {
+    if (sameFileIdentity(expected, databaseFileIdentity(DB_FILE))) return;
+  } catch (_) {}
+  const error = new Error('synthetic database identity changed before writable use');
+  error.code = 'SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH';
+  throw error;
 }
 
 function businessCounts(db) {
@@ -58,7 +130,7 @@ function sha256File(filename) {
 
 function validateProductionMigrationBackup(db) {
   if (process.env.NODE_ENV !== 'production') return;
-  const applied = appliedMigrations(db);
+  const applied = assertAppliedMigrationsPrefix(db);
   const appliedSet = new Set(applied);
   const pending = migrationFiles().filter(name => !appliedSet.has(name));
   if (!pending.length) return;
@@ -111,9 +183,11 @@ function validateProductionMigrationBackup(db) {
 function getDb() {
   if (database) return database;
   validateSyntheticDatabaseBoundary();
+  const syntheticDatabaseIdentity = validateSyntheticBootstrapBeforeWritableOpen();
   fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
   const candidate = new DatabaseSync(DB_FILE);
   try {
+    assertSyntheticDatabaseIdentity(syntheticDatabaseIdentity);
     validateSyntheticDatabaseBoundary();
     candidate.exec('PRAGMA foreign_keys = ON');
     // INSERT OR REPLACE internally deletes conflicting rows. Recursive trigger
@@ -127,6 +201,12 @@ function getDb() {
     validateProductionMigrationBackup(candidate);
     applyMigrations(candidate);
     validateSyntheticDatabaseBoundary();
+    if (process.env.NODE_ENV === 'production' && process.env.DEPLOYMENT_TIER === 'synthetic') {
+      validateSyntheticRuntimeBootstrap(candidate, process.env, {
+        projectRoot: path.resolve(__dirname, '..', '..')
+      });
+      assertSyntheticDatabaseIdentity(syntheticDatabaseIdentity);
+    }
     database = candidate;
     return database;
   } catch (error) {

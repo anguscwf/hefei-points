@@ -22,6 +22,7 @@ const {
 } = require('../../server/config/guardian-consent');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+const realpathSync = fs.realpathSync.native || fs.realpathSync;
 const BOOTSTRAP_ACK_ENV = 'SYNTHETIC_BOOTSTRAP_ACK';
 const BOOTSTRAP_ACK = 'initialize-new-synthetic-database-v1';
 const CREDENTIAL_PURPOSE = 'synthetic-only-never-production-v1';
@@ -80,7 +81,11 @@ const STABLE_ERROR_CODES = new Set([
   'BOOTSTRAP_RESULT_UNKNOWN',
   'BOOTSTRAP_VERIFICATION_FAILED',
   'BOOTSTRAP_FAILED',
+  'MIGRATION_LEDGER_INVALID',
+  'MIGRATION_SET_INVALID',
   'SYNTHETIC_ACK_REQUIRED',
+  'SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH',
+  'SYNTHETIC_BOOTSTRAP_REQUIRED',
   'SYNTHETIC_CONFIG_INVALID',
   'SYNTHETIC_DATA_ROOT_UNSAFE',
   'SYNTHETIC_FEATURE_GATES_INVALID',
@@ -120,6 +125,30 @@ function sha256(value) {
 
 function sameFileIdentity(left, right) {
   return left && right && left.dev === right.dev && left.ino === right.ino;
+}
+
+function samePath(left, right) {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function databaseFileIdentity(filename) {
+  let metadata;
+  let real;
+  try {
+    metadata = fs.lstatSync(filename, { bigint: true });
+    real = realpathSync(filename);
+  } catch (_) {
+    fail('BOOTSTRAP_DATABASE_UNSAFE');
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1n
+      || !samePath(real, filename)) {
+    fail('BOOTSTRAP_DATABASE_UNSAFE');
+  }
+  return metadata;
 }
 
 function waitForLock() {
@@ -290,13 +319,9 @@ async function readStdin(stream) {
   return result;
 }
 
-function createContext(environment, { projectRoot = PROJECT_ROOT } = {}) {
+function createBindingContext(environment, { projectRoot = PROJECT_ROOT } = {}) {
   if (!environment || typeof environment !== 'object') fail('SYNTHETIC_CONFIG_INVALID');
   const deployment = deploymentProfile.validateSyntheticDeployment(environment, { projectRoot });
-  if (environment[BOOTSTRAP_ACK_ENV] !== BOOTSTRAP_ACK) fail('BOOTSTRAP_ACK_REQUIRED');
-  if (typeof environment.SYNTHETIC_BOOTSTRAP_PASSWORD === 'string') {
-    fail('BOOTSTRAP_SECRET_CHANNEL_INVALID');
-  }
   const filesystem = runtimeFilesystem.validateSyntheticRuntimeFilesystem(
     deployment,
     projectRoot
@@ -320,6 +345,21 @@ function createContext(environment, { projectRoot = PROJECT_ROOT } = {}) {
     projectRoot,
     deploymentFingerprintSha256
   });
+}
+
+function validateBootstrapEnvironment(environment, { projectRoot = PROJECT_ROOT } = {}) {
+  if (!environment || typeof environment !== 'object') fail('SYNTHETIC_CONFIG_INVALID');
+  deploymentProfile.validateSyntheticDeployment(environment, { projectRoot });
+  if (environment[BOOTSTRAP_ACK_ENV] !== BOOTSTRAP_ACK) fail('BOOTSTRAP_ACK_REQUIRED');
+  if (typeof environment.SYNTHETIC_BOOTSTRAP_PASSWORD === 'string') {
+    fail('BOOTSTRAP_SECRET_CHANNEL_INVALID');
+  }
+  return true;
+}
+
+function createContext(environment, options = {}) {
+  validateBootstrapEnvironment(environment, options);
+  return createBindingContext(environment, options);
 }
 
 function normalizeInput(document, context, now = new Date()) {
@@ -590,8 +630,58 @@ function validateReplay(db, input, context) {
   return row;
 }
 
-function assertCreatedState(db, input, context) {
-  assertSchemaCurrent(db);
+function validateSyntheticRuntimeBootstrap(db, environment, options = {}) {
+  const context = createBindingContext(environment, options);
+  if (!tableExists(db, RECEIPT_TABLE)) fail('SYNTHETIC_BOOTSTRAP_REQUIRED');
+  try {
+    assertSchemaCurrent(db);
+  } catch (error) {
+    if (error instanceof SyntheticBootstrapError) {
+      fail('SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
+    }
+    throw error;
+  }
+  if (count(db, RECEIPT_TABLE) !== 1) fail('SYNTHETIC_BOOTSTRAP_REQUIRED');
+  const row = receiptRow(db);
+  const expectedBinding = {
+    schema_version: 1,
+    status: 'completed',
+    deployment_fingerprint_sha256: context.deploymentFingerprintSha256,
+    marker_sha256: context.filesystem.markerSha256,
+    schema_fingerprint_sha256: referenceSchemaFingerprint(),
+    dataset_id_sha256: sha256(context.deployment.datasetId),
+    family_id: 'default',
+    credential_method: 'scrypt-v1',
+    legal_text_count: 4,
+    relation_declaration_version: context.deployment.legalSource.version,
+    relation_declaration_sha256: context.deployment.legalSource.sha256,
+    relation_declaration_public_url: context.deployment.legalSource.publicUrl
+  };
+  if (!sameStaticReceipt(row, expectedBinding)
+      || typeof row.completed_at !== 'string' || !row.completed_at
+      || typeof row.administrator_id !== 'string'
+      || row.administrator_id_sha256 !== sha256(row.administrator_id)) {
+    fail('SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
+  }
+  const family = db.prepare(`
+    SELECT name, invite_code, invite_json FROM families WHERE id = 'default'
+  `).get();
+  const administrator = db.prepare(`
+    SELECT role, family_id, password
+    FROM users WHERE family_id = 'default' AND id = ?
+  `).get(row.administrator_id);
+  if (!family || family.name !== SYNTHETIC_FAMILY_NAME
+      || family.invite_code !== null || family.invite_json !== null
+      || !administrator || administrator.role !== 'admin'
+      || administrator.family_id !== 'default'
+      || typeof administrator.password !== 'string'
+      || !/^[0-9a-f]{32}:[0-9a-f]{128}$/.test(administrator.password)) {
+    fail('SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
+  }
+  return Object.freeze({ context, receipt: Object.freeze({ ...row }) });
+}
+
+function assertExactInitialSeedCounts(db, errorCode) {
   const allowed = new Map([
     ['schema_migrations', migrationFiles().length],
     ['families', 1],
@@ -600,8 +690,13 @@ function assertCreatedState(db, input, context) {
     [RECEIPT_TABLE, 1]
   ]);
   for (const table of EXPECTED_TABLES) {
-    if (count(db, table) !== (allowed.get(table) || 0)) fail('BOOTSTRAP_VERIFICATION_FAILED');
+    if (count(db, table) !== (allowed.get(table) || 0)) fail(errorCode);
   }
+}
+
+function assertCreatedState(db, input, context) {
+  assertSchemaCurrent(db);
+  assertExactInitialSeedCounts(db, 'BOOTSTRAP_VERIFICATION_FAILED');
   validateReplay(db, input, context);
   if (db.prepare('PRAGMA integrity_check').get().integrity_check !== 'ok'
       || db.prepare('PRAGMA foreign_key_check').all().length !== 0) {
@@ -634,16 +729,20 @@ function evidence(outcome, row, input, context) {
     legalEvidence: Object.freeze({
       textCount: 4,
       aggregateSha256: input.legalEvidenceSha256,
-      metadataWritten: true,
+      metadataWritten: outcome === 'created',
       publicationExternallyVerified: false
     }),
     database: Object.freeze({
       migrationCount: migrationFiles().length,
       initialEmptyBusinessStateVerified: true,
-      familyRowsWritten: 1,
-      administratorRowsWritten: 1,
-      legalTextRowsWritten: 4,
-      bootstrapReceiptRowsWritten: 1,
+      familyRowsWritten: outcome === 'created' ? 1 : 0,
+      administratorRowsWritten: outcome === 'created' ? 1 : 0,
+      legalTextRowsWritten: outcome === 'created' ? 4 : 0,
+      bootstrapReceiptRowsWritten: outcome === 'created' ? 1 : 0,
+      familyRowsPresent: 1,
+      administratorRowsPresent: 1,
+      legalTextRowsPresent: 4,
+      bootstrapReceiptRowsPresent: 1,
       childOrBusinessRowsWritten: 0,
       tokenSecretCreated: false
     }),
@@ -682,25 +781,122 @@ function callFault(options, stage) {
   if (options && typeof options.fault === 'function') options.fault(stage);
 }
 
+function createEmptyDatabaseFile(context) {
+  const filename = context.deployment.dataPaths.sqliteFile;
+  runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    context.deployment,
+    context.projectRoot
+  );
+  let descriptor;
+  let created = false;
+  let createdIdentity;
+  try {
+    descriptor = fs.openSync(filename, 'wx', 0o600);
+    created = true;
+    const metadata = fs.fstatSync(descriptor, { bigint: true });
+    createdIdentity = metadata;
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1n
+        || (process.platform !== 'win32' && Number(metadata.mode & 0o777n) !== 0o600)) {
+      fail('BOOTSTRAP_DATABASE_UNSAFE');
+    }
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    const pathMetadata = databaseFileIdentity(filename);
+    if (!sameFileIdentity(metadata, pathMetadata)) fail('BOOTSTRAP_DATABASE_UNSAFE');
+    runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+      context.deployment,
+      context.projectRoot
+    );
+    return pathMetadata;
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch (_) {}
+    }
+    let cleanupConfirmed = !created;
+    if (createdIdentity) {
+      try {
+        const metadata = databaseFileIdentity(filename);
+        if (sameFileIdentity(metadata, createdIdentity) && metadata.size === 0n) {
+          fs.unlinkSync(filename);
+          cleanupConfirmed = !fs.existsSync(filename);
+        }
+      } catch (_) {}
+    }
+    if (!cleanupConfirmed) fail('BOOTSTRAP_RESULT_UNKNOWN');
+    if (error instanceof SyntheticBootstrapError) throw error;
+    if (error && error.code === 'EEXIST') fail('BOOTSTRAP_DATABASE_NOT_EMPTY');
+    fail('BOOTSTRAP_DATABASE_UNSAFE');
+  }
+}
+
+function cleanupCreatedDatabaseFile(context, identity) {
+  const { dataDir, sqliteFile } = context.deployment.dataPaths;
+  try {
+    const entries = fs.readdirSync(dataDir).sort();
+    const allowed = [BOOTSTRAP_LOCK_FILENAME, path.basename(sqliteFile)].sort();
+    if (!exactArray(entries, allowed)) return false;
+    const current = databaseFileIdentity(sqliteFile);
+    if (!sameFileIdentity(current, identity)) return false;
+    fs.unlinkSync(sqliteFile);
+    if (fs.existsSync(sqliteFile)) return false;
+    runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+      context.deployment,
+      context.projectRoot
+    );
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function preflightExistingDatabase(context, input) {
   const filename = context.deployment.dataPaths.sqliteFile;
+  runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    context.deployment,
+    context.projectRoot
+  );
   if (!fs.existsSync(filename)) return null;
+  if (fs.existsSync(path.join(context.deployment.dataPaths.dataDir, '.secret'))) {
+    fail('BOOTSTRAP_STATE_INVALID');
+  }
   let db;
+  let transactionOpen = false;
   try {
+    const identity = databaseFileIdentity(filename);
     db = new DatabaseSync(filename, { readOnly: true });
+    if (!sameFileIdentity(identity, databaseFileIdentity(filename))) {
+      fail('BOOTSTRAP_DATABASE_UNSAFE');
+    }
     db.exec('PRAGMA foreign_keys = ON');
     db.exec('PRAGMA recursive_triggers = ON');
     db.exec('PRAGMA busy_timeout = 5000');
-    if (schemaRows(db).length === 0) return null;
+    db.exec('BEGIN DEFERRED');
+    transactionOpen = true;
+    if (schemaRows(db).length === 0) fail('BOOTSTRAP_DATABASE_NOT_EMPTY');
     assertSchemaCurrent(db);
-    if (count(db, RECEIPT_TABLE) === 1) {
-      const row = validateReplay(db, input, context);
-      return evidence('replayed', row, input, context);
+    if (count(db, RECEIPT_TABLE) !== 1) fail('BOOTSTRAP_DATABASE_NOT_EMPTY');
+    const row = validateReplay(db, input, context);
+    assertExactInitialSeedCounts(db, 'BOOTSTRAP_STATE_INVALID');
+    const result = evidence('replayed', row, input, context);
+    runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+      context.deployment,
+      context.projectRoot
+    );
+    if (!sameFileIdentity(identity, databaseFileIdentity(filename))) {
+      fail('BOOTSTRAP_DATABASE_UNSAFE');
     }
-    assertEmptyBaseline(db);
-    return null;
+    db.exec('COMMIT');
+    transactionOpen = false;
+    return result;
   } catch (error) {
-    if (error instanceof SyntheticBootstrapError) throw error;
+    if (transactionOpen && db) {
+      try { db.exec('ROLLBACK'); } catch (_) { fail('BOOTSTRAP_RESULT_UNKNOWN'); }
+    }
+    if (error instanceof SyntheticBootstrapError
+        || ['MIGRATION_LEDGER_INVALID', 'MIGRATION_SET_INVALID'].includes(error?.code)) {
+      throw error;
+    }
     if (error && (error.code === 'SQLITE_BUSY' || /locked|busy/i.test(error.message || ''))) {
       fail('BOOTSTRAP_BUSY');
     }
@@ -791,11 +987,19 @@ function bootstrapSyntheticDatabase(context, input, options = {}) {
   if (fs.existsSync(secretFile)) fail('BOOTSTRAP_DATABASE_NOT_EMPTY');
 
   const filename = context.deployment.dataPaths.sqliteFile;
+  const createdIdentity = createEmptyDatabaseFile(context);
   let db;
   let transactionOpen = false;
   let committed = false;
   try {
     db = new DatabaseSync(filename);
+    if (!sameFileIdentity(createdIdentity, databaseFileIdentity(filename))) {
+      fail('BOOTSTRAP_DATABASE_UNSAFE');
+    }
+    runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+      context.deployment,
+      context.projectRoot
+    );
     configureWritableDatabase(db);
     db.exec('BEGIN IMMEDIATE');
     transactionOpen = true;
@@ -805,20 +1009,9 @@ function bootstrapSyntheticDatabase(context, input, options = {}) {
       context.deployment,
       context.projectRoot
     );
-    const objects = schemaRows(db);
-    if (objects.length === 0) {
-      applyMigrationsInCurrentTransaction(db, { now: () => options.now || new Date() });
-      callFault(options, 'after_migrations');
-    } else {
-      assertSchemaCurrent(db);
-    }
-    if (count(db, RECEIPT_TABLE) === 1) {
-      const row = validateReplay(db, input, context);
-      db.exec('COMMIT');
-      transactionOpen = false;
-      committed = true;
-      return evidence('replayed', row, input, context);
-    }
+    if (schemaRows(db).length !== 0) fail('BOOTSTRAP_DATABASE_NOT_EMPTY');
+    applyMigrationsInCurrentTransaction(db, { now: () => options.now || new Date() });
+    callFault(options, 'after_migrations');
     assertEmptyBaseline(db);
     if (fs.existsSync(secretFile)) fail('BOOTSTRAP_DATABASE_NOT_EMPTY');
     const now = options.now instanceof Date ? new Date(options.now) : new Date();
@@ -830,17 +1023,30 @@ function bootstrapSyntheticDatabase(context, input, options = {}) {
     db.exec('COMMIT');
     transactionOpen = false;
     committed = true;
+    callFault(options, 'after_commit');
     return evidence('created', row, input, context);
   } catch (error) {
+    let rollbackUnknown = false;
     if (transactionOpen && db) {
       try {
         db.exec('ROLLBACK');
         transactionOpen = false;
       } catch (_) {
-        fail('BOOTSTRAP_RESULT_UNKNOWN');
+        rollbackUnknown = true;
       }
     }
-    if (error instanceof SyntheticBootstrapError) throw error;
+    if (db) {
+      try { db.close(); } catch (_) { rollbackUnknown = true; }
+      db = undefined;
+    }
+    if (rollbackUnknown || (!committed
+        && !cleanupCreatedDatabaseFile(context, createdIdentity))) {
+      fail('BOOTSTRAP_RESULT_UNKNOWN');
+    }
+    if (error instanceof SyntheticBootstrapError
+        || ['MIGRATION_LEDGER_INVALID', 'MIGRATION_SET_INVALID'].includes(error?.code)) {
+      throw error;
+    }
     if (error && (error.code === 'SQLITE_BUSY' || /locked|busy/i.test(error.message || ''))) {
       fail('BOOTSTRAP_BUSY');
     }
@@ -875,12 +1081,17 @@ module.exports = {
   acquireBootstrapLock,
   bootstrapFromDocument,
   bootstrapSyntheticDatabase,
+  createBindingContext,
   createContext,
+  databaseFileIdentity,
   decodeCanonicalInput,
   normalizeInput,
   parseArguments,
   readStdin,
   releaseBootstrapLock,
   referenceSchemaFingerprint,
-  safeErrorCode
+  safeErrorCode,
+  sameFileIdentity,
+  validateBootstrapEnvironment,
+  validateSyntheticRuntimeBootstrap
 };

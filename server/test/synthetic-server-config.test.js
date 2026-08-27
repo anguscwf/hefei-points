@@ -142,6 +142,32 @@ test('preflight 只把 CRLF/LF 规范化视为相同实现内容', () => {
   );
 });
 
+test('preflight 拒绝审计清单之外的迁移或非普通 SQL', () => {
+  const expected = committedPreflightImplementationFiles
+    .filter(filename => filename.startsWith('server/db/migrations/'))
+    .map(filename => ({
+      name: path.basename(filename),
+      isFile: () => true,
+      isSymbolicLink: () => false
+    }));
+  assert.equal(preflight.assertExactMigrationDirectory(expected), true);
+  assert.throws(
+    () => preflight.assertExactMigrationDirectory([
+      ...expected,
+      { name: '011_unreviewed.sql', isFile: () => true, isSymbolicLink: () => false }
+    ]),
+    error => error && error.code === 'MIGRATION_SET_INVALID'
+  );
+  assert.throws(
+    () => preflight.assertExactMigrationDirectory(expected.map((entry, index) => (
+      index === 0
+        ? { ...entry, isFile: () => false, isSymbolicLink: () => true }
+        : entry
+    ))),
+    error => error && error.code === 'MIGRATION_SET_INVALID'
+  );
+});
+
 test('committed preflight guard 阻断网络、非 Git 子进程和边界外写入', () => {
   const verificationRoot = fs.mkdtempSync(path.join(
     os.tmpdir(),

@@ -9,6 +9,7 @@ const { DatabaseSync } = require('node:sqlite');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 const bootstrapScript = path.join(projectRoot, 'scripts', 'bootstrap-synthetic-database.js');
+const { usage: bootstrapUsage } = require('../../scripts/bootstrap-synthetic-database');
 const profile = require('../config/deployment-profile');
 const rootTools = require('../../scripts/support/synthetic-data-root-tools');
 const {
@@ -24,11 +25,14 @@ const {
   readStdin
 } = require('../../scripts/support/synthetic-bootstrap');
 const {
+  EXPECTED_MIGRATION_FILES,
   applyMigrations,
   applyMigrationsInCurrentTransaction,
+  assertAppliedMigrationsPrefix,
+  assertExpectedMigrationFiles,
   migrationFiles
 } = require('../db/migrations');
-const { verifyPwd } = require('../lib/password');
+const { hashPwd, verifyPwd } = require('../lib/password');
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tangguan-s14-bootstrap-'));
 const fixedNow = new Date('2026-08-27T08:00:00.000Z');
@@ -202,6 +206,79 @@ test('bootstrap 输入只接受无参数、非 TTY 和无歧义 canonical JSON',
   await assert.rejects(readStdin({ isTTY: true }), error => error.code === 'STDIN_REQUIRED');
 });
 
+test('迁移执行集合由审计清单锁定并拒绝额外 SQL', () => {
+  assert.deepEqual([...migrationFiles()], [...EXPECTED_MIGRATION_FILES]);
+  assert.deepEqual(
+    [...assertExpectedMigrationFiles([...EXPECTED_MIGRATION_FILES].reverse())],
+    [...EXPECTED_MIGRATION_FILES]
+  );
+  assert.throws(
+    () => assertExpectedMigrationFiles([
+      ...EXPECTED_MIGRATION_FILES,
+      '011_unreviewed.sql'
+    ]),
+    error => error && error.code === 'MIGRATION_SET_INVALID'
+  );
+
+  const db = new DatabaseSync(':memory:');
+  try {
+    applyMigrations(db, { now: () => fixedNow });
+    db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)')
+      .run('999_unreviewed.sql', fixedNow.toISOString());
+    assert.throws(
+      () => assertAppliedMigrationsPrefix(db),
+      error => error && error.code === 'MIGRATION_LEDGER_INVALID'
+    );
+    assert.throws(
+      () => applyMigrations(db, { now: () => fixedNow }),
+      error => error && error.code === 'MIGRATION_LEDGER_INVALID'
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('真实 CLI 失败只输出稳定码且用法禁止凭据文件', async t => {
+  assert.equal(bootstrapUsage().includes('< canonical-bootstrap.json'), false);
+  assert.match(bootstrapUsage(), /Never use an ordinary file/);
+
+  const missing = syntheticCase(t, 'cli-missing');
+  const missingResult = await spawnNode([bootstrapScript], missing.environment, '');
+  assert.equal(missingResult.code, 1);
+  assert.equal(missingResult.stdout, '');
+  assert.equal(missingResult.stderr, 'STDIN_REQUIRED\n');
+  assert.equal(fs.existsSync(missing.environment.SQLITE_FILE), false);
+
+  const invalid = syntheticCase(t, 'cli-invalid');
+  const invalidRaw = `{ "administrator":"${invalid.password}" }`;
+  const invalidResult = await spawnNode([bootstrapScript], invalid.environment, invalidRaw);
+  assert.equal(invalidResult.code, 1);
+  assert.equal(invalidResult.stdout, '');
+  assert.equal(invalidResult.stderr, 'BOOTSTRAP_INPUT_INVALID\n');
+  assert.equal(invalidResult.stderr.includes(invalid.password), false);
+  assert.equal(invalidResult.stderr.includes(invalid.root), false);
+
+  const oversized = syntheticCase(t, 'cli-oversized');
+  const oversizedResult = await spawnNode(
+    [bootstrapScript],
+    oversized.environment,
+    'x'.repeat(MAX_STDIN_BYTES + 1)
+  );
+  assert.equal(oversizedResult.code, 1);
+  assert.equal(oversizedResult.stdout, '');
+  assert.equal(oversizedResult.stderr, 'STDIN_TOO_LARGE\n');
+
+  const envSecret = syntheticCase(t, 'cli-env-secret');
+  const envSecretResult = await spawnNode([bootstrapScript], {
+    ...envSecret.environment,
+    SYNTHETIC_BOOTSTRAP_PASSWORD: envSecret.password
+  }, `${JSON.stringify(envSecret.input)}\n`);
+  assert.equal(envSecretResult.code, 1);
+  assert.equal(envSecretResult.stdout, '');
+  assert.equal(envSecretResult.stderr, 'BOOTSTRAP_SECRET_CHANNEL_INVALID\n');
+  assert.equal(envSecretResult.stderr.includes(envSecret.password), false);
+});
+
 test('所有迁移在调用者事务内任一点失败都回到空 schema 并可重试', () => {
   for (const target of migrationFiles()) {
     const db = new DatabaseSync(':memory:');
@@ -304,6 +381,20 @@ test('全新 synthetic 库原子写入最小管理员、四类法律证据和不
       () => writable.prepare('DELETE FROM synthetic_bootstrap_receipts').run(),
       /SYNTHETIC_BOOTSTRAP_RECEIPT_DELETE_FORBIDDEN/
     );
+    assert.throws(
+      () => writable.exec(`
+        INSERT INTO synthetic_bootstrap_receipts
+        SELECT * FROM synthetic_bootstrap_receipts
+      `),
+      /SYNTHETIC_BOOTSTRAP_ALREADY_COMPLETED/
+    );
+    assert.throws(
+      () => writable.exec(`
+        INSERT OR REPLACE INTO synthetic_bootstrap_receipts
+        SELECT * FROM synthetic_bootstrap_receipts
+      `),
+      /SYNTHETIC_BOOTSTRAP_ALREADY_COMPLETED/
+    );
   } finally {
     writable.close();
   }
@@ -311,6 +402,29 @@ test('全新 synthetic 库原子写入最小管理员、四类法律证据和不
   const replay = bootstrapFromDocument(value.environment, value.input, { now: fixedNow });
   assert.equal(replay.outcome, 'replayed');
   assert.equal(replay.administrator.credentialWritten, false);
+  assert.equal(replay.legalEvidence.metadataWritten, false);
+  assert.deepEqual({
+    familyRowsWritten: replay.database.familyRowsWritten,
+    administratorRowsWritten: replay.database.administratorRowsWritten,
+    legalTextRowsWritten: replay.database.legalTextRowsWritten,
+    bootstrapReceiptRowsWritten: replay.database.bootstrapReceiptRowsWritten
+  }, {
+    familyRowsWritten: 0,
+    administratorRowsWritten: 0,
+    legalTextRowsWritten: 0,
+    bootstrapReceiptRowsWritten: 0
+  });
+  assert.deepEqual({
+    familyRowsPresent: replay.database.familyRowsPresent,
+    administratorRowsPresent: replay.database.administratorRowsPresent,
+    legalTextRowsPresent: replay.database.legalTextRowsPresent,
+    bootstrapReceiptRowsPresent: replay.database.bootstrapReceiptRowsPresent
+  }, {
+    familyRowsPresent: 1,
+    administratorRowsPresent: 1,
+    legalTextRowsPresent: 4,
+    bootstrapReceiptRowsPresent: 1
+  });
   const changedPassword = structuredClone(value.input);
   changedPassword.administrator.password = `${value.password}X`;
   assertCode(
@@ -346,27 +460,60 @@ test('每个 bootstrap 写阶段故障都完整回滚且原输入可恢复', t =
       }
     }), 'BOOTSTRAP_TRANSACTION_FAILED');
     assert.equal(fs.existsSync(path.join(value.environment.DATA_DIR, '.secret')), false);
-    const db = new DatabaseSync(value.environment.SQLITE_FILE, { readOnly: true });
-    try {
-      assert.deepEqual(applicationTables(db), []);
-    } finally {
-      db.close();
-    }
+    assert.equal(fs.existsSync(value.environment.SQLITE_FILE), false);
     const recovered = bootstrapFromDocument(value.environment, value.input, { now: fixedNow });
     assert.equal(recovered.outcome, 'created');
   }
 });
 
-test('只接管全新或精确当前空基线，拒绝未知 schema、业务行和预生成 secret', t => {
+test('提交后结果丢失返回未知且原请求可精确恢复为 replay', t => {
+  const value = syntheticCase(t, 'after-commit-unknown');
+  assertCode(() => bootstrapFromDocument(value.environment, value.input, {
+    now: fixedNow,
+    fault: stage => {
+      if (stage === 'after_commit') throw new Error('synthetic output loss');
+    }
+  }), 'BOOTSTRAP_RESULT_UNKNOWN');
+  assert.equal(
+    fs.existsSync(path.join(value.environment.DATA_DIR, '.synthetic-bootstrap.lock')),
+    false
+  );
+  const recovered = bootstrapFromDocument(value.environment, value.input, { now: fixedNow });
+  assert.equal(recovered.outcome, 'replayed');
+  assert.equal(recovered.database.administratorRowsWritten, 0);
+  const conflict = structuredClone(value.input);
+  conflict.requestId = 'synthetic-bootstrap-conflict_after_commit_1234';
+  assertCode(
+    () => bootstrapFromDocument(value.environment, conflict, { now: fixedNow }),
+    'BOOTSTRAP_CONFLICT'
+  );
+  const db = new DatabaseSync(value.environment.SQLITE_FILE, { readOnly: true });
+  try {
+    assert.equal(tableCount(db, 'users'), 1);
+    assert.equal(tableCount(db, 'legal_text_versions'), 4);
+    assert.equal(tableCount(db, 'synthetic_bootstrap_receipts'), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('只接管路径不存在的全新库，拒绝空基线、未知 schema、业务行和预生成 secret', t => {
   const baseline = syntheticCase(t, 'baseline');
   let db = new DatabaseSync(baseline.environment.SQLITE_FILE);
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA recursive_triggers = ON');
   applyMigrations(db, { now: () => fixedNow });
   db.close();
-  assert.equal(
-    bootstrapFromDocument(baseline.environment, baseline.input, { now: fixedNow }).outcome,
-    'created'
+  assertCode(
+    () => bootstrapFromDocument(baseline.environment, baseline.input, { now: fixedNow }),
+    'BOOTSTRAP_DATABASE_NOT_EMPTY'
+  );
+
+  const blank = syntheticCase(t, 'blank-file');
+  fs.writeFileSync(blank.environment.SQLITE_FILE, '', { flag: 'wx', mode: 0o600 });
+  assertCode(
+    () => bootstrapFromDocument(blank.environment, blank.input, { now: fixedNow }),
+    'BOOTSTRAP_DATABASE_NOT_EMPTY'
   );
 
   const unknown = syntheticCase(t, 'unknown-schema');
@@ -444,9 +591,17 @@ test('并发 CLI 对同一全新库只创建一次，其余进程安全重放', 
     stdin
   )));
   for (const run of runs) {
-    assert.equal(run.code, 0, run.stderr);
+    assert.equal(run.code, 0, run.stderr || run.stdout);
     assert.equal(run.signal, null);
     assert.equal(run.stderr, '');
+    for (const forbidden of [
+      value.password,
+      value.input.administrator.id,
+      value.root,
+      value.origin,
+      value.environment.WX_APPID,
+      value.environment.WX_APPSECRET
+    ]) assert.equal(run.stdout.includes(forbidden), false);
   }
   const results = runs.map(run => JSON.parse(run.stdout));
   assert.equal(results.filter(result => result.outcome === 'created').length, 1);
@@ -465,7 +620,40 @@ test('并发 CLI 对同一全新库只创建一次，其余进程安全重放', 
   }
 });
 
-test('synthetic runtime 无 receipt 拒启且不建 secret，精确空基线随后可 bootstrap', async t => {
+test('不同 bootstrap 请求并发竞争时只提交一个且其余稳定冲突', async t => {
+  const value = syntheticCase(t, 'concurrent-conflict');
+  const inputs = Array.from({ length: 8 }, (_, index) => {
+    const input = structuredClone(value.input);
+    input.requestId = `synthetic-bootstrap-mixed_${index}_abcdef0123456789`;
+    input.administrator.id = `synthetic_admin_mixed_${index}_abcdef`;
+    input.administrator.password = `${value.password}-${index}Z!`;
+    return input;
+  });
+  const runs = await Promise.all(inputs.map(input => spawnNode(
+    [bootstrapScript],
+    value.environment,
+    `${JSON.stringify(input)}\n`
+  )));
+  const successful = runs.filter(run => run.code === 0);
+  const conflicts = runs.filter(run => run.code === 1);
+  assert.equal(successful.length, 1, JSON.stringify(runs));
+  assert.equal(JSON.parse(successful[0].stdout).outcome, 'created');
+  assert.equal(conflicts.length, 7, JSON.stringify(runs));
+  for (const run of conflicts) {
+    assert.equal(run.stdout, '');
+    assert.equal(run.stderr, 'BOOTSTRAP_CONFLICT\n');
+  }
+  const db = new DatabaseSync(value.environment.SQLITE_FILE, { readOnly: true });
+  try {
+    assert.equal(tableCount(db, 'users'), 1);
+    assert.equal(tableCount(db, 'legal_text_versions'), 4);
+    assert.equal(tableCount(db, 'synthetic_bootstrap_receipts'), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('synthetic runtime 无 receipt 时在任何迁移前拒启且随后可 bootstrap', async t => {
   const value = syntheticCase(t, 'runtime-gate');
   const runtimeEnvironment = { ...value.environment };
   delete runtimeEnvironment.SYNTHETIC_BOOTSTRAP_ACK;
@@ -490,9 +678,136 @@ test('synthetic runtime 无 receipt 拒启且不建 secret，精确空基线随�
   assert.equal(result.stdout, '');
   assert.equal(result.stderr, '');
   assert.equal(fs.existsSync(path.join(value.environment.DATA_DIR, '.secret')), false);
+  assert.equal(fs.existsSync(value.environment.SQLITE_FILE), false);
   assert.equal(
     bootstrapFromDocument(value.environment, value.input, { now: fixedNow }).outcome,
     'created'
+  );
+});
+
+test('synthetic runtime 拒绝从另一环境复制来的已引导数据库且不建 secret', async t => {
+  const source = syntheticCase(t, 'runtime-source');
+  const destination = syntheticCase(t, 'runtime-destination');
+  bootstrapFromDocument(source.environment, source.input, { now: fixedNow });
+  fs.copyFileSync(source.environment.SQLITE_FILE, destination.environment.SQLITE_FILE);
+  const runtimeEnvironment = { ...destination.environment };
+  delete runtimeEnvironment.SYNTHETIC_BOOTSTRAP_ACK;
+  const program = [
+    "const fs=require('node:fs');",
+    "const path=require('node:path');",
+    'let close=()=>{};',
+    'try {',
+    "  const {createApp}=require('./server/index');",
+    "  close=require('./server/db/connection').closeDb;",
+    '  createApp();',
+    '  process.exitCode=10;',
+    '} catch(error) {',
+    "  if(error.code!=='SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH')process.exitCode=11;",
+    '} finally {',
+    '  close();',
+    "  if(fs.existsSync(path.join(process.env.DATA_DIR,'.secret')))process.exitCode=12;",
+    '}'
+  ].join('\n');
+  const result = await spawnNode(['-e', program], runtimeEnvironment);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+  assert.equal(fs.existsSync(path.join(destination.environment.DATA_DIR, '.secret')), false);
+});
+
+test('synthetic runtime 拒绝残留 bootstrap 控制与活动锁且不建 secret', async t => {
+  const value = syntheticCase(t, 'runtime-controls');
+  bootstrapFromDocument(value.environment, value.input, { now: fixedNow });
+  const base = { ...value.environment };
+  delete base.SYNTHETIC_BOOTSTRAP_ACK;
+  const program = [
+    "const fs=require('node:fs');",
+    "const path=require('node:path');",
+    'let close=()=>{};',
+    'try {',
+    "  const {createApp}=require('./server/index');",
+    "  close=require('./server/db/connection').closeDb;",
+    '  createApp();',
+    '  process.exitCode=10;',
+    '} catch(error) {',
+    "  if(error.code!==process.env.S14_EXPECTED_RUNTIME_ERROR)process.exitCode=11;",
+    '} finally {',
+    '  close();',
+    "  if(fs.existsSync(path.join(process.env.DATA_DIR,'.secret')))process.exitCode=12;",
+    '}'
+  ].join('\n');
+  for (const [expected, extra] of [
+    ['SYNTHETIC_BOOTSTRAP_CONTROL_ACTIVE', {
+      SYNTHETIC_BOOTSTRAP_ACK: BOOTSTRAP_ACK
+    }],
+    ['SYNTHETIC_BOOTSTRAP_CONTROL_ACTIVE', {
+      SYNTHETIC_BOOTSTRAP_PASSWORD: value.password
+    }]
+  ]) {
+    const result = await spawnNode(['-e', program], {
+      ...base,
+      ...extra,
+      S14_EXPECTED_RUNTIME_ERROR: expected
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  }
+
+  const lock = path.join(value.environment.DATA_DIR, '.synthetic-bootstrap.lock');
+  fs.writeFileSync(lock, '', { flag: 'wx', mode: 0o600 });
+  try {
+    const result = await spawnNode(['-e', program], {
+      ...base,
+      S14_EXPECTED_RUNTIME_ERROR: 'SYNTHETIC_BOOTSTRAP_IN_PROGRESS'
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  } finally {
+    fs.unlinkSync(lock);
+  }
+  assert.equal(fs.existsSync(path.join(value.environment.DATA_DIR, '.secret')), false);
+});
+
+test('runtime 允许管理员轮换凭据和绑定后重启但 bootstrap 不再用于回放', async t => {
+  const value = syntheticCase(t, 'runtime-evolution');
+  bootstrapFromDocument(value.environment, value.input, { now: fixedNow });
+  const rotatedPassword = `${value.password}-Rotated9!`;
+  const db = new DatabaseSync(value.environment.SQLITE_FILE);
+  try {
+    db.prepare(`
+      UPDATE users SET password = ?, openid = ?, bound_at = ?
+      WHERE family_id = 'default' AND id = ?
+    `).run(
+      hashPwd(rotatedPassword),
+      'synthetic-openid-runtime-evolution',
+      fixedNow.toISOString(),
+      value.input.administrator.id
+    );
+  } finally {
+    db.close();
+  }
+  const runtimeEnvironment = { ...value.environment };
+  delete runtimeEnvironment.SYNTHETIC_BOOTSTRAP_ACK;
+  const program = [
+    'let close=()=>{};',
+    'try {',
+    "  const {createApp}=require('./server/index');",
+    "  close=require('./server/db/connection').closeDb;",
+    '  createApp();',
+    '} catch(error) {',
+    '  process.exitCode=10;',
+    '} finally { close(); }'
+  ].join('\n');
+  const result = await spawnNode(['-e', program], runtimeEnvironment);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+  assert.equal(fs.existsSync(path.join(value.environment.DATA_DIR, '.secret')), true);
+  assertCode(
+    () => bootstrapFromDocument(value.environment, value.input, { now: fixedNow }),
+    'BOOTSTRAP_STATE_INVALID'
   );
 });
 
@@ -514,19 +829,25 @@ test('bootstrap 后成人登录、公开法律证据和重新认证可用且仍�
     "  const base='http://127.0.0.1:'+server.address().port;",
     "  const request=(pathname,body,token='')=>fetch(base+pathname,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(body)});",
     "  const bad=await request('/api/auth',{userId:process.env.S14_TEST_ADMIN,password:'wrong-password'});",
-    '  if(bad.status!==403)process.exitCode=20;',
+    '  const badBody=await bad.json();',
+    "  const badRaw=JSON.stringify(badBody);",
+    "  if(bad.status!==403||badBody.success!==false||badRaw.includes('wrong-password')||badRaw.includes(process.env.S14_TEST_ADMIN)||badRaw.includes('token'))process.exitCode=20;",
     "  const login=await request('/api/auth',{userId:process.env.S14_TEST_ADMIN,password:process.env.S14_TEST_PASSWORD});",
     '  const loginBody=await login.json();',
     '  if(login.status!==200||!loginBody.success||!loginBody.token)process.exitCode=21;',
     "  const legal=await fetch(base+'/api/v2/legal-texts/current');",
     '  const legalBody=await legal.json();',
     '  if(legal.status!==200||!legalBody.success||Object.keys(legalBody.texts||{}).length!==4)process.exitCode=22;',
+    "  const expectedLegal=JSON.parse(process.env.S14_TEST_LEGAL);",
+    "  const {LEGAL_TEXT_FIELDS,LEGAL_TEXT_PATH_SLUGS}=require('./server/config/guardian-consent');",
+    "  for(const text of expectedLegal.texts){const actual=legalBody.texts[LEGAL_TEXT_FIELDS[text.type]];const expectedUrl=process.env.API_PUBLIC_ORIGIN+'/legal/'+LEGAL_TEXT_PATH_SLUGS[text.type]+'/'+text.version+'/'+text.contentSha256+'.html';if(!actual||actual.type!==text.type||actual.version!==text.version||actual.sha256!==text.contentSha256||actual.publicUrl!==expectedUrl||actual.effectiveAt!==expectedLegal.effectiveAt||Object.prototype.hasOwnProperty.call(actual,'content'))process.exitCode=27;}",
+    "  const relation=legalBody.guardianRelationDeclaration;if(!relation||relation.version!==process.env.GUARDIAN_RELATION_DECLARATION_VERSION||relation.sha256!==process.env.GUARDIAN_RELATION_DECLARATION_SHA256||relation.publicUrl!==process.env.GUARDIAN_RELATION_DECLARATION_PUBLIC_URL)process.exitCode=28;",
     "  const reauth=await request('/api/v2/reauth-assertions',{purpose:'child_enrollment',password:process.env.S14_TEST_PASSWORD},loginBody.token);",
     '  const reauthBody=await reauth.json();',
     '  if(reauth.status!==200||!reauthBody.success||!reauthBody.reauthAssertion)process.exitCode=23;',
     '  const db=connection.getDb();',
-    "  for(const table of ['child_privacy_states','guardian_consents','device_bindings','device_sessions','point_accounts','transactions','point_requests','data_rights_requests','audit_events']){if(db.prepare('SELECT COUNT(*) c FROM '+table).get().c!==0)process.exitCode=24;}",
-    "  if(db.prepare('SELECT COUNT(*) c FROM rules').get().c!==0)process.exitCode=25;",
+    "  const reauthRow=db.prepare('SELECT family_id,user_id,purpose,token_hash,consumed_at,revoked_at FROM reauth_assertions').get();if(!reauthRow||reauthRow.family_id!=='default'||reauthRow.user_id!==process.env.S14_TEST_ADMIN||reauthRow.purpose!=='child_enrollment'||reauthRow.token_hash===reauthBody.reauthAssertion||reauthRow.consumed_at!==null||reauthRow.revoked_at!==null)process.exitCode=29;",
+    "  const {EXPECTED_TABLES}=require('./scripts/support/synthetic-bootstrap');const allowed=new Map([['schema_migrations',10],['families',1],['users',1],['legal_text_versions',4],['synthetic_bootstrap_receipts',1],['reauth_assertions',1]]);for(const table of EXPECTED_TABLES){if(db.prepare('SELECT COUNT(*) c FROM '+table).get().c!==(allowed.get(table)||0))process.exitCode=24;}",
     "  const family=db.prepare(\"SELECT invite_code,invite_json FROM families WHERE id='default'\").get();",
     '  if(!family||family.invite_code!==null||family.invite_json!==null)process.exitCode=26;',
     '}finally{',
@@ -540,7 +861,8 @@ test('bootstrap 后成人登录、公开法律证据和重新认证可用且仍�
   const result = await spawnNode(['-e', program], {
     ...runtimeEnvironment,
     S14_TEST_ADMIN: value.input.administrator.id,
-    S14_TEST_PASSWORD: value.password
+    S14_TEST_PASSWORD: value.password,
+    S14_TEST_LEGAL: JSON.stringify(value.input.legalEvidence)
   });
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.stdout, '');
