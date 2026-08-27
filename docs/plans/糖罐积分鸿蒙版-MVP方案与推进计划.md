@@ -1,6 +1,6 @@
 # 糖罐积分鸿蒙版 MVP 方案与推进计划
 
-> 文档版本：v1.3（S16 synthetic 外部签名束离线验证记录）
+> 文档版本：v1.4（S17 synthetic 本地授权账本与单次消费记录边界）
 > 初版日期：2026-08-09；修订日期：2026-08-28
 > 适用项目：糖罐积分微信小程序 / Web 管理端 / HarmonyOS 孩子端
 > 当前决策：采用“无 Screen Time Guard ACL”路线；华为远程守护中的用机时长由家长手动发放。未成年人账号不再走 AppGallery 邀请测试或 AppTest；儿童真机安装改为正式上架后验收。
@@ -17,7 +17,7 @@ HarmonyOS 版本采用双轨验证与分发：
 
 1. **成人预发布验证轨：** 邀请测试、模拟器、自动化测试、Mate 80 真机和必要的云测试只用于成人账号与受控设备，验证安装、启动、网络、业务、权限和回归。
 2. **儿童正式使用轨：** 儿童账号只安装已通过 AppGallery 正式审核、内容分级适龄的公开版本；孩子设备保持未成年人模式和远程守护，不切换成人账号，不开启开发者模式。
-3. **首发先核心后增强：** 历史 `0.1.0 (10000)` 仅为阶段 0 诊断包；当前跟踪的 `0.2.0 (20000)` 仍只是未连接外部服务、未发布且不完整的 S10 本地安全壳，S11～S16 也只补齐临时 synthetic 客户端工作区、服务端配置/预检、离线数据根、一次性初始引导、候选证据封装和签名束离线验证，均不能直接公开上架。完成“监护人授权与配对 → 查看积分 → 申报任务 → 家长审批 → 查看结果 → 解绑/删除”的薄 MVP 及全部发布硬门后，才能生成正式首发候选版。
+3. **首发先核心后增强：** 历史 `0.1.0 (10000)` 仅为阶段 0 诊断包；当前跟踪的 `0.2.0 (20000)` 仍只是未连接外部服务、未发布且不完整的 S10 本地安全壳，S11～S17 也只补齐临时 synthetic 客户端工作区、服务端配置/预检、离线数据根、一次性初始引导、候选证据封装、签名束离线验证和独立本地授权账本，均不能直接公开上架。完成“监护人授权与配对 → 查看积分 → 申报任务 → 家长审批 → 查看结果 → 解绑/删除”的薄 MVP 及全部发布硬门后，才能生成正式首发候选版。
 4. **渠道公开、功能克制：** AppGallery 首次正式发布不能使用分阶段发布。首发可以零推广，但必须对普通家庭具备真实、完整的基本价值，不能仅对白名单家庭或开发者自家设备可用。
 
 范围口径：`0.2.0` 是用于取得正式儿童安装渠道的“正式首发基础版”，完成监护人授权、配对、积分查询、申报审批和数据权利闭环；阶段 6 完成人工用机兑换后，才达到本文定义的完整 MVP。照片、Push 等仍属于后续增强。
@@ -725,6 +725,8 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 
 2026-08-28 实施记录：S16 增加 `verify:synthetic-external-approval`，已提交预检集合随两个 verifier 文件扩至 36 个实现文件/十项迁移。CLI 只从最多 512 KiB 的 canonical stdin 接受 S15 原输入/输出、独立 revocation checkpoint、19 项 gate verification、独立 approval 和最长 5 分钟的单次 synthetic grant；输入不能携带公钥或策略正文。公开 Ed25519 策略由环境 SHA-256 钉住，必须位于仓库和数据根之外的 canonical 本地同卷普通文件，UNC/device/异卷、任一祖先 junction/symlink、dot-segment、混合分隔符和验证期间漂移均 fail closed。四个签名 domain、keyId/SPKI、角色/职责隔离、target/source/config/root、证据与审计摘要、时间和 key/principal/approval/grant 吊销均被精确检查；checkpoint 必须不早于全部已签工件且不得来自未来。工具按历史时刻和当前时刻两次重跑 S15，并在结束时按所有依赖的最早失效点再次检查。成功仍只表示签名束在调用方提供的策略下有效且本命令未消费；策略权威、真实身份/证据/审计、可信时间、checkpoint 单调和原子单次消费均明确未验证，部署/儿童授权始终 `not_granted`。external-approval 专测 19/19、S12～S16 定向 85/85、根回归 300/300、已提交 verifier 和工程检查通过；真实成功 CLI 回归只用内存密钥、合成配置和临时 SQLite，确认只读、单行脱敏、零联网/部署。S16 未连接外部系统或关闭阶段 3 外部退出条件。
 
+2026-08-28 实施记录：S17 增加 `init:synthetic-authorization-ledger` 与 `consume:synthetic-deployment-grant`，已提交预检集合随两个 CLI 和 consumer 支持层扩至 39 个实现文件/十项迁移；ledger schema 1 是仓库外独立本地 SQLite，不是业务迁移 011。S16 成功结果扩至 schema 2，并增加可单独二读策略、验证签名 checkpoint 且返回冻结摘要的生产 API。初始化把 ledger/consumer/target、策略、签名 genesis checkpoint、文件 inode 和主机/OS 账号上下文固定到最大 16 MiB 的 `synthetic-authorization-ledger.sqlite`；消费在 `BEGIN IMMEDIATE` 内重跑 S16、复核 checkpoint、严格执行本 ledger sequence `+1`、累计四类吊销集合，并原子提交一次本地 grant 使用或稳定拒绝。相同 request 可在 verifier 前恢复历史 receipt/rejection；同 grant、approval 或 target/source/implementation/configuration 元组的新 request 被拒绝；fork 或删除既有吊销项会永久 block 本 ledger。SQLite 使用 DELETE/FULL，WAL/SHM 拒绝，真实 hot DELETE journal 由写锁入口恢复。工具不认证外部权威/真实身份，不信任本机时间，不证明全局最新 checkpoint 或跨主机全局单次消费，也不调用真实部署器；所有输出继续保持部署和儿童授权 `not_granted`。S17 专测 17/17、S16/S17 定向 40/40、S12～S17 定向 106/106、根回归 321/321、已提交 verifier 和工程检查通过；多进程争抢、崩溃恢复、篡改与 CLI 回归只用内存密钥、合成配置、系统临时目录和临时 SQLite。S17 未连接外部系统或关闭阶段 3 外部退出条件。
+
 ### 阶段 4：合规门、正式首发与儿童设备安装（5～10 个工作日 + 外部审核时间）
 
 交付物：
@@ -916,10 +918,10 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 
 ## 15. 立即执行的下一步
 
-1. 保持 HarmonyOS `NETWORK_ENABLED=false`、跟踪小程序 develop/trial 零联网配置、`.invalid` 源和全部儿童生产功能门关闭；S9 loopback 全链、S10 工程安全壳、S11 临时小程序生成器、S12 配置/预检、S13 数据根、S14 bootstrap、S15 未认证证据封装和 S16 签名束离线 verifier 只作为本地基线，不连接外部业务服务或生产，不把测试签名包解释为部署许可。
-2. 推进 S17“权威外部信任接入、单调吊销与原子授权消费”：由获批外部系统认证策略发布者和各角色真实身份，取回并核验权威证据/审计正文，引入可信时间，持久保证 checkpoint sequence 单调防回滚，并把最终撤销判定与指定 consumer 的 grant compare-and-consume 放在同一原子操作中。S16 的 `unconsumed` 只表示本命令没有消费，不证明全局未用。
+1. 保持 HarmonyOS `NETWORK_ENABLED=false`、跟踪小程序 develop/trial 零联网配置、`.invalid` 源和全部儿童生产功能门关闭；S9 loopback 全链、S10 工程安全壳、S11 临时小程序生成器、S12 配置/预检、S13 数据根、S14 bootstrap、S15 未认证证据封装、S16 签名束离线 verifier 和 S17 本地授权账本只作为本地基线，不连接外部业务服务或生产，不把测试签名包或本地 receipt 解释为部署许可。
+2. 推进 S18“权威信任、可信时间、全局消费与部署执行原子接入”：由获批外部系统认证策略发布者和各角色真实身份，取回并核验权威证据/审计正文，引入可信时间和权威最新 checkpoint，并在跨账本/主机/consumer 的全局范围内把最终撤销判定、grant compare-and-consume、真实部署动作和可核验回执做原子协调或具备安全补偿。S16 的 `unconsumed` 只表示 verifier 没有消费；S17 receipt 只表示一个本地 ledger 实例记录过一次使用，两者都不证明全局状态。
 3. 由受权操作员在批准的外部非生产主机按 S13 建立全新专用根，再按 S14 通过不落盘 stdin 引导；在任何状态演进前按 S15 capture，并在 30 分钟内真实核验专用 OS 账号、ACL/所有权、磁盘/备份边界、独立密钥和数据库内容/生产隔离。残根、既有 SQLite、未知锁或跨环境数据库一律隔离，不自动接管。
-4. 外部验证独立 synthetic AppID provisioning、开发者权限、AppSecret 独立性、request/business domain、DNS/TLS、基础设施、法律记录和数据库内容隔离，并确认 DevTools 私有设置未关闭域名/TLS 校验。候选先运行 `npm run verify:synthetic-api-preflight` 自检，再以同一配置运行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>` 保存 schema 4、36 文件/10 迁移的实际 artifact；S15 finalize 只封装 19 项未认证声明，S16 只离线验证外部系统产生的签名束。只有 S17 的权威身份/事实/审计/时间/吊销/消费硬门真实关闭，才可另行审批一次受控 synthetic 部署。客户端只使用 S9/S11 受控系统临时配置，禁止运行时改源或访问生产 host。
+4. 外部验证独立 synthetic AppID provisioning、开发者权限、AppSecret 独立性、request/business domain、DNS/TLS、基础设施、法律记录和数据库内容隔离，并确认 DevTools 私有设置未关闭域名/TLS 校验。候选先运行 `npm run verify:synthetic-api-preflight` 自检，再以同一配置运行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>` 保存 schema 4、39 文件/10 迁移的实际 artifact；S15 finalize 只封装 19 项未认证声明，S16 只离线验证签名束，S17 只在独立本地账本记录单次使用。只有 S18 的权威身份/事实/审计/时间/全局吊销/消费和部署执行硬门真实关闭，才可另行审批一次受控 synthetic 部署。客户端只使用 S9/S11 受控系统临时配置，禁止运行时改源或访问生产 host。
 5. 在 HarmonyOS 模拟器或成人受控 API 20+ 设备完成“授权 → 配对 → 查积分/规则 → 申报 → 家长审批 → 查看结果 → Refresh → 撤销”端到端 smoke，并验证 HUKS、AssetStore、前后台、重启、结果未知恢复和清数据行为。
 6. 在微信开发者工具和成人受控设备完成家长端同链路 smoke，交付安全文件导出/披露回执；全部证据只使用合成家庭且不记录凭据或儿童个人信息。
 7. 以 S10 工程安全壳为边界，由合规工作流定稿儿童易懂版正式摘要、完整法律文本、处理者联系方式、客服/投诉和真实行权入口；不得把工程说明当作同意或法律页面。并明确未决申报文字的保留期限和监护人授权安全放弃流程；设备作用域单条详情和写操作对账完成前，不开放申请补充、取消或重新提交。
@@ -993,3 +995,4 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 | v1.1 | 2026-08-27 | 记录 S14 不落盘凭据输入、全新 SQLite/单事务最小种子、不可变环境绑定回执、runtime 可写前门、并发/结果未知恢复与十项迁移审计清单；把 S15 定义为需外部授权的候选执行和部署前证据闭环 |
 | v1.2 | 2026-08-28 | 记录 S15 对 S12/S13/S14、当前 34 文件/10 迁移、配置、物理根和 pristine 数据库的 30 分钟未签名绑定，以及 19 项未认证声明信封；把 S16 定义为外部身份认证、权威事实核验与独立部署审批 |
 | v1.3 | 2026-08-28 | 记录 S16 的独立公开策略、Ed25519 domain-separated gate/checkpoint/approval/grant 离线验证、S15 双时刻重算和始终未授权边界；把 S17 定义为权威外部信任、可信时间、单调吊销与原子 grant 消费闭环 |
+| v1.4 | 2026-08-28 | 记录 S17 的独立本地授权账本、checkpoint 本 ledger 单调与累计吊销、本地原子单次使用记录、幂等/结果未知/永久 block 边界；把权威身份、可信时间、全局最新 checkpoint、全局消费和真实部署原子接入移至 S18 |

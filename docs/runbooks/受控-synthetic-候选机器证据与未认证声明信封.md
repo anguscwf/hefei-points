@@ -19,7 +19,7 @@ S15 提供两个 CLI：
 
 任一项不成立即停止：
 
-- 当前候选已经提交，index、工作树实现文件和 `HEAD` 一致；`npm run verify:synthetic-api-preflight` 的提交实现/离线守卫夹具自检通过；随后用同一候选配置执行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>`，实际候选 artifact 为 schema 4、36 个实现文件和精确 001～010 迁移集；
+- 当前候选已经提交，index、工作树实现文件和 `HEAD` 一致；`npm run verify:synthetic-api-preflight` 的提交实现/离线守卫夹具自检通过；随后用同一候选配置执行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>`，实际候选 artifact 为 schema 4、39 个实现文件和精确 001～010 迁移集；
 - S12 artifact、S13 bootstrap 前空根 schema 1 evidence、S14 schema 1 evidence 来自同一候选、同一配置和同一数据根，均由获批证据通道保留；
 - S14 bootstrap 请求中的 `candidateProvenance` 来自该次 S12 artifact，live receipt 中三项 provenance 与之相同；
 - 数据库仍处于刚完成 bootstrap 的最小状态：一个默认合成家庭、一个未轮换凭据的合成成人管理员、四类法律元数据和一个不可变回执；没有儿童、授权、设备、会话、积分、规则、申请、行权、审计或删除作业；
@@ -67,7 +67,7 @@ npm run capture:synthetic-candidate-evidence
 
 成功结果 `profile=synthetic-candidate-machine-subject`、`result=offline-machine-evidence-validated`。它绑定：
 
-- 当前 `sourceCommit`、实现树摘要、36 个实现文件和 10 个迁移；
+- 当前 `sourceCommit`、实现树摘要、39 个实现文件和 10 个迁移；
 - 当前 S12 配置摘要，包括规范化可信代理集合，以及折叠进 sensitive binding 的 AppSecret-keyed HMAC；该 HMAC 不回显 secret，但也不证明 secret 的外部独立性、托管合规或声明人身份；
 - 三阶段 artifact、marker、dataset、deployment/schema/request/approval/admin/legal 摘要；
 - canonical 物理根、批准父目录、root/data/SQLite 文件身份以及主机/OS 账号上下文的摘要；
@@ -185,8 +185,11 @@ childUseAuthorization=not_granted
 5. 在任何 runtime、登录、secret 或业务演进前设置 S15 ACK，组装 Phase A canonical 输入并 capture。
 6. 在 30 分钟内由各责任角色根据真实权威记录或现场检查形成 19 项声明；不得预填时间或复用另一 subject。
 7. 用原 capture 输入、原 subject 和 19 项声明执行 finalize；把输出交给获批的外部证据消费者。
-8. 外部系统另行认证声明人、验证权威事实与证据引用、核对生产门现场状态，并由有权人签发独立的受控 synthetic 部署审批。S15 不完成这些动作。
-9. 取得批准后才可部署；部署后仍只用合成家庭在模拟器或成人受控设备完成网络 E2E、HUKS/AssetStore、微信 DevTools/真机和撤销 smoke。
-10. 正式法律文本、PIPIA、存量数据整改、备案、AppGallery 审核和所有生产发布门全部完成前，不开放儿童实际使用。
+8. 外部系统另行认证声明人、验证权威事实与证据引用，并签发独立 checkpoint、gate verification、approval 和短时 grant。S15 不完成这些动作。
+9. 用 S16 verifier 对完整签名束做本地只读验证；S16 成功仍只是调用方策略下的 `unconsumed`，不是部署许可。
+10. 按 S17 手册初始化独立本地 ledger，并可对同一 S16 verification document 重新核验后提交一次本地使用记录；本 ledger receipt 不是全局消费或部署许可。
+11. 只有 S18/获批外部系统认证权威与 consumer、提供可信时间和全局最新 checkpoint，并把最终撤销、全局单次消费、真实部署动作和可核验回执安全协调，且全部外部硬门关闭后，才可执行一次受控 synthetic 部署。
+12. 部署后仍只用合成家庭在模拟器或成人受控设备完成网络 E2E、HUKS/AssetStore、微信 DevTools/真机和撤销 smoke。
+13. 正式法律文本、PIPIA、存量数据整改、备案、AppGallery 审核和所有生产发布门全部完成前，不开放儿童实际使用。
 
-S16 已提供本地签名束 verifier，但只确认调用方提供策略下的签名、吊销 checkpoint、gate、approval 和 grant 绑定；它仍不认证策略权威、真实身份、证据正文或审计记录，不提供可信时间、checkpoint 单调防回滚或 grant 原子消费。S17 必须由获批外部系统关闭这些硬门；不得把 S15 或 S16 输出升级措辞为部署许可。
+S16 已提供本地签名束 verifier，但只确认调用方提供策略下的签名、吊销 checkpoint、gate、approval 和 grant 绑定。S17 随后只在一个独立本地 ledger 实例内提供 checkpoint sequence 单调、累计吊销和本地 compare-and-record；它仍不认证策略权威或真实身份，不取回证据/审计正文，不提供可信时间、权威最新 checkpoint、跨主机全局单次消费或实际部署。以上外部硬门继续属于 S18/获批外部系统；不得把 S15、S16 或 S17 输出升级措辞为部署许可。

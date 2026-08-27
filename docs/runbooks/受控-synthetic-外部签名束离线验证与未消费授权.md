@@ -26,11 +26,13 @@ childUseAuthorization=not_granted
 
 本命令会用当前已提交 provenance 完整重跑 S15：先按原 `finalizedAt` 精确重构历史输出，再以本次验证开始时间重算当前机器状态。生产 CLI 不提供时间、provenance 或 finalizer 覆盖入口；测试替身只能经显式 test-only API 使用，且输出会把当前机器、Git 和数据库重验声明保守标为 `false`。
 
+当前成功输出为 `schemaVersion=2`，在既有结果上增加 `trustPolicyIdSha256`、`consumerIdSha256`、`targetEnvironmentSha256`、`sourceCommit`、`implementationTreeSha256`、`configurationSha256`、checkpoint、approval 与 grant 等安全摘要绑定，供 S17 独立本地账本精确消费。支持层另提供生产 API `verifySyntheticRevocationCheckpoint`：它沿用相同策略摘要钉住和二读规则，只验证一个签名 checkpoint 并返回 schema 1 冻结摘要；这不是新增部署 CLI，也不证明策略权威、可信时间或 checkpoint 为权威最新。
+
 ## 2. 执行前硬门
 
 任一项不成立即停止：
 
-- 候选实现已提交，index 与工作树中的 36 个受审实现文件和 001～010 迁移精确匹配 `HEAD`；
+- 候选实现已提交，index 与工作树中的 39 个受审实现文件和 001～010 迁移精确匹配 `HEAD`；
 - `npm run verify:synthetic-api-preflight` 已通过，并由同一配置生成并保存当前 schema 4 S12 artifact；
 - S13 全新根、S14 bootstrap 和 S15 capture/finalize 来自同一候选，数据库仍为 pristine 最小状态且 S15 未过期；
 - 外部系统已经真实完成身份认证、权威证据取回和事实核验，并生成独立签名记录；本地人员不得自行伪造“外部”结果；
@@ -185,7 +187,7 @@ productionChildGateChangeAuthorization=not_granted
 childUseAuthorization=not_granted
 ```
 
-它绑定 source commit、实现树、配置、S15、gate set、approval envelope、target environment、consumer 摘要和 grant ID。S16 只检查签名束要求外部原子单次消费；它自身没有消费账本。
+它绑定 source commit、实现树、配置、S15、gate set、approval envelope、target environment、consumer 摘要和 grant ID。S16 只检查签名束要求外部原子单次消费；它自身没有消费账本。S17 的后续账本也是独立本地记录，不会反向把 S16 输出变成全局授权。
 
 ## 6. 执行与成功输出
 
@@ -239,15 +241,18 @@ childUseAuthorization=not_granted
 
 任何失败都不得通过回拨时间、改摘要、移除吊销项、关闭域名/TLS 校验、重写数据库或使用另一候选的签名来绕过。
 
-## 8. S17 与生产硬门
+## 8. S17 本地边界与 S18 外部/生产硬门
 
-S16 只是本地验证器和验收边界，不是外部信任闭环。S17 至少需要在获批外部系统中完成：
+S17 已在仓库、synthetic 数据根和策略目录之外增加独立本地 ledger，对本账本已观察 checkpoint 执行 sequence 单调、累计吊销、fork/撤销移除永久 block，并在一个 `BEGIN IMMEDIATE` 内提交本地单次使用或稳定拒绝记录。它没有改变 S16 自身只读、`unconsumed` 的历史边界，也没有把本地 receipt 变成部署授权。
+
+S18/获批外部系统仍至少需要完成：
 
 1. 权威策略摘要的受控置入、轮换、责任人身份和主机本地卷/ACL 证明；
-2. 声明人、核验人、审批人、grant issuer 与 revocation authority 的真实身份认证和角色生命周期；
+2. 声明人、核验人、审批人、grant issuer、revocation authority 与 consumer 的真实身份认证和角色生命周期；
 3. 权威证据正文、来源、法律记录和不可变审计记录的实际取回与核对；
-4. 可信时间，以及 checkpoint sequence 的持久单调、防回滚和并发撤销；
-5. 绑定获批 consumer 的原子 compare-and-consume，保证 grant 单次使用并与最终撤销状态同事务判定；
-6. 真实部署前的再验证、部署后状态回执、监控、回滚和成人受控设备 E2E。
+4. 可信时间、权威最新 checkpoint，以及跨 ledger/主机/consumer 的全局 sequence、防回滚和并发撤销；
+5. ledger 文件的专用 OS 账号、ACL/所有权、加密、备份与外部防回滚锚；
+6. grant 的全局单次消费，并把最终撤销判断、真实部署动作和可核验回执原子协调或提供安全补偿；
+7. 部署后监控、失败补偿、回滚和成人受控设备 E2E。
 
 只有这些外部门关闭后，才可另行授权一次受控 synthetic 部署；仍只允许合成家庭、模拟器或成人受控设备。正式法律文本、儿童易懂摘要、PIPIA、存量数据整改、逐类留存/删除、受托方约束、备案、AppGallery 审核和正式签名发布完成前，production 儿童功能门必须继续关闭。不得侧载、切换成人账号、关闭未成年人模式、开启孩子设备开发者模式或采用其他绕过正式分发的路线。
