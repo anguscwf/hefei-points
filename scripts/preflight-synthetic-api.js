@@ -7,6 +7,9 @@ const deployment = require('../server/config/deployment-profile');
 
 const projectRoot = path.resolve(__dirname, '..');
 const realpathSync = fs.realpathSync.native || fs.realpathSync;
+const OFFLINE_GUARD_MARKER = Symbol.for(
+  'tangguan.syntheticPreflightOfflineGuardInstalled.v1'
+);
 const implementationFiles = Object.freeze([
   'package.json',
   'scripts/bootstrap-synthetic-database.js',
@@ -328,7 +331,7 @@ function assertRunningImplementation(inputs) {
   }
 }
 
-function committedProvenance() {
+function guardedCommittedProvenance() {
   assertExactMigrationDirectory();
   const { projectRealRoot } = runtimeRoots();
   const rootOutput = git(['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
@@ -361,6 +364,13 @@ function committedProvenance() {
       sha256: sha256(input.content)
     }))
   });
+}
+
+function committedProvenance() {
+  if (globalThis[OFFLINE_GUARD_MARKER] === true) {
+    return guardedCommittedProvenance();
+  }
+  return require('./verify-synthetic-api-preflight').lockedCommittedProvenance();
 }
 
 function evidenceFor(environment, provenance) {

@@ -19,6 +19,9 @@ const realpathSync = fs.realpathSync.native || fs.realpathSync;
 const ERROR_CODE = 'SYNTHETIC_PREFLIGHT_OFFLINE_FORBIDDEN';
 const ROOT_ENV = 'TANGGUAN_PREFLIGHT_GUARD_ROOT';
 const OUTPUT_ENV = 'TANGGUAN_PREFLIGHT_GUARD_OUTPUT';
+const OFFLINE_GUARD_MARKER = Symbol.for(
+  'tangguan.syntheticPreflightOfflineGuardInstalled.v1'
+);
 const rootPrefix = 'tangguan-synthetic-api-preflight-verification-';
 const stagingPrefix = '.tangguan-api-preflight-stage-';
 const evidenceName = '.synthetic-api-preflight.json';
@@ -432,6 +435,12 @@ function installOfflineGuard() {
   assertAuditedSourceShape();
   const expectedGitEnvironment = Object.freeze(minimumGitEnvironment());
   const gitExecutable = resolveGitExecutable(expectedGitEnvironment, boundary);
+  Object.defineProperty(globalThis, OFFLINE_GUARD_MARKER, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false
+  });
   const expectedGitOperations = Object.freeze([
     'root', 'head', 'index', 'tree', 'batch', 'head', 'index', 'tree',
     'root', 'head', 'index', 'tree', 'batch', 'head', 'index', 'tree'

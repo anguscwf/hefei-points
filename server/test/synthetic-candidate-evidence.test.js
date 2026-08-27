@@ -706,12 +706,19 @@ test('生产 profile 不能进入候选证据命令', () => {
 });
 
 test('真实两阶段 CLI 使用已提交 provenance 且只输出单行脱敏 JSON', () => {
-  const committed = preflight.committedProvenance();
-  const value = fixture('real-cli', committed);
   const fakeDirectory = path.join(tempRoot, 'real-cli-fake-git');
   const fakeGit = path.join(fakeDirectory, process.platform === 'win32' ? 'git.exe' : 'git');
   fs.mkdirSync(fakeDirectory);
   fs.writeFileSync(fakeGit, 'synthetic non-executable sentinel', { flag: 'wx' });
+  const originalPath = process.env.PATH;
+  let committed;
+  try {
+    process.env.PATH = `${fakeDirectory}${path.delimiter}${originalPath}`;
+    committed = preflight.committedProvenance();
+  } finally {
+    process.env.PATH = originalPath;
+  }
+  const value = fixture('real-cli', committed);
   const childEnvironment = {
     ...process.env,
     ...value.environment,
