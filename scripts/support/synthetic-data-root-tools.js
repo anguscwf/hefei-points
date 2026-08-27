@@ -285,6 +285,9 @@ function captureFilesystem(context) {
       'ROOT_BOUNDARY_UNSAFE'
     );
   }
+  if (Object.hasOwn(dataFiles, '.synthetic-bootstrap.lock')) {
+    fail('ROOT_BOUNDARY_UNSAFE');
+  }
   return Object.freeze({
     comparison: Object.freeze({
       contextFingerprint: context.fingerprint,

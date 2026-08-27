@@ -3,18 +3,28 @@ const path = require('path');
 const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { logicalDatabaseSha256 } = require('./logical-fingerprint');
+const {
+  appliedMigrations,
+  applyMigrations,
+  migrationFiles,
+  tableExists
+} = require('./migrations');
 const { validateSyntheticDeployment } = require('../config/deployment-profile');
 const { validateSyntheticRuntimeFilesystem } = require('../config/synthetic-runtime-filesystem');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 const DB_FILE = process.env.SQLITE_FILE || path.join(DATA_DIR, 'hefei-points.sqlite');
-const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 let database;
 
 function validateSyntheticDatabaseBoundary() {
   if (process.env.NODE_ENV !== 'production' || process.env.DEPLOYMENT_TIER !== 'synthetic') return;
   const projectRoot = path.resolve(__dirname, '..', '..');
   const deployment = validateSyntheticDeployment(process.env, { projectRoot });
+  if (fs.existsSync(path.join(DATA_DIR, '.synthetic-bootstrap.lock'))) {
+    const error = new Error('synthetic database bootstrap is in progress');
+    error.code = 'SYNTHETIC_BOOTSTRAP_IN_PROGRESS';
+    throw error;
+  }
   const samePath = (left, right) => process.platform === 'win32'
     ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
     : path.resolve(left) === path.resolve(right);
@@ -25,23 +35,6 @@ function validateSyntheticDatabaseBoundary() {
     throw error;
   }
   validateSyntheticRuntimeFilesystem(deployment, projectRoot);
-}
-
-function migrationFiles() {
-  return fs.readdirSync(MIGRATIONS_DIR).filter(name => name.endsWith('.sql')).sort();
-}
-
-function tableExists(db, table) {
-  return Boolean(db.prepare(`
-    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?
-  `).get(table));
-}
-
-function appliedMigrations(db) {
-  if (!tableExists(db, 'schema_migrations')) return [];
-  return db.prepare('SELECT version FROM schema_migrations ORDER BY version')
-    .all()
-    .map(row => row.version);
 }
 
 function businessCounts(db) {
@@ -112,25 +105,6 @@ function validateProductionMigrationBackup(db) {
     }
   } finally {
     snapshot.close();
-  }
-}
-
-function applyMigrations(db) {
-  db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
-  const applied = new Set(db.prepare('SELECT version FROM schema_migrations').all().map(row => row.version));
-  const files = migrationFiles();
-  for (const filename of files) {
-    if (applied.has(filename)) continue;
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, filename), 'utf8');
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      db.exec(sql);
-      db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(filename, new Date().toISOString());
-      db.exec('COMMIT');
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
   }
 }
 

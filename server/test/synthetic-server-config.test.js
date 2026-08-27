@@ -12,10 +12,17 @@ const profile = require('../config/deployment-profile');
 const runtimeFilesystem = require('../config/synthetic-runtime-filesystem');
 const preflight = require('../../scripts/preflight-synthetic-api');
 const committedPreflightVerifier = require('../../scripts/verify-synthetic-api-preflight');
+const {
+  BOOTSTRAP_ACK,
+  CREDENTIAL_PURPOSE,
+  bootstrapFromDocument
+} = require('../../scripts/support/synthetic-bootstrap');
 const committedPreflightImplementationFiles = Object.freeze([
   'package.json',
+  'scripts/bootstrap-synthetic-database.js',
   'scripts/preflight-synthetic-api.js',
   'scripts/prepare-synthetic-data-root.js',
+  'scripts/support/synthetic-bootstrap.js',
   'scripts/support/synthetic-data-root-tools.js',
   'scripts/support/synthetic-preflight-offline-guard.js',
   'scripts/verify-synthetic-api-preflight.js',
@@ -23,9 +30,22 @@ const committedPreflightImplementationFiles = Object.freeze([
   'server/config/defaults.js',
   'server/config/deployment-profile.js',
   'server/config/env.js',
+  'server/config/guardian-consent.js',
   'server/config/synthetic-runtime-filesystem.js',
   'server/db/connection.js',
+  'server/db/migrations.js',
+  'server/db/migrations/001_init.sql',
+  'server/db/migrations/002_token_revocation.sql',
+  'server/db/migrations/003_transaction_soft_delete.sql',
+  'server/db/migrations/004_family_rules_history.sql',
+  'server/db/migrations/005_transaction_rule_ids.sql',
+  'server/db/migrations/006_guardian_consent_enrollment.sql',
+  'server/db/migrations/007_device_pairing_sessions.sql',
+  'server/db/migrations/008_point_requests_transaction_sources.sql',
+  'server/db/migrations/009_data_rights_audit.sql',
+  'server/db/migrations/010_synthetic_bootstrap_receipt.sql',
   'server/lib/backup.js',
+  'server/lib/password.js',
   'server/lib/token.js',
   'server/lib/wx-auth.js',
   'server/routes/backup.js'
@@ -663,6 +683,16 @@ test('synthetic 运行数据根要求无链接物理目录、严格 marker 与�
     ));
     fs.unlinkSync(unexpected);
   }
+  const bootstrapLock = path.join(
+    deployment.dataPaths.dataDir,
+    path.basename(runtimeFilesystem.BOOTSTRAP_LOCK_RELATIVE_PATH)
+  );
+  fs.writeFileSync(bootstrapLock, '', { flag: 'wx', mode: 0o600 });
+  assert.doesNotThrow(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
+    deployment,
+    projectRoot
+  ));
+  fs.unlinkSync(bootstrapLock);
   const unexpectedBackup = path.join(deployment.dataPaths.root, 'backups');
   fs.mkdirSync(unexpectedBackup);
   assertRuntimeCode(() => runtimeFilesystem.validateSyntheticRuntimeFilesystem(
@@ -722,16 +752,52 @@ test('synthetic 运行数据根要求无链接物理目录、严格 marker 与�
   ));
 });
 
-test('synthetic runtime 首次启动与重启只创建合成默认家庭、SQLite 和独立 secret', () => {
+test('synthetic runtime 只在 bootstrap 后启动且重启复用独立 secret', () => {
   const root = path.join(tempRoot, 'tangguan-synthetic-runtime-spawn');
+  const relationSha256 = crypto.createHash('sha256')
+    .update('synthetic runtime relation declaration')
+    .digest('hex');
   const environment = syntheticEnvironment({
     SYNTHETIC_DATASET_ID: 'synthetic-runtime-spawn',
     SYNTHETIC_DATA_ROOT: root,
     DATA_DIR: path.join(root, 'data'),
     SQLITE_FILE: path.join(root, 'data', 'hefei-points-synthetic.sqlite'),
+    GUARDIAN_RELATION_DECLARATION_SHA256: relationSha256,
+    GUARDIAN_RELATION_DECLARATION_PUBLIC_URL:
+      `https://synthetic-api.example.com/legal/guardian-relation-declaration/`
+      + `synthetic-relation-v1/${relationSha256}.html`,
+    SYNTHETIC_BOOTSTRAP_ACK: BOOTSTRAP_ACK,
     LOG_LEVEL: 'error'
   });
   createPhysicalSyntheticRoot(environment);
+  const legalTypes = [
+    ['privacy_policy', 'privacy'],
+    ['child_personal_information_rules', 'child-rules'],
+    ['child_user_agreement', 'child-agreement'],
+    ['sensitive_information_notice', 'sensitive-notice']
+  ];
+  bootstrapFromDocument(environment, {
+    schemaVersion: 1,
+    requestId: 'synthetic-bootstrap-runtime_abcdef0123456789',
+    datasetId: environment.SYNTHETIC_DATASET_ID,
+    approvalReference: 'synthetic-approval-runtime_abcdef',
+    administrator: {
+      id: 'synthetic_admin_runtime',
+      password: 'S14!Runtime-Synthetic-Password-Aa9',
+      credentialPurpose: CREDENTIAL_PURPOSE
+    },
+    legalEvidence: {
+      effectiveAt: '2026-08-27T00:00:00.000Z',
+      texts: legalTypes.map(([type, slug]) => ({
+        type,
+        version: `synthetic-${slug}-runtime`,
+        contentSha256: crypto.createHash('sha256')
+          .update(`synthetic runtime ${slug}`)
+          .digest('hex')
+      }))
+    }
+  }, { now: new Date('2026-08-27T08:00:00.000Z') });
+  delete environment.SYNTHETIC_BOOTSTRAP_ACK;
   const program = [
     "const fs=require('node:fs');",
     "const path=require('node:path');",
@@ -750,8 +816,8 @@ test('synthetic runtime 首次启动与重启只创建合成默认家庭、SQLit
     "  if(!family||family.name!=='合成默认家庭')process.exitCode=11;",
     "  const repositories=require('./server/db/repositories');",
     "  const token=require('./server/lib/token');",
-    "  if(!repositories.users.findById('synthetic_admin'))repositories.users.insert({id:'synthetic_admin',name:'合成管理员',role:'admin',familyId:'default'});",
-    "  const headers={Authorization:'Bearer '+token.signToken('synthetic_admin','admin','default')};",
+    "  if(!repositories.users.findById('synthetic_admin_runtime'))process.exitCode=19;",
+    "  const headers={Authorization:'Bearer '+token.signToken('synthetic_admin_runtime','admin','default')};",
     "  const secret=fs.readFileSync(path.join(process.env.DATA_DIR,'.secret'),'utf8');",
     "  if(!/^[0-9a-f]{64}$/.test(secret))process.exitCode=12;",
     "  if(fs.existsSync(path.join(process.env.SYNTHETIC_DATA_ROOT,'backups')))process.exitCode=13;",

@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const repositories = require('../db/repositories');
-const { DATA_DIR } = require('../db/connection');
+const { DATA_DIR, getDb } = require('../db/connection');
 const logger = require('../lib/logger');
 
 function generateInviteCode() {
@@ -48,9 +48,47 @@ function getDefaultRuleTemplates() {
 function initData() {
   const syntheticRuntime = process.env.NODE_ENV === 'production'
     && process.env.DEPLOYMENT_TIER === 'synthetic';
+  if (syntheticRuntime) {
+    if (String(process.env.SYNTHETIC_BOOTSTRAP_ACK || '').trim()
+        || typeof process.env.SYNTHETIC_BOOTSTRAP_PASSWORD === 'string') {
+      const error = new Error('synthetic bootstrap controls must be removed before runtime');
+      error.code = 'SYNTHETIC_BOOTSTRAP_CONTROL_ACTIVE';
+      throw error;
+    }
+    if (fs.existsSync(path.join(DATA_DIR, '.synthetic-bootstrap.lock'))) {
+      const error = new Error('synthetic database bootstrap is in progress');
+      error.code = 'SYNTHETIC_BOOTSTRAP_IN_PROGRESS';
+      throw error;
+    }
+    const receipt = getDb().prepare(`
+      SELECT receipt.schema_version, receipt.status,
+             family.name AS family_name,
+             family.invite_code, family.invite_json
+      FROM synthetic_bootstrap_receipts AS receipt
+      JOIN families AS family ON family.id = receipt.family_id
+      WHERE receipt.singleton_id = 1
+    `).get();
+    const adultAdmin = getDb().prepare(`
+      SELECT 1 FROM users
+      WHERE family_id = 'default' AND role = 'admin'
+      LIMIT 1
+    `).get();
+    if (!receipt || receipt.schema_version !== 1 || receipt.status !== 'completed'
+        || receipt.family_name !== '合成默认家庭'
+        || receipt.invite_code !== null || receipt.invite_json !== null
+        || !adultAdmin) {
+      const error = new Error('synthetic database bootstrap is required');
+      error.code = 'SYNTHETIC_BOOTSTRAP_REQUIRED';
+      throw error;
+    }
+    // Synthetic startup must not silently add invite codes, default rules, or
+    // backup artifacts. Operators configure test rules explicitly after login.
+    logger.info({ event: 'backup.synthetic_skipped' }, 'automatic backup is disabled for synthetic data');
+    return;
+  }
   repositories.families.ensureDefault({
     id: 'default',
-    name: syntheticRuntime ? '合成默认家庭' : '安总家',
+    name: '安总家',
     inviteCode: generateInviteCode(),
     createdAt: new Date().toISOString()
   });
@@ -59,23 +97,17 @@ function initData() {
   }
   if (repositories.users.listAll().length === 0) {
     let legacyHasUsers = false;
-    if (!syntheticRuntime) {
-      const legacyConfigFile = path.join(DATA_DIR, 'config.json');
-      try {
-        const legacy = JSON.parse(fs.readFileSync(legacyConfigFile, 'utf8'));
-        legacyHasUsers = Array.isArray(legacy.users) && legacy.users.length > 0;
-      } catch (_) {}
-    }
+    const legacyConfigFile = path.join(DATA_DIR, 'config.json');
+    try {
+      const legacy = JSON.parse(fs.readFileSync(legacyConfigFile, 'utf8'));
+      legacyHasUsers = Array.isArray(legacy.users) && legacy.users.length > 0;
+    } catch (_) {}
     if (legacyHasUsers) {
       throw new Error('检测到尚未迁移的 JSON 用户数据，请先运行 npm run migrate:sqlite');
     }
     logger.warn({ event: 'bootstrap.no_users' }, 'no users configured; create an administrator securely');
   }
-  if (syntheticRuntime) {
-    logger.info({ event: 'backup.synthetic_skipped' }, 'automatic backup is disabled for synthetic data');
-  } else {
-    require('../lib/backup').doBackup();
-  }
+  require('../lib/backup').doBackup();
 }
 
 module.exports = { initData, getDefaultRuleTemplates };

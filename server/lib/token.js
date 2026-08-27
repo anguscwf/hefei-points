@@ -7,6 +7,7 @@ const { users } = require('../db/repositories');
 const features = require('../config/features');
 const { validateSyntheticDeployment } = require('../config/deployment-profile');
 const { validateSyntheticRuntimeFilesystem } = require('../config/synthetic-runtime-filesystem');
+const { hashPwd, verifyPwd, isHashed } = require('./password');
 const SECRET_FILE = path.join(DATA_DIR, '.secret');
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -15,6 +16,11 @@ function validateSyntheticTokenBoundary() {
     return false;
   }
   const deployment = validateSyntheticDeployment(process.env, { projectRoot: PROJECT_ROOT });
+  if (fs.existsSync(path.join(DATA_DIR, '.synthetic-bootstrap.lock'))) {
+    const error = new Error('synthetic database bootstrap is in progress');
+    error.code = 'SYNTHETIC_BOOTSTRAP_IN_PROGRESS';
+    throw error;
+  }
   validateSyntheticRuntimeFilesystem(deployment, PROJECT_ROOT);
   return true;
 }
@@ -140,25 +146,6 @@ function getToken(req) {
   const h = req.headers.authorization || '';
   if (h.startsWith('Bearer ')) return h.slice(7);
   return req.body?.token || req.query?.token || '';
-}
-
-// ============== 密码哈希（scrypt + salt，兼容旧SHA256） ==============
-function hashPwd(pwd) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(pwd, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
-}
-function verifyPwd(pwd, stored) {
-  if (!stored.includes(':')) {
-    // 旧格式（纯SHA256）兼容：验证通过后由调用方静默升级
-    return crypto.createHash('sha256').update(pwd).digest('hex') === stored;
-  }
-  const [salt, hash] = stored.split(':');
-  const test = crypto.scryptSync(pwd, salt, 64);
-  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), test);
-}
-function isHashed(pwd) {
-  return pwd && (pwd.includes(':') || (pwd.length === 64 && /^[a-f0-9]{64}$/.test(pwd)));
 }
 
 module.exports = {

@@ -6,6 +6,7 @@ const SYNTHETIC_DATA_MARKER_FILENAME = '.tangguan-synthetic-dataset.json';
 const SYNTHETIC_DATA_MARKER_PURPOSE = 'tangguan-synthetic-only-v1';
 const SQLITE_RELATIVE_PATH = 'data/hefei-points-synthetic.sqlite';
 const TOKEN_SECRET_RELATIVE_PATH = 'data/.secret';
+const BOOTSTRAP_LOCK_RELATIVE_PATH = 'data/.synthetic-bootstrap.lock';
 const realpathSync = fs.realpathSync.native || fs.realpathSync;
 
 function fail() {
@@ -139,6 +140,7 @@ function validateSyntheticRuntimeFilesystem(validatedDeployment, projectRoot) {
   }
   const allowedDataFiles = new Set([
     '.secret',
+    '.synthetic-bootstrap.lock',
     'hefei-points-synthetic.sqlite',
     'hefei-points-synthetic.sqlite-shm',
     'hefei-points-synthetic.sqlite-wal'
@@ -152,7 +154,8 @@ function validateSyntheticRuntimeFilesystem(validatedDeployment, projectRoot) {
     sqliteFile,
     `${sqliteFile}-wal`,
     `${sqliteFile}-shm`,
-    path.join(dataDir, '.secret')
+    path.join(dataDir, '.secret'),
+    path.join(dataDir, '.synthetic-bootstrap.lock')
   ]) {
     assertRegularSingleLink(filename, false);
   }
@@ -163,6 +166,7 @@ function validateSyntheticRuntimeFilesystem(validatedDeployment, projectRoot) {
 }
 
 module.exports = {
+  BOOTSTRAP_LOCK_RELATIVE_PATH,
   SQLITE_RELATIVE_PATH,
   TOKEN_SECRET_RELATIVE_PATH,
   SYNTHETIC_DATA_MARKER_FILENAME,

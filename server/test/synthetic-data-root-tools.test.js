@@ -588,7 +588,7 @@ test('verify 是只读操作，不调用 fs 写入、删除、链接或改名 AP
   }
 });
 
-test('verify 对四个允许运行文件只报告 presence，不读取正文', () => {
+test('verify 对四个持久运行文件只报告 presence，不读取正文', () => {
   const value = syntheticCase('allowed-runtime-files');
   try {
     rootTools.prepareSyntheticDataRoot(value.environment);
@@ -614,6 +614,21 @@ test('verify 对四个允许运行文件只报告 presence，不读取正文', (
       assert.equal(serialized.includes(content), false);
     }
     assertEvidenceIsRedacted(evidence, value);
+  } finally {
+    removeCase(value.caseRoot);
+  }
+});
+
+test('verify 拒绝 bootstrap 正在进行或崩溃遗留的锁文件', () => {
+  const value = syntheticCase('bootstrap-lock');
+  try {
+    rootTools.prepareSyntheticDataRoot(value.environment);
+    const lock = path.join(value.root, 'data', '.synthetic-bootstrap.lock');
+    fs.writeFileSync(lock, '', { flag: 'wx', mode: 0o600 });
+    assertToolCode(
+      () => rootTools.verifySyntheticDataRoot(value.environment),
+      'ROOT_BOUNDARY_UNSAFE'
+    );
   } finally {
     removeCase(value.caseRoot);
   }
