@@ -4,11 +4,13 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tangguan-synthetic-candidate-'));
 const profile = require('../config/deployment-profile');
+const { hashPwd } = require('../lib/password');
 const preflight = require('../../scripts/preflight-synthetic-api');
 const rootTools = require('../../scripts/support/synthetic-data-root-tools');
 const bootstrap = require('../../scripts/support/synthetic-bootstrap');
@@ -16,6 +18,27 @@ const candidate = require('../../scripts/support/synthetic-candidate-evidence');
 
 const captureNow = new Date('2026-08-28T01:00:00.000Z');
 const finalizeNow = new Date('2026-08-28T01:05:00.000Z');
+const expectedGateIds = Object.freeze([
+  'app_id_provisioning',
+  'developer_authorization',
+  'app_secret_independence',
+  'request_domain',
+  'business_domain',
+  'dns',
+  'tls',
+  'proxy_port_boundary',
+  'os_account',
+  'filesystem_acl',
+  'filesystem_owner',
+  'disk_isolation',
+  'backup_isolation',
+  'database_isolation',
+  'runtime_secret_management',
+  'infrastructure_connectivity',
+  'legal_records_publication',
+  'devtools_domain_tls_validation',
+  'production_root_isolation'
+]);
 
 after(() => {
   fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -101,9 +124,13 @@ function legalTexts(label) {
   }));
 }
 
-function fixture(label) {
-  const environment = environmentFor(label);
-  const provenance = provenanceFor(label);
+function fixture(
+  label,
+  selectedProvenance = provenanceFor(label),
+  environmentOverrides = {}
+) {
+  const environment = environmentFor(label, environmentOverrides);
+  const provenance = selectedProvenance;
   environment.SYNTHETIC_DATA_ROOT_PREPARE_ACK = rootTools.PREPARE_ACK;
   rootTools.prepareSyntheticDataRoot(environment, { projectRoot });
   delete environment.SYNTHETIC_DATA_ROOT_PREPARE_ACK;
@@ -184,7 +211,8 @@ test('候选机器 subject 精确绑定 S12/S13/S14 与实时只读最小数据�
   ]);
   assert.deepEqual(Object.keys(subject.bindings), [
     's12EvidenceSha256', 's13PreBootstrapEvidenceSha256',
-    's14BootstrapEvidenceSha256', 'configurationSha256', 'markerSha256',
+    's14BootstrapEvidenceSha256', 'rootContextSha256',
+    'databaseSnapshotSha256', 'configurationSha256', 'markerSha256',
     'datasetIdSha256', 'deploymentFingerprintSha256',
     'schemaFingerprintSha256', 'requestFingerprintSha256',
     'approvalReferenceSha256', 'administratorIdSha256', 'legalEvidenceSha256'
@@ -196,11 +224,14 @@ test('候选机器 subject 精确绑定 S12/S13/S14 与实时只读最小数据�
   assert.equal(subject.checks.bootstrapSourceCommitBound, true);
   assert.equal(subject.checks.currentDatabasePristine, true);
   assert.equal(subject.checks.historicalSequenceVerified, false);
-  assert.equal(subject.checks.runtimeSecretIdentityVerified, false);
+  assert.equal(subject.checks.trustedProxyAllowlistBound, true);
+  assert.equal(subject.checks.runtimeSecretIdentityBound, true);
+  assert.equal(subject.checks.runtimeSecretIndependenceVerified, false);
   assert.equal(subject.checks.localClockExternallyTrusted, false);
   assert.equal(subject.operations.readOnlyGitSubprocessStarted, true);
   assert.equal(subject.operations.databaseOpenedReadOnly, true);
-  assert.equal(subject.operations.databaseWritten, false);
+  assert.equal(subject.operations.syntheticDatabaseWritten, false);
+  assert.equal(subject.operations.inMemoryReferenceDatabaseCreated, true);
   assert.equal(subject.externalFactsVerifiedByThisCommand, false);
   assert.equal(subject.deploymentAuthorization, 'not_granted');
   assert.equal(subject.productionChildGateState, 'not_observed');
@@ -248,8 +279,8 @@ test('齐全外部声明只形成未认证信封，不授予部署或儿童使�
     'childUseAuthorization'
   ]);
   assert.equal(result.result, 'attestation-envelopes-present');
-  assert.equal(result.attestationCount, candidate.REQUIRED_GATE_IDS.length);
-  assert.deepEqual(result.requiredGateIds, candidate.REQUIRED_GATE_IDS);
+  assert.equal(result.attestationCount, expectedGateIds.length);
+  assert.deepEqual(result.requiredGateIds, expectedGateIds);
   assert.equal(result.checks.machineStateRevalidated, true);
   assert.equal(result.checks.attestationAuthenticityVerified, false);
   assert.equal(result.checks.externalFactsVerified, false);
@@ -284,6 +315,26 @@ test('三阶段证据、来源提交和当前配置不能跨候选混搭', () =>
   );
 });
 
+test('同数量代理替换或 AppSecret 轮换都会破坏候选配置绑定', () => {
+  const provenance = provenanceFor('sensitive-binding');
+  const proxy = fixture('sensitive-binding', provenance, {
+    PAIRING_CLIENT_IP_MODE: 'trusted_proxy',
+    TRUSTED_PROXIES: '192.0.2.10/32'
+  });
+  proxy.environment.TRUSTED_PROXIES = '198.51.100.20/32';
+  assertCode(
+    () => capture(proxy),
+    'SYNTHETIC_CANDIDATE_BINDING_MISMATCH'
+  );
+
+  const secret = fixture('secret-binding');
+  secret.environment.WX_APPSECRET = `synthetic-secret-rotated-${digest('rotated').slice(0, 16)}`;
+  assertCode(
+    () => capture(secret),
+    'SYNTHETIC_CANDIDATE_BINDING_MISMATCH'
+  );
+});
+
 test('数据库出现业务行、凭据演进或运行 sidecar 后候选状态 fail closed', () => {
   const cases = [
     ['business-row', value => {
@@ -301,8 +352,35 @@ test('数据库出现业务行、凭据演进或运行 sidecar 后候选状态 f
         db.prepare(`UPDATE users SET tokens_valid_after = 1 WHERE role = 'admin'`).run();
       } finally { db.close(); }
     }],
+    ['password-rotation', value => {
+      const db = new DatabaseSync(value.environment.SQLITE_FILE);
+      try {
+        db.prepare(`UPDATE users SET password = ? WHERE role = 'admin'`)
+          .run(hashPwd('S15!Rotated-Synthetic-Password-Aa9'));
+      } finally { db.close(); }
+    }],
     ['secret-sidecar', value => {
       fs.writeFileSync(path.join(value.environment.DATA_DIR, '.secret'), digest('runtime secret'));
+    }],
+    ['old-receipt-schema', value => {
+      const db = new DatabaseSync(value.environment.SQLITE_FILE);
+      try {
+        db.exec(`
+          PRAGMA foreign_keys = OFF;
+          DROP TRIGGER trg_synthetic_bootstrap_receipt_once;
+          DROP TRIGGER trg_synthetic_bootstrap_receipt_seed_guard;
+          DROP TRIGGER trg_synthetic_bootstrap_receipt_no_update;
+          DROP TRIGGER trg_synthetic_bootstrap_receipt_no_delete;
+          ALTER TABLE synthetic_bootstrap_receipts RENAME TO obsolete_s14_receipt;
+          CREATE TABLE synthetic_bootstrap_receipts (
+            singleton_id INTEGER PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            status TEXT NOT NULL
+          );
+          INSERT INTO synthetic_bootstrap_receipts VALUES (1, 1, 'completed');
+          DROP TABLE obsolete_s14_receipt;
+        `);
+      } finally { db.close(); }
     }]
   ];
   for (const [label, mutate] of cases) {
@@ -357,6 +435,18 @@ test('声明缺失、乱序、跨 subject、过期或伪称已验签均拒绝', 
   forged.externalAttestations[0].signatureStatus = 'verified';
   assertCode(
     () => candidate.finalizeAttestations(value.environment, forged, options),
+    'SYNTHETIC_CANDIDATE_ATTESTATION_INVALID'
+  );
+  const afterSubjectExpiry = structuredClone(base);
+  afterSubjectExpiry.externalAttestations[0].observedAt =
+    '2026-08-28T01:30:01.000Z';
+  afterSubjectExpiry.externalAttestations[0].expiresAt =
+    '2026-08-28T01:40:00.000Z';
+  assertCode(
+    () => candidate.finalizeAttestations(value.environment, afterSubjectExpiry, {
+      ...options,
+      now: new Date('2026-08-28T01:29:00.000Z')
+    }),
     'SYNTHETIC_CANDIDATE_ATTESTATION_INVALID'
   );
 });
@@ -437,6 +527,53 @@ test('两轮来源漂移失败，重复只读采集不产生 sidecar', () => {
   ]);
 });
 
+test('SQLite 同 inode 原地写入与跨物理根复制都不能复用 machine subject', () => {
+  const raced = fixture('database-race');
+  assertCode(
+    () => candidate.captureMachineSubject(raced.environment, raced.captureInput, {
+      projectRoot,
+      provenanceProvider: raced.provenanceProvider,
+      now: captureNow,
+      onPhase(phase) {
+        if (phase !== 'afterDatabaseReadOnlyValidation') return;
+        const db = new DatabaseSync(raced.environment.SQLITE_FILE);
+        try {
+          db.prepare(`UPDATE users SET tokens_valid_after = 1 WHERE role = 'admin'`).run();
+        } finally { db.close(); }
+      }
+    }),
+    'SYNTHETIC_CANDIDATE_SOURCE_CHANGED'
+  );
+
+  const original = fixture('physical-root');
+  const subject = capture(original);
+  const copiedParent = path.join(tempRoot, 'approved-physical-copy');
+  const copiedRoot = path.join(copiedParent, 'tangguan-synthetic-physical-copy');
+  fs.mkdirSync(copiedParent);
+  fs.cpSync(original.environment.SYNTHETIC_DATA_ROOT, copiedRoot, { recursive: true });
+  const copiedEnvironment = {
+    ...original.environment,
+    SYNTHETIC_DATA_ROOT_APPROVED_PARENT: copiedParent,
+    SYNTHETIC_DATA_ROOT: copiedRoot,
+    DATA_DIR: path.join(copiedRoot, 'data'),
+    SQLITE_FILE: path.join(copiedRoot, 'data', 'hefei-points-synthetic.sqlite')
+  };
+  assertCode(
+    () => candidate.finalizeAttestations(copiedEnvironment, {
+      schemaVersion: 1,
+      purpose: 'synthetic_candidate_attestation_finalize',
+      captureInput: original.captureInput,
+      machineSubject: subject,
+      externalAttestations: attestationsFor(subject)
+    }, {
+      projectRoot,
+      provenanceProvider: original.provenanceProvider,
+      now: finalizeNow
+    }),
+    'SYNTHETIC_CANDIDATE_SOURCE_CHANGED'
+  );
+});
+
 test('canonical stdin、ACK 与敏感明文边界返回稳定错误', () => {
   const environment = environmentFor('canonical');
   const input = {
@@ -466,6 +603,14 @@ test('canonical stdin、ACK 与敏感明文边界返回稳定错误', () => {
     () => candidate.decodeCanonicalInput(Buffer.from(JSON.stringify(sensitive)), environment),
     'SYNTHETIC_CANDIDATE_SENSITIVE_INPUT'
   );
+  const sensitivePath = { ...input, extra: environment.SYNTHETIC_DATA_ROOT };
+  assertCode(
+    () => candidate.decodeCanonicalInput(
+      Buffer.from(JSON.stringify(sensitivePath)),
+      environment
+    ),
+    'SYNTHETIC_CANDIDATE_SENSITIVE_INPUT'
+  );
   const withoutAck = { ...environment };
   delete withoutAck.SYNTHETIC_CANDIDATE_EVIDENCE_ACK;
   assertCode(
@@ -475,6 +620,43 @@ test('canonical stdin、ACK 与敏感明文边界返回稳定错误', () => {
   assertCode(
     () => candidate.decodeCanonicalInput(Buffer.alloc(candidate.MAX_STDIN_BYTES + 1), environment),
     'SYNTHETIC_CANDIDATE_INPUT_TOO_LARGE'
+  );
+});
+
+test('真实 CLI 失败保持空 stdout、单行稳定码且 help 明示不授权', async () => {
+  const environment = environmentFor('cli-errors');
+  const script = path.join(projectRoot, 'scripts', 'capture-synthetic-candidate-evidence.js');
+  const run = (args, input) => spawnSync(process.execPath, [script, ...args], {
+    cwd: projectRoot,
+    env: { ...process.env, ...environment },
+    input,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10000
+  });
+  for (const [args, input, code] of [
+    [['--unknown'], '', 'SYNTHETIC_CANDIDATE_ARGUMENT_INVALID'],
+    [[], '', 'SYNTHETIC_CANDIDATE_STDIN_REQUIRED'],
+    [[], '{"schemaVersion":1}\r\n', 'SYNTHETIC_CANDIDATE_INPUT_INVALID'],
+    [[], 'x'.repeat(candidate.MAX_STDIN_BYTES + 1),
+      'SYNTHETIC_CANDIDATE_INPUT_TOO_LARGE']
+  ]) {
+    const result = run(args, input);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '');
+    assert.equal(
+      result.stderr,
+      `Synthetic candidate evidence failed (${code}).\n`
+    );
+    assert.equal(result.stderr.includes(environment.SYNTHETIC_DATA_ROOT), false);
+  }
+  const help = run(['--help'], '');
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /does not persist evidence, access the network, deploy/);
+  assert.match(help.stdout, /does not .*grant use/i);
+  await assert.rejects(
+    candidate.readStdin({ isTTY: true }),
+    error => error.code === 'SYNTHETIC_CANDIDATE_STDIN_REQUIRED'
   );
 });
 
@@ -492,4 +674,80 @@ test('生产 profile 不能进入候选证据命令', () => {
     }),
     'SYNTHETIC_CANDIDATE_PRODUCTION_RESOURCE_REJECTED'
   );
+});
+
+test('真实两阶段 CLI 使用已提交 provenance 且只输出单行脱敏 JSON', () => {
+  const committed = preflight.committedProvenance();
+  const value = fixture('real-cli', committed);
+  const childEnvironment = { ...process.env, ...value.environment };
+  const captureResult = spawnSync(process.execPath, [
+    path.join(projectRoot, 'scripts', 'capture-synthetic-candidate-evidence.js')
+  ], {
+    cwd: projectRoot,
+    env: childEnvironment,
+    input: `${JSON.stringify(value.captureInput)}\n`,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 20000
+  });
+  assert.equal(captureResult.status, 0, captureResult.stderr);
+  assert.equal(captureResult.stderr, '');
+  assert.match(captureResult.stdout, /^\{[^\r\n]+\}\r?\n$/);
+  const subject = JSON.parse(captureResult.stdout);
+  assert.equal(subject.sourceCommit, committed.sourceCommit);
+  assert.equal(subject.deploymentAuthorization, 'not_granted');
+
+  const finalizeInput = {
+    schemaVersion: 1,
+    purpose: 'synthetic_candidate_attestation_finalize',
+    captureInput: value.captureInput,
+    machineSubject: subject,
+    externalAttestations: candidate.GATE_SPECS.map(([
+      gateId, declarantRole, sourceType
+    ]) => ({
+      gateId,
+      subjectSha256: subject.subjectSha256,
+      evidenceReferenceSha256: digest(`real cli opaque evidence ${gateId}`),
+      declarantRole,
+      sourceType,
+      observedAt: new Date(Date.parse(subject.capturedAt) + 1000).toISOString(),
+      expiresAt: new Date(Date.parse(subject.capturedAt) + (20 * 60 * 1000)).toISOString(),
+      state: 'declared_satisfied_not_authenticated',
+      signatureStatus: 'not_verified'
+    }))
+  };
+  const finalizeResult = spawnSync(process.execPath, [
+    path.join(projectRoot, 'scripts', 'finalize-synthetic-candidate-evidence.js')
+  ], {
+    cwd: projectRoot,
+    env: childEnvironment,
+    input: `${JSON.stringify(finalizeInput)}\n`,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 20000
+  });
+  assert.equal(finalizeResult.status, 0, finalizeResult.stderr);
+  assert.equal(finalizeResult.stderr, '');
+  assert.match(finalizeResult.stdout, /^\{[^\r\n]+\}\r?\n$/);
+  const finalized = JSON.parse(finalizeResult.stdout);
+  assert.equal(finalized.result, 'attestation-envelopes-present');
+  assert.equal(finalized.externalFactsVerifiedByThisCommand, false);
+  assert.equal(finalized.deploymentAuthorization, 'not_granted');
+  const combined = captureResult.stdout + finalizeResult.stdout;
+  for (const forbidden of [
+    value.environment.API_PUBLIC_ORIGIN,
+    value.environment.WX_APPID,
+    value.environment.WX_APPSECRET,
+    value.environment.SYNTHETIC_DATASET_ID,
+    value.environment.SYNTHETIC_DATA_ROOT,
+    value.environment.SQLITE_FILE
+  ]) {
+    assert.equal(combined.includes(forbidden), false, forbidden);
+    assert.equal(
+      combined.includes(JSON.stringify(forbidden).slice(1, -1)),
+      false,
+      forbidden
+    );
+  }
+  assert.equal(subject.implementationFileCount, 34);
 });

@@ -285,6 +285,33 @@ function sha256(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+function sensitiveConfigurationBinding(environment) {
+  const proxies = String(environment.TRUSTED_PROXIES || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+    .sort();
+  const publicContext = {
+    schemaVersion: 1,
+    purpose: 'synthetic-sensitive-configuration-context-v1',
+    apiOriginSha256: sha256(environment.API_PUBLIC_ORIGIN),
+    datasetIdSha256: sha256(environment.SYNTHETIC_DATASET_ID),
+    wechatAppIdSha256: sha256(environment.WX_APPID),
+    proxyMode: environment.PAIRING_CLIENT_IP_MODE,
+    trustedProxySetSha256: sha256(JSON.stringify(proxies))
+  };
+  const appSecretKeyedProofSha256 = crypto.createHmac(
+    'sha256',
+    environment.WX_APPSECRET
+  ).update(JSON.stringify(publicContext)).digest('hex');
+  return sha256(JSON.stringify({
+    schemaVersion: 1,
+    purpose: 'synthetic-sensitive-configuration-binding-v1',
+    publicContext,
+    appSecretKeyedProofSha256
+  }));
+}
+
 function captureExpectedProvenance() {
   assertExactMigrationDirectory();
   const canonicalRoot = realpathSync(projectRoot);
@@ -390,7 +417,7 @@ function assertEvidence(evidence, raw, expected, environment, boundaries) {
   ];
   if (raw !== `${JSON.stringify(evidence, null, 2)}\n`
       || !exactKeys(evidence, topKeys)
-      || evidence.schemaVersion !== 3
+      || evidence.schemaVersion !== 4
       || evidence.profile !== 'synthetic-api-offline-preflight'
       || evidence.result !== 'configuration-shape-validated'
       || evidence.sourceCommit !== expected.sourceCommit
@@ -410,6 +437,7 @@ function assertEvidence(evidence, raw, expected, environment, boundaries) {
     wechatAppIdSha256: sha256(Buffer.from(environment.WX_APPID, 'utf8')),
     wechatAppIdStringDiffersFromProduction: true,
     wechatSecretPresent: true,
+    sensitiveConfigurationBindingSha256: sensitiveConfigurationBinding(environment),
     operatorAcknowledgementsPresent: true,
     coreFeatureGatesEnabled: true,
     closedFeatureGatesDisabled: true,

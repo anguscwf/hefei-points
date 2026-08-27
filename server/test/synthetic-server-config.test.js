@@ -550,6 +550,8 @@ test('synthetic 配置总门只返回无秘密的规范化运行契约', () => {
   assert.equal(result.closedFeatureGatesDisabled, true);
   assert.equal(result.proxyPolicy.mode, 'direct');
   assert.equal(result.proxyPolicy.trustedProxyCount, 0);
+  assert.match(result.proxyPolicy.trustedProxySetSha256, /^[0-9a-f]{64}$/);
+  assert.match(result.sensitiveConfigurationBindingSha256, /^[0-9a-f]{64}$/);
   assert.equal(Object.values(result).includes(environment.WX_APPSECRET), false);
 });
 
@@ -1006,13 +1008,18 @@ test('离线 preflight 只原子发布无密配置形状证据', () => {
   const evidenceFile = path.join(output, '.synthetic-api-preflight.json');
   const raw = fs.readFileSync(evidenceFile, 'utf8');
   const evidence = JSON.parse(raw);
-  assert.equal(evidence.schemaVersion, 3);
+  assert.equal(evidence.schemaVersion, 4);
   assert.equal(evidence.profile, 'synthetic-api-offline-preflight');
   assert.equal(evidence.result, 'configuration-shape-validated');
   assert.equal(evidence.sourceCommit, 'a'.repeat(40));
   assert.equal(evidence.implementationIndexMatchesHead, true);
   assert.equal(evidence.implementationWorktreeMatchesHeadAfterEolNormalization, true);
   assert.equal(evidence.configuration.wechatSecretPresent, true);
+  assert.equal(
+    evidence.configuration.sensitiveConfigurationBindingSha256,
+    profile.validateSyntheticDeployment(environment, { projectRoot })
+      .sensitiveConfigurationBindingSha256
+  );
   assert.equal(
     evidence.configuration.apiOriginSha256,
     sha256(Buffer.from(environment.API_PUBLIC_ORIGIN, 'utf8'))

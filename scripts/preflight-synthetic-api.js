@@ -374,6 +374,8 @@ function evidenceFor(environment, provenance) {
     wechatAppIdStringDiffersFromProduction:
       validated.wechatAppId !== deployment.PRODUCTION_WECHAT_APP_ID,
     wechatSecretPresent: validated.wechatSecretPresent,
+    sensitiveConfigurationBindingSha256:
+      validated.sensitiveConfigurationBindingSha256,
     operatorAcknowledgementsPresent: true,
     coreFeatureGatesEnabled: validated.coreFeatureGatesEnabled,
     closedFeatureGatesDisabled: validated.closedFeatureGatesDisabled,
@@ -381,7 +383,7 @@ function evidenceFor(environment, provenance) {
     syntheticDataPathShapeValid: true
   };
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     profile: 'synthetic-api-offline-preflight',
     result: 'configuration-shape-validated',
     sourceCommit: provenance.sourceCommit,

@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { TextDecoder } = require('node:util');
 const { pathToFileURL } = require('node:url');
@@ -8,6 +9,7 @@ const { DatabaseSync } = require('node:sqlite');
 const preflight = require('../preflight-synthetic-api');
 const rootTools = require('./synthetic-data-root-tools');
 const bootstrap = require('./synthetic-bootstrap');
+const runtimeFilesystem = require('../../server/config/synthetic-runtime-filesystem');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const MAX_STDIN_BYTES = 256 * 1024;
@@ -16,6 +18,7 @@ const ACK = 'assemble-review-only-not-deployment-v1';
 const SUBJECT_TTL_MS = 30 * 60 * 1000;
 const ATTESTATION_TTL_MS = 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
+const MAX_CANDIDATE_DATABASE_BYTES = 64 * 1024 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/;
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -37,6 +40,7 @@ const GATE_SPECS = Object.freeze([
   ['runtime_secret_management', 'security_reviewer', 'security_review'],
   ['infrastructure_connectivity', 'platform_administrator', 'host_inspection'],
   ['legal_records_publication', 'legal_reviewer', 'legal_review'],
+  ['devtools_domain_tls_validation', 'application_operator', 'authority_record'],
   ['production_root_isolation', 'security_reviewer', 'security_review']
 ].map(value => Object.freeze(value)));
 const REQUIRED_GATE_IDS = Object.freeze(GATE_SPECS.map(([gateId]) => gateId));
@@ -152,6 +156,14 @@ function sensitiveValues(environment) {
   ].filter(value => typeof value === 'string' && value.length >= 6);
 }
 
+function sensitiveRawForms(environment) {
+  const result = [];
+  for (const value of sensitiveValues(environment)) {
+    result.push(value, JSON.stringify(value).slice(1, -1));
+  }
+  return [...new Set(result)];
+}
+
 function decodeCanonicalInput(buffer, environment = process.env) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
     fail('SYNTHETIC_CANDIDATE_STDIN_REQUIRED');
@@ -165,7 +177,7 @@ function decodeCanonicalInput(buffer, environment = process.env) {
   }
   if (raw.endsWith('\n') && !raw.endsWith('\r\n')) raw = raw.slice(0, -1);
   if (!raw) fail('SYNTHETIC_CANDIDATE_STDIN_REQUIRED');
-  if (sensitiveValues(environment).some(value => raw.includes(value))) {
+  if (sensitiveRawForms(environment).some(value => raw.includes(value))) {
     fail('SYNTHETIC_CANDIDATE_SENSITIVE_INPUT');
   }
   let document;
@@ -201,7 +213,7 @@ function validateS12Evidence(evidence, expected) {
   if (canonicalJson(evidence) !== canonicalJson(expected)) {
     fail('SYNTHETIC_CANDIDATE_BINDING_MISMATCH');
   }
-  if (evidence.schemaVersion !== 3
+  if (evidence.schemaVersion !== 4
       || evidence.profile !== 'synthetic-api-offline-preflight'
       || evidence.result !== 'configuration-shape-validated'
       || !validCommit(evidence.sourceCommit)
@@ -333,12 +345,94 @@ function validateCurrentRoot(evidence) {
   }
 }
 
+function metadataSnapshot(filename, expectedType) {
+  let metadata;
+  let real;
+  try {
+    metadata = fs.lstatSync(filename, { bigint: true });
+    real = (fs.realpathSync.native || fs.realpathSync)(filename);
+  } catch (_) {
+    fail('SYNTHETIC_CANDIDATE_SOURCE_CHANGED');
+  }
+  if (metadata.isSymbolicLink()
+      || (expectedType === 'file' && (!metadata.isFile() || metadata.nlink !== 1n))
+      || (expectedType === 'directory' && !metadata.isDirectory())) {
+    fail('SYNTHETIC_CANDIDATE_SOURCE_CHANGED');
+  }
+  return Object.freeze({
+    canonicalPath: process.platform === 'win32' ? real.toLowerCase() : real,
+    dev: String(metadata.dev),
+    ino: String(metadata.ino),
+    mode: String(metadata.mode),
+    nlink: String(metadata.nlink),
+    size: String(metadata.size),
+    mtimeNs: String(metadata.mtimeNs),
+    ctimeNs: String(metadata.ctimeNs)
+  });
+}
+
+function physicalRootContext(environment) {
+  let account;
+  try {
+    account = os.userInfo();
+  } catch (_) {
+    fail('SYNTHETIC_CANDIDATE_PRODUCTION_RESOURCE_REJECTED');
+  }
+  const root = environment.SYNTHETIC_DATA_ROOT;
+  const data = environment.DATA_DIR;
+  return Object.freeze({
+    schemaVersion: 1,
+    purpose: 'synthetic-candidate-physical-root-context-v1',
+    host: Object.freeze({
+      platform: process.platform,
+      architecture: process.arch,
+      hostname: os.hostname(),
+      username: account.username,
+      uid: typeof account.uid === 'number' ? account.uid : null,
+      gid: typeof account.gid === 'number' ? account.gid : null
+    }),
+    approvedParent: metadataSnapshot(
+      environment.SYNTHETIC_DATA_ROOT_APPROVED_PARENT,
+      'directory'
+    ),
+    root: metadataSnapshot(root, 'directory'),
+    data: metadataSnapshot(data, 'directory'),
+    marker: metadataSnapshot(
+      path.join(root, runtimeFilesystem.SYNTHETIC_DATA_MARKER_FILENAME),
+      'file'
+    ),
+    sqlite: metadataSnapshot(environment.SQLITE_FILE, 'file')
+  });
+}
+
+function databaseSnapshot(filename) {
+  const first = metadataSnapshot(filename, 'file');
+  if (BigInt(first.size) <= 0n || BigInt(first.size) > BigInt(MAX_CANDIDATE_DATABASE_BYTES)) {
+    fail('SYNTHETIC_CANDIDATE_STATE_ADVANCED');
+  }
+  let content;
+  try {
+    content = fs.readFileSync(filename);
+  } catch (_) {
+    fail('SYNTHETIC_CANDIDATE_SOURCE_CHANGED');
+  }
+  const second = metadataSnapshot(filename, 'file');
+  if (canonicalJson(first) !== canonicalJson(second)
+      || content.length !== Number(BigInt(first.size))) {
+    content.fill(0);
+    fail('SYNTHETIC_CANDIDATE_SOURCE_CHANGED');
+  }
+  const contentSha256 = sha256(content);
+  content.fill(0);
+  return Object.freeze({ ...second, contentSha256 });
+}
+
 function validateReadOnlyDatabase(environment, provenance, options) {
   const filename = environment.SQLITE_FILE;
   let before;
   let db;
   try {
-    before = bootstrap.databaseFileIdentity(filename);
+    before = databaseSnapshot(filename);
     const immutableUri = `${pathToFileURL(filename).href}?immutable=1`;
     db = new DatabaseSync(immutableUri, { readOnly: true });
     db.exec('PRAGMA foreign_keys = ON');
@@ -349,14 +443,20 @@ function validateReadOnlyDatabase(environment, provenance, options) {
       provenance,
       { projectRoot: options.projectRoot || PROJECT_ROOT }
     );
-    const after = bootstrap.databaseFileIdentity(filename);
-    if (!bootstrap.sameFileIdentity(before, after)) {
-      fail('SYNTHETIC_CANDIDATE_SOURCE_CHANGED');
-    }
     db.exec('COMMIT');
     db.close();
     db = undefined;
-    return validated;
+    if (options && typeof options.onPhase === 'function') {
+      options.onPhase('afterDatabaseReadOnlyValidation');
+    }
+    const after = databaseSnapshot(filename);
+    if (canonicalJson(before) !== canonicalJson(after)) {
+      fail('SYNTHETIC_CANDIDATE_SOURCE_CHANGED');
+    }
+    return Object.freeze({
+      validated,
+      databaseSnapshotSha256: canonicalHash(after)
+    });
   } catch (error) {
     if (db) {
       try { db.exec('ROLLBACK'); } catch (_) {}
@@ -411,7 +511,9 @@ function captureMachineSubject(environment, document, options = {}) {
     validateCurrentRoot(firstRoot);
     validateS12Evidence(input.s12Preflight, expectedS12);
     validateS13Evidence(input.s13PreBootstrap, firstRoot.filesystem.markerSha256);
-    const validated = validateReadOnlyDatabase(environment, provenance, options);
+    const firstPhysicalContext = physicalRootContext(environment);
+    const databaseValidation = validateReadOnlyDatabase(environment, provenance, options);
+    const { validated } = databaseValidation;
     validateS14Evidence(input.s14Bootstrap, validated, provenance);
 
     const secondRoot = rootTools.verifySyntheticDataRoot(environment, {
@@ -419,6 +521,10 @@ function captureMachineSubject(environment, document, options = {}) {
     });
     validateCurrentRoot(secondRoot);
     if (canonicalJson(firstRoot) !== canonicalJson(secondRoot)) {
+      fail('SYNTHETIC_CANDIDATE_SOURCE_CHANGED');
+    }
+    const secondPhysicalContext = physicalRootContext(environment);
+    if (canonicalJson(firstPhysicalContext) !== canonicalJson(secondPhysicalContext)) {
       fail('SYNTHETIC_CANDIDATE_SOURCE_CHANGED');
     }
     const finalProvenance = provider();
@@ -431,6 +537,8 @@ function captureMachineSubject(environment, document, options = {}) {
       s12EvidenceSha256: canonicalHash(input.s12Preflight),
       s13PreBootstrapEvidenceSha256: canonicalHash(input.s13PreBootstrap),
       s14BootstrapEvidenceSha256: canonicalHash(input.s14Bootstrap),
+      rootContextSha256: canonicalHash(secondPhysicalContext),
+      databaseSnapshotSha256: databaseValidation.databaseSnapshotSha256,
       configurationSha256: provenance.configurationSha256,
       markerSha256: receipt.marker_sha256,
       datasetIdSha256: receipt.dataset_id_sha256,
@@ -476,19 +584,22 @@ function captureMachineSubject(environment, document, options = {}) {
       bindings,
       checks: Object.freeze({
         currentCommitBound: true,
-        currentConfigurationShapeBound: true,
+        currentConfigurationAggregateBound: true,
+        trustedProxyAllowlistBound: true,
+        runtimeSecretIdentityBound: true,
         bootstrapSourceCommitBound: true,
         s13S14MarkerBound: true,
         liveBootstrapReceiptBound: true,
         currentDatabasePristine: true,
         historicalSequenceVerified: false,
-        runtimeSecretIdentityVerified: false,
+        runtimeSecretIndependenceVerified: false,
         localClockExternallyTrusted: false
       }),
       operations: Object.freeze({
         readOnlyGitSubprocessStarted: true,
         databaseOpenedReadOnly: true,
-        databaseWritten: false,
+        syntheticDatabaseWritten: false,
+        inMemoryReferenceDatabaseCreated: true,
         networkAccessPerformed: false,
         deploymentPerformed: false,
         productionDataRead: false,
@@ -554,7 +665,7 @@ function validateMachineSubject(subject, now) {
   return { capturedAt, validUntil };
 }
 
-function validateAttestations(attestations, subject, now, capturedAt) {
+function validateAttestations(attestations, subject, now, capturedAt, subjectValidUntil) {
   if (!Array.isArray(attestations) || attestations.length !== GATE_SPECS.length) {
     fail('SYNTHETIC_CANDIDATE_ATTESTATION_INCOMPLETE');
   }
@@ -579,7 +690,8 @@ function validateAttestations(attestations, subject, now, capturedAt) {
         || value.declarantRole !== role || value.sourceType !== sourceType
         || value.state !== 'declared_satisfied_not_authenticated'
         || value.signatureStatus !== 'not_verified'
-        || observedAt < capturedAt || observedAt > now.getTime() + CLOCK_SKEW_MS
+        || observedAt < capturedAt || observedAt > subjectValidUntil
+        || observedAt > now.getTime() + CLOCK_SKEW_MS
         || expiresAt <= now.getTime() || expiresAt <= observedAt
         || expiresAt - observedAt > ATTESTATION_TTL_MS) {
       if (expiresAt <= now.getTime()) fail('SYNTHETIC_CANDIDATE_ATTESTATION_EXPIRED');
@@ -617,7 +729,8 @@ function finalizeAttestations(environment, document, options = {}) {
     document.externalAttestations,
     document.machineSubject,
     now,
-    times.capturedAt
+    times.capturedAt,
+    times.validUntil
   );
   const validUntilEpoch = Math.min(times.validUntil, earliestAttestationExpiry);
   const attestationSetSha256 = canonicalHash(document.externalAttestations);
@@ -644,7 +757,8 @@ function finalizeAttestations(environment, document, options = {}) {
     operations: Object.freeze({
       readOnlyGitSubprocessStarted: true,
       databaseOpenedReadOnly: true,
-      databaseWritten: false,
+      syntheticDatabaseWritten: false,
+      inMemoryReferenceDatabaseCreated: true,
       networkAccessPerformed: false,
       deploymentPerformed: false,
       productionDataRead: false,
@@ -666,7 +780,8 @@ function usage(mode) {
     '',
     `Requires ${ACK_ENV}=${ACK}.`,
     'Reads one canonical JSON document from non-TTY stdin and writes one redacted JSON line.',
-    'This command starts read-only Git subprocesses and opens only the synthetic SQLite read-only.',
+    'This command starts read-only Git subprocesses, opens the synthetic SQLite read-only,',
+    'and creates an in-memory reference schema without writing the synthetic database.',
     'It does not persist evidence, access the network, deploy, verify external facts or grant use.'
   ].join('\n');
 }

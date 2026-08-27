@@ -341,6 +341,8 @@ function createBindingContext(environment, { projectRoot = PROJECT_ROOT } = {}) 
     markerSha256: filesystem.markerSha256,
     proxyMode: deployment.proxyPolicy.mode,
     trustedProxyCount: deployment.proxyPolicy.trustedProxyCount,
+    sensitiveConfigurationBindingSha256:
+      deployment.sensitiveConfigurationBindingSha256,
     legalOriginSha256: sha256(deployment.legalSource.legalOrigin),
     coreFeatureGatesEnabled: deployment.coreFeatureGatesEnabled,
     closedFeatureGatesDisabled: deployment.closedFeatureGatesDisabled
@@ -577,7 +579,12 @@ function expectedLegalRows(input) {
     .sort((left, right) => left.type.localeCompare(right.type));
 }
 
-function receiptStaticValues(input, context, schemaFingerprintSha256) {
+function receiptStaticValues(
+  input,
+  context,
+  schemaFingerprintSha256,
+  administratorVerifierSha256
+) {
   return Object.freeze({
     schema_version: 1,
     status: 'completed',
@@ -595,6 +602,7 @@ function receiptStaticValues(input, context, schemaFingerprintSha256) {
     administrator_id: input.administrator.id,
     administrator_id_sha256: input.administratorIdSha256,
     credential_method: 'scrypt-v1',
+    administrator_verifier_sha256: administratorVerifierSha256,
     legal_text_count: 4,
     legal_evidence_sha256: input.legalEvidenceSha256,
     relation_declaration_version: input.relationDeclaration.version,
@@ -645,7 +653,19 @@ function validateReplay(db, input, context) {
       || typeof row.completed_at !== 'string' || !row.completed_at) {
     fail('BOOTSTRAP_STATE_INVALID');
   }
-  const expected = receiptStaticValues(input, context, referenceSchemaFingerprint());
+  if (row.request_id_sha256 !== input.requestIdSha256) fail('BOOTSTRAP_CONFLICT');
+  const administrator = db.prepare(`
+    SELECT password FROM users WHERE family_id = 'default' AND id = ?
+  `).get(input.administrator.id);
+  if (!administrator || typeof administrator.password !== 'string') {
+    fail('BOOTSTRAP_STATE_INVALID');
+  }
+  const expected = receiptStaticValues(
+    input,
+    context,
+    referenceSchemaFingerprint(),
+    sha256(administrator.password)
+  );
   if (row.request_id_sha256 !== expected.request_id_sha256
       || !sameStaticReceipt(row, expected)) {
     fail('BOOTSTRAP_CONFLICT');
@@ -731,7 +751,7 @@ function validateSyntheticCandidateDatabase(db, environment, provenance, options
   }
   assertExactInitialSeedCounts(db, 'SYNTHETIC_BOOTSTRAP_CONTEXT_MISMATCH');
   const administrator = db.prepare(`
-    SELECT name, role, family_id, openid, bound_at, tokens_valid_after
+    SELECT name, role, family_id, password, openid, bound_at, tokens_valid_after
     FROM users WHERE family_id = 'default' AND id = ?
   `).get(receipt.administrator_id);
   const relationDeclaration = {
@@ -743,6 +763,8 @@ function validateSyntheticCandidateDatabase(db, environment, provenance, options
   const liveLegalEvidence = LEGAL_TEXT_TYPES.map(type => liveLegalByType.get(type));
   if (!administrator || administrator.name !== ADMINISTRATOR_NAME
       || administrator.role !== 'admin' || administrator.family_id !== 'default'
+      || typeof administrator.password !== 'string'
+      || receipt.administrator_verifier_sha256 !== sha256(administrator.password)
       || administrator.openid !== null || administrator.bound_at !== null
       || Number(administrator.tokens_valid_after) !== 0
       || receipt.legal_evidence_sha256 !== canonicalHash({
@@ -1020,7 +1042,12 @@ function insertSeed(db, input, context, now, options) {
     callFault(options, `after_legal_${text.type}`);
   }
 
-  const receipt = receiptStaticValues(input, context, referenceSchemaFingerprint());
+  const receipt = receiptStaticValues(
+    input,
+    context,
+    referenceSchemaFingerprint(),
+    sha256(passwordVerifier)
+  );
   db.prepare(`
     INSERT INTO synthetic_bootstrap_receipts(
       singleton_id, schema_version, status,
@@ -1029,11 +1056,12 @@ function insertSeed(db, input, context, now, options) {
       deployment_fingerprint_sha256, marker_sha256, schema_fingerprint_sha256,
       dataset_id_sha256, approval_reference_sha256,
       family_id, administrator_id, administrator_id_sha256,
-      credential_method, legal_text_count, legal_evidence_sha256,
+      credential_method, administrator_verifier_sha256,
+      legal_text_count, legal_evidence_sha256,
       relation_declaration_version, relation_declaration_sha256,
       relation_declaration_public_url, completed_at
     ) VALUES (
-      1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `).run(
     receipt.schema_version,
@@ -1052,6 +1080,7 @@ function insertSeed(db, input, context, now, options) {
     receipt.administrator_id,
     receipt.administrator_id_sha256,
     receipt.credential_method,
+    receipt.administrator_verifier_sha256,
     receipt.legal_text_count,
     receipt.legal_evidence_sha256,
     receipt.relation_declaration_version,

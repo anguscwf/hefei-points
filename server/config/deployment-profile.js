@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const net = require('node:net');
 const path = require('node:path');
 
@@ -51,6 +52,37 @@ class DeploymentConfigError extends Error {
 
 function fail(code, message) {
   throw new DeploymentConfigError(code, message);
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function sensitiveConfigurationBinding({
+  apiOrigin,
+  datasetId,
+  proxyPolicy,
+  wechatAppId,
+  wechatSecret
+}) {
+  const publicContext = {
+    schemaVersion: 1,
+    purpose: 'synthetic-sensitive-configuration-context-v1',
+    apiOriginSha256: sha256(apiOrigin),
+    datasetIdSha256: sha256(datasetId),
+    wechatAppIdSha256: sha256(wechatAppId),
+    proxyMode: proxyPolicy.mode,
+    trustedProxySetSha256: proxyPolicy.trustedProxySetSha256
+  };
+  const appSecretKeyedProofSha256 = crypto.createHmac('sha256', wechatSecret)
+    .update(JSON.stringify(publicContext))
+    .digest('hex');
+  return sha256(JSON.stringify({
+    schemaVersion: 1,
+    purpose: 'synthetic-sensitive-configuration-binding-v1',
+    publicContext,
+    appSecretKeyedProofSha256
+  }));
 }
 
 function canonicalPublicHttpsOrigin(value) {
@@ -146,12 +178,24 @@ function validateProxyPolicy(environment) {
     if (proxies.length) {
       fail('SYNTHETIC_PROXY_POLICY_INVALID', 'direct pairing mode must not name trusted proxies');
     }
-    return Object.freeze({ mode, trustedProxyCount: 0 });
+    return Object.freeze({
+      mode,
+      trustedProxyCount: 0,
+      trustedProxySetSha256: sha256(JSON.stringify([]))
+    });
   }
   if (mode !== 'trusted_proxy' || proxies.length === 0 || !proxies.every(validProxy)) {
     fail('SYNTHETIC_PROXY_POLICY_INVALID', 'synthetic pairing proxy policy is invalid');
   }
-  return Object.freeze({ mode, trustedProxyCount: proxies.length });
+  const normalized = [...proxies].sort();
+  if (new Set(normalized).size !== normalized.length) {
+    fail('SYNTHETIC_PROXY_POLICY_INVALID', 'synthetic trusted proxies must be unique');
+  }
+  return Object.freeze({
+    mode,
+    trustedProxyCount: normalized.length,
+    trustedProxySetSha256: sha256(JSON.stringify(normalized))
+  });
 }
 
 function validateSyntheticDataPaths(environment, projectRoot) {
@@ -238,11 +282,19 @@ function validateSyntheticDeployment(environment, options = {}) {
   const dataPaths = validateSyntheticDataPaths(environment, projectRoot);
   const proxyPolicy = validateProxyPolicy(environment);
   const legalSource = validateSyntheticLegalSource(environment, apiOrigin);
+  const sensitiveConfigurationBindingSha256 = sensitiveConfigurationBinding({
+    apiOrigin,
+    datasetId: environment.SYNTHETIC_DATASET_ID,
+    proxyPolicy,
+    wechatAppId,
+    wechatSecret
+  });
   return Object.freeze({
     deploymentTier: 'synthetic',
     apiOrigin,
     wechatAppId,
     wechatSecretPresent: true,
+    sensitiveConfigurationBindingSha256,
     datasetId: environment.SYNTHETIC_DATASET_ID,
     dataPaths,
     proxyPolicy,

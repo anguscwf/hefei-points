@@ -72,6 +72,11 @@ CREATE TABLE synthetic_bootstrap_receipts (
     ),
   credential_method TEXT NOT NULL
     CHECK (credential_method = 'scrypt-v1'),
+  administrator_verifier_sha256 TEXT NOT NULL
+    CHECK (
+      length(administrator_verifier_sha256) = 64
+      AND administrator_verifier_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
   legal_text_count INTEGER NOT NULL
     CHECK (legal_text_count = 4),
   legal_evidence_sha256 TEXT NOT NULL
