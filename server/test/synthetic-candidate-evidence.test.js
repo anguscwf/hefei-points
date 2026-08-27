@@ -390,7 +390,7 @@ test('数据库出现业务行、凭据演进或运行 sidecar 后候选状态 f
   }
 });
 
-test('声明缺失、乱序、跨 subject、过期或伪称已验签均拒绝', () => {
+test('声明缺失、乱序、重复引用、跨 subject、过期或伪称已验签均拒绝', () => {
   const value = fixture('attestation-reject');
   const subject = capture(value);
   const base = {
@@ -419,10 +419,39 @@ test('声明缺失、乱序、跨 subject、过期或伪称已验签均拒绝', 
     () => candidate.finalizeAttestations(value.environment, reordered, options),
     'SYNTHETIC_CANDIDATE_ATTESTATION_INVALID'
   );
+  const duplicateEvidenceReference = structuredClone(base);
+  duplicateEvidenceReference.externalAttestations[1].evidenceReferenceSha256 =
+    duplicateEvidenceReference.externalAttestations[0].evidenceReferenceSha256;
+  assertCode(
+    () => candidate.finalizeAttestations(
+      value.environment,
+      duplicateEvidenceReference,
+      options
+    ),
+    'SYNTHETIC_CANDIDATE_ATTESTATION_INVALID'
+  );
   const wrongSubject = structuredClone(base);
   wrongSubject.externalAttestations[0].subjectSha256 = digest('another subject');
   assertCode(
     () => candidate.finalizeAttestations(value.environment, wrongSubject, options),
+    'SYNTHETIC_CANDIDATE_ATTESTATION_INVALID'
+  );
+  const beforeCapture = structuredClone(base);
+  beforeCapture.externalAttestations[0].observedAt = '2026-08-28T00:59:59.999Z';
+  assertCode(
+    () => candidate.finalizeAttestations(value.environment, beforeCapture, options),
+    'SYNTHETIC_CANDIDATE_ATTESTATION_INVALID'
+  );
+  const beyondClockSkew = structuredClone(base);
+  beyondClockSkew.externalAttestations[0].observedAt = '2026-08-28T01:10:00.001Z';
+  assertCode(
+    () => candidate.finalizeAttestations(value.environment, beyondClockSkew, options),
+    'SYNTHETIC_CANDIDATE_ATTESTATION_INVALID'
+  );
+  const excessiveTtl = structuredClone(base);
+  excessiveTtl.externalAttestations[0].expiresAt = '2026-08-29T01:01:00.001Z';
+  assertCode(
+    () => candidate.finalizeAttestations(value.environment, excessiveTtl, options),
     'SYNTHETIC_CANDIDATE_ATTESTATION_INVALID'
   );
   const expired = structuredClone(base);
@@ -679,7 +708,15 @@ test('生产 profile 不能进入候选证据命令', () => {
 test('真实两阶段 CLI 使用已提交 provenance 且只输出单行脱敏 JSON', () => {
   const committed = preflight.committedProvenance();
   const value = fixture('real-cli', committed);
-  const childEnvironment = { ...process.env, ...value.environment };
+  const fakeDirectory = path.join(tempRoot, 'real-cli-fake-git');
+  const fakeGit = path.join(fakeDirectory, process.platform === 'win32' ? 'git.exe' : 'git');
+  fs.mkdirSync(fakeDirectory);
+  fs.writeFileSync(fakeGit, 'synthetic non-executable sentinel', { flag: 'wx' });
+  const childEnvironment = {
+    ...process.env,
+    ...value.environment,
+    PATH: `${fakeDirectory}${path.delimiter}${process.env.PATH}`
+  };
   const captureResult = spawnSync(process.execPath, [
     path.join(projectRoot, 'scripts', 'capture-synthetic-candidate-evidence.js')
   ], {
@@ -733,6 +770,7 @@ test('真实两阶段 CLI 使用已提交 provenance 且只输出单行脱敏 JS
   assert.equal(finalized.result, 'attestation-envelopes-present');
   assert.equal(finalized.externalFactsVerifiedByThisCommand, false);
   assert.equal(finalized.deploymentAuthorization, 'not_granted');
+  assert.equal(fs.readFileSync(fakeGit, 'utf8'), 'synthetic non-executable sentinel');
   const combined = captureResult.stdout + finalizeResult.stdout;
   for (const forbidden of [
     value.environment.API_PUBLIC_ORIGIN,

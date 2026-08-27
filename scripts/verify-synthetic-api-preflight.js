@@ -347,6 +347,19 @@ function captureExpectedProvenance() {
   });
 }
 
+function lockedCommittedProvenance() {
+  const first = captureExpectedProvenance();
+  const second = captureExpectedProvenance();
+  if (canonicalJson(first) !== canonicalJson(second)) fail('REPOSITORY_STATE_CHANGED');
+  return Object.freeze({
+    sourceCommit: second.sourceCommit,
+    implementationIndexMatchesHead: true,
+    implementationWorktreeMatchesHeadAfterEolNormalization: true,
+    implementationTreeSha256: second.implementationTreeSha256,
+    implementationFiles: second.implementationFiles
+  });
+}
+
 function syntheticEnvironment(verificationRoot, nonce) {
   const origin = 'https://synthetic-api.example.com';
   const guardianSha256 = sha256(Buffer.from('synthetic guardian declaration fixture', 'utf8'));
@@ -695,5 +708,6 @@ if (require.main === module) {
 
 module.exports = {
   assertEvidenceForTest: assertEvidence,
+  lockedCommittedProvenance,
   verifyCommittedPreflight
 };

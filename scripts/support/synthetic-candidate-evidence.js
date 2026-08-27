@@ -487,6 +487,10 @@ function normalizeCaptureInput(document) {
   return document;
 }
 
+function lockedCommittedProvenance() {
+  return require('../verify-synthetic-api-preflight').lockedCommittedProvenance();
+}
+
 function captureMachineSubject(environment, document, options = {}) {
   assertAck(environment);
   const input = normalizeCaptureInput(document);
@@ -498,7 +502,7 @@ function captureMachineSubject(environment, document, options = {}) {
   let expectedS12;
   let firstRoot;
   try {
-    const provider = options.provenanceProvider || preflight.committedProvenance;
+    const provider = options.provenanceProvider || lockedCommittedProvenance;
     committed = provider();
     expectedS12 = preflight.evidenceFor(environment, committed);
     provenance = Object.freeze({
@@ -670,6 +674,7 @@ function validateAttestations(attestations, subject, now, capturedAt, subjectVal
     fail('SYNTHETIC_CANDIDATE_ATTESTATION_INCOMPLETE');
   }
   let earliestExpiry = Number.POSITIVE_INFINITY;
+  const evidenceReferences = new Set();
   for (let index = 0; index < attestations.length; index += 1) {
     const value = attestations[index];
     exactKeys(value, [
@@ -687,6 +692,7 @@ function validateAttestations(attestations, subject, now, capturedAt, subjectVal
     );
     if (value.gateId !== gateId || value.subjectSha256 !== subject.subjectSha256
         || !validDigest(value.evidenceReferenceSha256)
+        || evidenceReferences.has(value.evidenceReferenceSha256)
         || value.declarantRole !== role || value.sourceType !== sourceType
         || value.state !== 'declared_satisfied_not_authenticated'
         || value.signatureStatus !== 'not_verified'
@@ -697,6 +703,7 @@ function validateAttestations(attestations, subject, now, capturedAt, subjectVal
       if (expiresAt <= now.getTime()) fail('SYNTHETIC_CANDIDATE_ATTESTATION_EXPIRED');
       fail('SYNTHETIC_CANDIDATE_ATTESTATION_INVALID');
     }
+    evidenceReferences.add(value.evidenceReferenceSha256);
     earliestExpiry = Math.min(earliestExpiry, expiresAt);
   }
   return earliestExpiry;
