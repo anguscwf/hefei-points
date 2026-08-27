@@ -20,6 +20,7 @@
     "finalize:synthetic-candidate-evidence": "node scripts/finalize-synthetic-candidate-evidence.js",
     "preflight:synthetic-api": "node scripts/preflight-synthetic-api.js",
     "verify:synthetic-data-root": "node scripts/verify-synthetic-data-root.js",
+    "verify:synthetic-external-approval": "node scripts/verify-synthetic-external-approval.js",
     "verify:synthetic-api-preflight": "node scripts/verify-synthetic-api-preflight.js",
     "test": "node --test --test-concurrency=1",
     "pm2:logrotate": "node scripts/configure-pm2-logrotate.js",
