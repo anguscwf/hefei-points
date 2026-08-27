@@ -18,27 +18,28 @@ const candidate = require('../../scripts/support/synthetic-candidate-evidence');
 
 const captureNow = new Date('2026-08-28T01:00:00.000Z');
 const finalizeNow = new Date('2026-08-28T01:05:00.000Z');
-const expectedGateIds = Object.freeze([
-  'app_id_provisioning',
-  'developer_authorization',
-  'app_secret_independence',
-  'request_domain',
-  'business_domain',
-  'dns',
-  'tls',
-  'proxy_port_boundary',
-  'os_account',
-  'filesystem_acl',
-  'filesystem_owner',
-  'disk_isolation',
-  'backup_isolation',
-  'database_isolation',
-  'runtime_secret_management',
-  'infrastructure_connectivity',
-  'legal_records_publication',
-  'devtools_domain_tls_validation',
-  'production_root_isolation'
-]);
+const expectedGateSpecs = Object.freeze([
+  ['app_id_provisioning', 'application_operator', 'authority_record'],
+  ['developer_authorization', 'application_operator', 'authority_record'],
+  ['app_secret_independence', 'security_reviewer', 'security_review'],
+  ['request_domain', 'network_operator', 'authority_record'],
+  ['business_domain', 'network_operator', 'authority_record'],
+  ['dns', 'network_operator', 'authority_record'],
+  ['tls', 'network_operator', 'authority_record'],
+  ['proxy_port_boundary', 'network_operator', 'host_inspection'],
+  ['os_account', 'platform_administrator', 'host_inspection'],
+  ['filesystem_acl', 'security_reviewer', 'host_inspection'],
+  ['filesystem_owner', 'security_reviewer', 'host_inspection'],
+  ['disk_isolation', 'platform_administrator', 'host_inspection'],
+  ['backup_isolation', 'platform_administrator', 'host_inspection'],
+  ['database_isolation', 'security_reviewer', 'security_review'],
+  ['runtime_secret_management', 'security_reviewer', 'security_review'],
+  ['infrastructure_connectivity', 'platform_administrator', 'host_inspection'],
+  ['legal_records_publication', 'legal_reviewer', 'legal_review'],
+  ['devtools_domain_tls_validation', 'application_operator', 'authority_record'],
+  ['production_root_isolation', 'security_reviewer', 'security_review']
+].map(value => Object.freeze(value)));
+const expectedGateIds = Object.freeze(expectedGateSpecs.map(([gateId]) => gateId));
 
 after(() => {
   fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -280,6 +281,7 @@ test('齐全外部声明只形成未认证信封，不授予部署或儿童使�
   ]);
   assert.equal(result.result, 'attestation-envelopes-present');
   assert.equal(result.attestationCount, expectedGateIds.length);
+  assert.deepEqual(candidate.GATE_SPECS, expectedGateSpecs);
   assert.deepEqual(result.requiredGateIds, expectedGateIds);
   assert.equal(result.checks.machineStateRevalidated, true);
   assert.equal(result.checks.attestationAuthenticityVerified, false);
