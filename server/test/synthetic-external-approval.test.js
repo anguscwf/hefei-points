@@ -15,7 +15,56 @@ const profile = require('../config/deployment-profile');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tangguan-synthetic-approval-'));
-const now = new Date('2026-08-28T02:10:00.000Z');
+const FIXED_TIMELINE = Object.freeze({
+  now: '2026-08-28T02:10:00.000Z',
+  keyNotBefore: '2026-08-28T00:00:00.000Z',
+  keyNotAfter: '2026-08-29T00:00:00.000Z',
+  policyIssuedAt: '2026-08-28T00:00:00.000Z',
+  policyValidFrom: '2026-08-28T00:00:00.000Z',
+  policyValidUntil: '2026-08-29T00:00:00.000Z',
+  bootstrapLegalEffectiveAt: '2026-08-28T01:00:00.000Z',
+  bootstrapAt: '2026-08-28T01:30:00.000Z',
+  captureAt: '2026-08-28T02:00:00.000Z',
+  attestationObservedAt: '2026-08-28T02:01:00.000Z',
+  finalizedAt: '2026-08-28T02:05:00.000Z',
+  gateVerifiedAt: '2026-08-28T02:06:00.000Z',
+  approvalAt: '2026-08-28T02:07:00.000Z',
+  grantAt: '2026-08-28T02:08:00.000Z',
+  checkpointIssuedAt: '2026-08-28T02:09:00.000Z',
+  grantExpiresAt: '2026-08-28T02:13:00.000Z',
+  approvalExpiresAt: '2026-08-28T02:18:00.000Z',
+  gateExpiresAt: '2026-08-28T02:20:00.000Z',
+  attestationExpiresAt: '2026-08-28T02:25:00.000Z',
+  checkpointValidUntil: '2026-08-28T03:00:00.000Z'
+});
+const now = new Date(FIXED_TIMELINE.now);
+
+function liveTimeline(reference = new Date()) {
+  const epoch = reference.getTime();
+  const at = offset => new Date(epoch + offset).toISOString();
+  return Object.freeze({
+    now: at(0),
+    keyNotBefore: at(-60 * 60 * 1000),
+    keyNotAfter: at(24 * 60 * 60 * 1000),
+    policyIssuedAt: at(-60 * 60 * 1000),
+    policyValidFrom: at(-60 * 60 * 1000),
+    policyValidUntil: at(24 * 60 * 60 * 1000),
+    bootstrapLegalEffectiveAt: at(-30 * 60 * 1000),
+    bootstrapAt: at(-20 * 60 * 1000),
+    captureAt: at(-5 * 60 * 1000),
+    attestationObservedAt: at(-4 * 60 * 1000),
+    finalizedAt: at(-3 * 60 * 1000),
+    gateVerifiedAt: at(-2 * 60 * 1000),
+    approvalAt: at(-90 * 1000),
+    grantAt: at(-60 * 1000),
+    checkpointIssuedAt: at(-30 * 1000),
+    grantExpiresAt: at(4 * 60 * 1000),
+    approvalExpiresAt: at(8 * 60 * 1000),
+    gateExpiresAt: at(10 * 60 * 1000),
+    attestationExpiresAt: at(20 * 60 * 1000),
+    checkpointValidUntil: at(30 * 60 * 1000)
+  });
+}
 
 after(() => {
   fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -25,7 +74,7 @@ function digest(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
-function keyFixture(role, allowedGateIds, principalIdSha256) {
+function keyFixture(role, allowedGateIds, principalIdSha256, timeline) {
   const pair = crypto.generateKeyPairSync('ed25519');
   const der = pair.publicKey.export({ format: 'der', type: 'spki' });
   const keyId = digest(der);
@@ -37,8 +86,8 @@ function keyFixture(role, allowedGateIds, principalIdSha256) {
       role,
       allowedGateIds,
       publicKeySpkiDerBase64url: der.toString('base64url'),
-      notBefore: '2026-08-28T00:00:00.000Z',
-      notAfter: '2026-08-29T00:00:00.000Z',
+      notBefore: timeline.keyNotBefore,
+      notAfter: timeline.keyNotAfter,
       status: 'active'
     }
   };
@@ -57,7 +106,7 @@ function signEnvelope(domain, payload, key) {
   };
 }
 
-function s15Fixture() {
+function s15Fixture(timeline = FIXED_TIMELINE) {
   const subjectSha256 = digest('S16 synthetic subject');
   const candidateBindingSha256 = digest('S16 synthetic candidate binding');
   const machineStateSha256 = digest('S16 synthetic machine state');
@@ -79,8 +128,8 @@ function s15Fixture() {
     evidenceReferenceSha256: digest(`opaque S15 reference ${gateId}`),
     declarantRole,
     sourceType,
-    observedAt: '2026-08-28T02:01:00.000Z',
-    expiresAt: '2026-08-28T02:25:00.000Z',
+    observedAt: timeline.attestationObservedAt,
+    expiresAt: timeline.attestationExpiresAt,
     state: 'declared_satisfied_not_authenticated',
     signatureStatus: 'not_verified'
   }));
@@ -107,8 +156,8 @@ function s15Fixture() {
     schemaVersion: 1,
     profile: 'synthetic-candidate-attestation-envelopes',
     result: 'attestation-envelopes-present',
-    finalizedAt: '2026-08-28T02:05:00.000Z',
-    validUntil: '2026-08-28T02:25:00.000Z',
+    finalizedAt: timeline.finalizedAt,
+    validUntil: timeline.attestationExpiresAt,
     subjectSha256,
     candidateBindingSha256,
     machineStateSha256,
@@ -141,7 +190,11 @@ function s15Fixture() {
   };
 }
 
-function realS15Fixture(label) {
+function realS15Fixture(
+  label,
+  timeline = FIXED_TIMELINE,
+  useCommittedProvenance = false
+) {
   const parent = path.join(tempRoot, `approved-${label}`);
   const root = path.join(parent, `tangguan-synthetic-${label}`);
   const origin = `https://synthetic-${label}.example.com`;
@@ -189,15 +242,17 @@ function realS15Fixture(label) {
       sha256: digest(`${label} migration ${index}`)
     }))
   ];
-  const provenance = Object.freeze({
-    sourceCommit: digest(`${label} source commit`),
-    implementationIndexMatchesHead: true,
-    implementationWorktreeMatchesHeadAfterEolNormalization: true,
-    implementationTreeSha256: digest(`${label} implementation tree`),
-    implementationFiles: Object.freeze(
-      implementationFiles.map(value => Object.freeze(value))
-    )
-  });
+  const provenance = useCommittedProvenance
+    ? preflight.committedProvenance()
+    : Object.freeze({
+      sourceCommit: digest(`${label} source commit`),
+      implementationIndexMatchesHead: true,
+      implementationWorktreeMatchesHeadAfterEolNormalization: true,
+      implementationTreeSha256: digest(`${label} implementation tree`),
+      implementationFiles: Object.freeze(
+        implementationFiles.map(value => Object.freeze(value))
+      )
+    });
   environment.SYNTHETIC_DATA_ROOT_PREPARE_ACK = rootTools.PREPARE_ACK;
   rootTools.prepareSyntheticDataRoot(environment, { projectRoot });
   delete environment.SYNTHETIC_DATA_ROOT_PREPARE_ACK;
@@ -230,10 +285,10 @@ function realS15Fixture(label) {
       credentialPurpose: bootstrap.CREDENTIAL_PURPOSE
     },
     legalEvidence: {
-      effectiveAt: '2026-08-28T01:00:00.000Z',
+      effectiveAt: timeline.bootstrapLegalEffectiveAt,
       texts: legalTexts
     }
-  }, { projectRoot, now: new Date('2026-08-28T01:30:00.000Z') });
+  }, { projectRoot, now: new Date(timeline.bootstrapAt) });
   delete environment.SYNTHETIC_BOOTSTRAP_ACK;
   const captureInput = {
     schemaVersion: 1,
@@ -243,11 +298,11 @@ function realS15Fixture(label) {
     s13PreBootstrap,
     s14Bootstrap
   };
-  const provenanceProvider = () => provenance;
+  const provenanceProvider = useCommittedProvenance ? undefined : () => provenance;
   const machineSubject = candidate.captureMachineSubject(environment, captureInput, {
     projectRoot,
-    provenanceProvider,
-    now: new Date('2026-08-28T02:00:00.000Z')
+    ...(provenanceProvider ? { provenanceProvider } : {}),
+    now: new Date(timeline.captureAt)
   });
   const rolePrincipals = new Map();
   for (const [, role] of candidate.GATE_SPECS) {
@@ -263,8 +318,8 @@ function realS15Fixture(label) {
     evidenceReferenceSha256: digest(`real opaque reference ${gateId}`),
     declarantRole,
     sourceType,
-    observedAt: '2026-08-28T02:01:00.000Z',
-    expiresAt: '2026-08-28T02:25:00.000Z',
+    observedAt: timeline.attestationObservedAt,
+    expiresAt: timeline.attestationExpiresAt,
     state: 'declared_satisfied_not_authenticated',
     signatureStatus: 'not_verified'
   }));
@@ -280,8 +335,8 @@ function realS15Fixture(label) {
     s15FinalizeInput,
     {
       projectRoot,
-      provenanceProvider,
-      now: new Date('2026-08-28T02:05:00.000Z')
+      ...(provenanceProvider ? { provenanceProvider } : {}),
+      now: new Date(timeline.finalizedAt)
     }
   );
   return {
@@ -298,7 +353,8 @@ function realS15Fixture(label) {
 }
 
 function fixture(label, overrides = {}) {
-  const s15 = overrides.s15 || s15Fixture();
+  const timeline = overrides.timeline || FIXED_TIMELINE;
+  const s15 = overrides.s15 || s15Fixture(timeline);
   const verifierPrincipal = digest(`${label} external verifier principal`);
   const approvalPrincipal = overrides.approvalPrincipal
     || digest(`${label} independent approval principal`);
@@ -309,11 +365,18 @@ function fixture(label, overrides = {}) {
   const verifierKey = keyFixture(
     'external_gate_verifier',
     [...candidate.REQUIRED_GATE_IDS],
-    verifierPrincipal
+    verifierPrincipal,
+    timeline
   );
-  const approvalKey = keyFixture('deployment_approver', [], approvalPrincipal);
-  const grantKey = keyFixture('deployment_grant_issuer', [], grantPrincipal);
-  const revocationKey = keyFixture('revocation_authority', [], revocationPrincipal);
+  const approvalKey = keyFixture(
+    'deployment_approver', [], approvalPrincipal, timeline
+  );
+  const grantKey = keyFixture(
+    'deployment_grant_issuer', [], grantPrincipal, timeline
+  );
+  const revocationKey = keyFixture(
+    'revocation_authority', [], revocationPrincipal, timeline
+  );
   const keys = [
     verifierKey.record,
     approvalKey.record,
@@ -328,9 +391,9 @@ function fixture(label, overrides = {}) {
     purpose: 'synthetic_external_approval_trust_policy',
     policyIdSha256: digest(`${label} policy identity`),
     revision: 7,
-    issuedAt: '2026-08-28T00:00:00.000Z',
-    validFrom: '2026-08-28T00:00:00.000Z',
-    validUntil: '2026-08-29T00:00:00.000Z',
+    issuedAt: timeline.policyIssuedAt,
+    validFrom: timeline.policyValidFrom,
+    validUntil: timeline.policyValidUntil,
     keys
   };
   if (overrides.mutatePolicy) overrides.mutatePolicy(policy, {
@@ -358,8 +421,8 @@ function fixture(label, overrides = {}) {
     purpose: 'synthetic_external_revocation_checkpoint',
     policySha256,
     sequence: 9,
-    issuedAt: '2026-08-28T02:09:00.000Z',
-    validUntil: '2026-08-28T03:00:00.000Z',
+    issuedAt: timeline.checkpointIssuedAt,
+    validUntil: timeline.checkpointValidUntil,
     revokedKeyIds: [...(overrides.revokedKeyIds || [])].sort(),
     revokedPrincipalIdsSha256: [
       ...(overrides.revokedPrincipalIdsSha256 || [])
@@ -418,8 +481,8 @@ function fixture(label, overrides = {}) {
       declarantPrincipalIdSha256: s15.rolePrincipals.get(declarantRole),
       verifierPrincipalIdSha256: verifierPrincipal,
       observedAt: attestation.observedAt,
-      verifiedAt: '2026-08-28T02:06:00.000Z',
-      expiresAt: '2026-08-28T02:20:00.000Z',
+      verifiedAt: timeline.gateVerifiedAt,
+      expiresAt: timeline.gateExpiresAt,
       identityStatus: 'authenticated_by_external_authority',
       evidenceStatus: 'retrieved_and_verified_by_external_connector',
       factStatus: 'verified_satisfied'
@@ -439,9 +502,9 @@ function fixture(label, overrides = {}) {
     targetEnvironmentSha256,
     approvalId,
     approverPrincipalIdSha256: approvalPrincipal,
-    approvedAt: '2026-08-28T02:07:00.000Z',
-    notBefore: '2026-08-28T02:07:00.000Z',
-    expiresAt: '2026-08-28T02:18:00.000Z',
+    approvedAt: timeline.approvalAt,
+    notBefore: timeline.approvalAt,
+    expiresAt: timeline.approvalExpiresAt,
     decision: 'approved',
     scope: 'single_synthetic_api_deployment',
     auditRecordSha256: digest(`${label} immutable external approval audit record`),
@@ -467,9 +530,9 @@ function fixture(label, overrides = {}) {
     grantId,
     grantIssuerPrincipalIdSha256: grantPrincipal,
     consumerIdSha256: digest(`${label} external atomic deployment consumer`),
-    issuedAt: '2026-08-28T02:08:00.000Z',
-    notBefore: '2026-08-28T02:08:00.000Z',
-    expiresAt: '2026-08-28T02:13:00.000Z',
+    issuedAt: timeline.grantAt,
+    notBefore: timeline.grantAt,
+    expiresAt: timeline.grantExpiresAt,
     action: 'deploy_synthetic_once',
     scope: 'single_synthetic_api_deployment',
     consumptionMode: 'external_atomic_single_use_required',
@@ -1065,6 +1128,66 @@ test('32 次确定性重复验证结果一致且不产生消费状态', async ()
   assert.equal(first.checks.authorizationConsumptionVerified, false);
   assert.equal(first.checks.replayProtectionPersisted, false);
   assert.equal(first.deploymentAuthorization, 'not_granted');
+});
+
+test('真实成功 CLI 无测试替身地重验 committed S12-S15 且只读脱敏', () => {
+  const timeline = liveTimeline();
+  const s15 = realS15Fixture('realclisuccess', timeline, true);
+  const value = fixture('real-cli-success-bundle', {
+    timeline,
+    s15,
+    environment: s15.environment,
+    useRealFinalizer: true
+  });
+  const script = path.join(projectRoot, 'scripts', 'verify-synthetic-external-approval.js');
+  const databaseBefore = fs.readFileSync(s15.environment.SQLITE_FILE);
+  const metadataBefore = fs.statSync(s15.environment.SQLITE_FILE, { bigint: true });
+  const result = spawnSync(process.execPath, [script], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    input: `${JSON.stringify(value.document)}\n`,
+    env: { ...process.env, ...value.environment },
+    timeout: 45000,
+    windowsHide: true
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(result.stdout.endsWith('\n'), true);
+  assert.equal(result.stdout.trim().split(/\r?\n/).length, 1);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.checks.testOnlyOverridesUsed, false);
+  assert.equal(output.checks.currentMachineStateRevalidated, true);
+  assert.equal(output.checks.s15EnvelopeRevalidated, true);
+  assert.equal(output.operations.readOnlyGitSubprocessStarted, true);
+  assert.equal(output.operations.databaseOpenedReadOnly, true);
+  assert.equal(output.operations.syntheticDatabaseWritten, false);
+  assert.equal(output.operations.networkAccessPerformed, false);
+  assert.equal(output.operations.deploymentPerformed, false);
+  assert.equal(output.deploymentGrantStatus,
+    'signature_valid_against_provided_policy_unconsumed');
+  assert.equal(output.deploymentAuthorization, 'not_granted');
+  assert.equal(output.productionChildGateState, 'not_observed');
+  assert.equal(output.childUseAuthorization, 'not_granted');
+  assert.equal(output.trustPolicySha256, value.policySha256);
+  const raw = result.stdout;
+  for (const forbidden of [
+    value.policyFile,
+    value.policyRaw,
+    value.document.signedRevocationCheckpoint.signatureBase64url,
+    value.document.signedGateVerifications[0].signatureBase64url,
+    value.document.signedDeploymentApproval.signatureBase64url,
+    value.document.signedDeploymentApproval.payload.approvalId,
+    value.document.signedDeploymentGrant.signatureBase64url,
+    value.document.signedDeploymentGrant.payload.grantId
+  ]) assert.equal(raw.includes(forbidden), false, forbidden);
+  const databaseAfter = fs.readFileSync(s15.environment.SQLITE_FILE);
+  const metadataAfter = fs.statSync(s15.environment.SQLITE_FILE, { bigint: true });
+  assert.deepEqual(databaseAfter, databaseBefore);
+  assert.equal(metadataAfter.size, metadataBefore.size);
+  assert.equal(metadataAfter.mtimeNs, metadataBefore.mtimeNs);
+  assert.deepEqual(fs.readdirSync(s15.environment.DATA_DIR), [
+    'hefei-points-synthetic.sqlite'
+  ]);
 });
 
 test('真实 CLI help 与失败只输出稳定、单行、脱敏结果', () => {
