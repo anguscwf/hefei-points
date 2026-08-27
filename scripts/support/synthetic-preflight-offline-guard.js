@@ -803,7 +803,9 @@ function installOfflineGuard() {
   if (typeof globalThis.fetch === 'function') block(globalThis, 'fetch');
   if (typeof globalThis.WebSocket === 'function') block(globalThis, 'WebSocket');
   for (const key of Object.keys(crypto)) {
-    if (typeof crypto[key] === 'function' && key !== 'createHash') block(crypto, key);
+    if (typeof crypto[key] === 'function'
+        && key !== 'createHash'
+        && key !== 'createHmac') block(crypto, key);
   }
 
   replace(childProcess, 'execFileSync', original => function guardedExecFileSync(

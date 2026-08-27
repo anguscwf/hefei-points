@@ -345,6 +345,7 @@ test('committed preflight guard 锁死 Git 乱序、错 OID、重复 batch 与�
   );
   const program = [
     "const childProcess=require('node:child_process');",
+    "const crypto=require('node:crypto');",
     "const fs=require('node:fs');",
     "const os=require('node:os');",
     `const implementationFiles=${JSON.stringify(committedPreflightImplementationFiles)};`,
@@ -371,6 +372,7 @@ test('committed preflight guard 锁死 Git 乱序、错 OID、重复 batch 与�
     "const attack=process.env.GUARD_TEST_ATTACK;",
     "if(attack==='out_of_order'){const input=('a'.repeat(40)+'\\n').repeat(implementationFiles.length);await expectRejected(()=>runGit(['cat-file','--batch'],{encoding:null,input}));}",
     "else if(attack==='dynamic_import'){await expectRejected(()=>import /* synthetic bypass probe */ ('node:sqlite'));}",
+    "else if(attack==='random_bytes'){await expectRejected(()=>crypto.randomBytes(1));}",
     'else{',
     '  const {commit,oids}=captureTree();',
     "  if(attack==='wrong_oid'){const changed=oids.slice();changed[0]=commit;await expectRejected(()=>runGit(['cat-file','--batch'],{encoding:null,input:changed.join('\\n')+'\\n'}));}",
@@ -382,7 +384,14 @@ test('committed preflight guard 锁死 Git 乱序、错 OID、重复 batch 与�
     "})().catch(()=>{process.exitCode=15;});"
   ].join('\n');
 
-  for (const attack of ['out_of_order', 'wrong_oid', 'permuted', 'repeated', 'dynamic_import']) {
+  for (const attack of [
+    'out_of_order',
+    'wrong_oid',
+    'permuted',
+    'repeated',
+    'dynamic_import',
+    'random_bytes'
+  ]) {
     const verificationRoot = fs.mkdtempSync(path.join(
       os.tmpdir(),
       'tangguan-synthetic-api-preflight-verification-'
