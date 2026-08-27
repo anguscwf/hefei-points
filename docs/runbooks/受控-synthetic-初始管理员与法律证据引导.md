@@ -29,7 +29,7 @@
 - `SYNTHETIC_DATASET_ID`、API/法律 origin、微信 AppID/AppSecret 只属于本次独立 synthetic 候选，绝非生产资源；
 - 监护关系声明和四类法律页面是获批的 synthetic 测试内容，版本、内容 SHA-256 和 canonical URL 已由责任人核对；
 - 管理员标识和批准引用只描述合成对象，不含姓名、手机号、OpenID、设备标识或其他真实身份；
-- 当前候选 commit 已完成安全复核；当前 S12 schema 4 artifact 锁定的 34 个实现文件与 10 个迁移精确一致；
+- 当前候选 commit 已完成安全复核；当前 S12 schema 4 artifact 锁定的 36 个实现文件与 10 个迁移精确一致；
 - 操作员知道：bootstrap 成功只证明本地最小种子和回执，不证明任何外部硬门已经关闭。
 
 不得先启动服务“让它迁移空库”。synthetic runtime 会在任何可写 SQLite 打开、迁移或 secret 创建之前要求有效且与当前环境绑定的完成回执。
@@ -153,7 +153,7 @@ stderr 只应包含一个稳定码；stdout 失败时必须为空。不得把数
 1. 关闭所有 production 儿童门，保持客户端跟踪配置零联网；
 2. 完成外部批准记录，但不把秘密或基础设施明文写入仓库；
 3. 提交并固定候选，在该 HEAD 上运行 `npm run verify:synthetic-api-preflight`，完成提交实现和 offline guard 的内部 fixture 自检；该命令不会保留实际候选 artifact；
-4. 在同一候选配置上运行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>`，保存实际 schema 4 脱敏 artifact，并确认 34 个实现文件与 10 个迁移精确匹配；
+4. 在同一候选配置上运行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>`，保存实际 schema 4 脱敏 artifact，并确认 36 个实现文件与 10 个迁移精确匹配；
 5. 按 S13 手册 prepare 全新数据根并 verify，保存 bootstrap 前的空根 schema 1 evidence；
 6. 只从第 4 步同一 S12 artifact 机械提取三个 provenance 值；
 7. 通过受控进程注入完整 S12/S14 配置和不落盘 stdin，运行 bootstrap；

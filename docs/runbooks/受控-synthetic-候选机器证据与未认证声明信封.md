@@ -19,7 +19,7 @@ S15 提供两个 CLI：
 
 任一项不成立即停止：
 
-- 当前候选已经提交，index、工作树实现文件和 `HEAD` 一致；`npm run verify:synthetic-api-preflight` 的提交实现/离线守卫夹具自检通过；随后用同一候选配置执行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>`，实际候选 artifact 为 schema 4、34 个实现文件和精确 001～010 迁移集；
+- 当前候选已经提交，index、工作树实现文件和 `HEAD` 一致；`npm run verify:synthetic-api-preflight` 的提交实现/离线守卫夹具自检通过；随后用同一候选配置执行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>`，实际候选 artifact 为 schema 4、36 个实现文件和精确 001～010 迁移集；
 - S12 artifact、S13 bootstrap 前空根 schema 1 evidence、S14 schema 1 evidence 来自同一候选、同一配置和同一数据根，均由获批证据通道保留；
 - S14 bootstrap 请求中的 `candidateProvenance` 来自该次 S12 artifact，live receipt 中三项 provenance 与之相同；
 - 数据库仍处于刚完成 bootstrap 的最小状态：一个默认合成家庭、一个未轮换凭据的合成成人管理员、四类法律元数据和一个不可变回执；没有儿童、授权、设备、会话、积分、规则、申请、行权、审计或删除作业；
@@ -67,7 +67,7 @@ npm run capture:synthetic-candidate-evidence
 
 成功结果 `profile=synthetic-candidate-machine-subject`、`result=offline-machine-evidence-validated`。它绑定：
 
-- 当前 `sourceCommit`、实现树摘要、34 个实现文件和 10 个迁移；
+- 当前 `sourceCommit`、实现树摘要、36 个实现文件和 10 个迁移；
 - 当前 S12 配置摘要，包括规范化可信代理集合，以及折叠进 sensitive binding 的 AppSecret-keyed HMAC；该 HMAC 不回显 secret，但也不证明 secret 的外部独立性、托管合规或声明人身份；
 - 三阶段 artifact、marker、dataset、deployment/schema/request/approval/admin/legal 摘要；
 - canonical 物理根、批准父目录、root/data/SQLite 文件身份以及主机/OS 账号上下文的摘要；
@@ -189,4 +189,4 @@ childUseAuthorization=not_granted
 9. 取得批准后才可部署；部署后仍只用合成家庭在模拟器或成人受控设备完成网络 E2E、HUKS/AssetStore、微信 DevTools/真机和撤销 smoke。
 10. 正式法律文本、PIPIA、存量数据整改、备案、AppGallery 审核和所有生产发布门全部完成前，不开放儿童实际使用。
 
-S15 之后的 S16 应解决声明身份认证、权威事实核验、不可否认审批与受控部署授权，而不是把本地未认证信封升级措辞为“已通过”。
+S16 已提供本地签名束 verifier，但只确认调用方提供策略下的签名、吊销 checkpoint、gate、approval 和 grant 绑定；它仍不认证策略权威、真实身份、证据正文或审计记录，不提供可信时间、checkpoint 单调防回滚或 grant 原子消费。S17 必须由获批外部系统关闭这些硬门；不得把 S15 或 S16 输出升级措辞为部署许可。
