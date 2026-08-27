@@ -592,6 +592,18 @@ function verify(value, extra = {}) {
   });
 }
 
+function verifyCheckpoint(value, extra = {}) {
+  return approval.verifySyntheticRevocationCheckpointForTest(
+    value.environment,
+    value.document.signedRevocationCheckpoint,
+    {
+      now,
+      completedAt: now,
+      ...extra
+    }
+  );
+}
+
 function assertCode(work, code) {
   assert.throws(work, error => error instanceof approval.SyntheticExternalApprovalError
     && error.code === code);
@@ -600,7 +612,25 @@ function assertCode(work, code) {
 test('S16 只验证钉住策略下的签名束并保持部署与儿童授权关闭', () => {
   const value = fixture('success');
   const result = verify(value);
+  assert.equal(result.schemaVersion, 2);
   assert.equal(result.result, 'signed-bundle-valid-against-provided-policy-unconsumed');
+  assert.equal(result.trustPolicyIdSha256, value.policy.policyIdSha256);
+  assert.equal(
+    result.consumerIdSha256,
+    value.document.signedDeploymentGrant.payload.consumerIdSha256
+  );
+  assert.equal(
+    result.sourceCommit,
+    value.document.s15FinalizeInput.machineSubject.sourceCommit
+  );
+  assert.equal(
+    result.implementationTreeSha256,
+    value.document.s15FinalizeInput.machineSubject.implementationTreeSha256
+  );
+  assert.equal(
+    result.configurationSha256,
+    value.document.s15FinalizeInput.machineSubject.bindings.configurationSha256
+  );
   assert.equal(result.gateVerificationCount, 19);
   assert.deepEqual(result.requiredGateIds, candidate.REQUIRED_GATE_IDS);
   assert.equal(result.checks.testOnlyOverridesUsed, true);
@@ -637,6 +667,147 @@ test('S16 只验证钉住策略下的签名束并保持部署与儿童授权关�
     value.document.signedDeploymentApproval.signatureBase64url,
     value.document.signedDeploymentGrant.signatureBase64url
   ]) assert.equal(raw.includes(forbidden), false, forbidden);
+});
+
+test('checkpoint 生产 API 二读策略并返回冻结的安全摘要副本', () => {
+  const value = fixture('checkpoint-production-api', { timeline: liveTimeline() });
+  const payload = value.document.signedRevocationCheckpoint.payload;
+  const policyDirectoryBefore = fs.readdirSync(path.dirname(value.policyFile));
+  const policyBytesBefore = fs.readFileSync(value.policyFile);
+  const result = approval.verifySyntheticRevocationCheckpoint(
+    value.environment,
+    value.document.signedRevocationCheckpoint
+  );
+  const policyBytesAfter = fs.readFileSync(value.policyFile);
+
+  assert.equal(result.schemaVersion, 1);
+  assert.equal(
+    result.result,
+    'revocation-checkpoint-valid-against-provided-policy-not-authoritative-latest'
+  );
+  assert.equal(result.trustPolicyIdSha256, value.policy.policyIdSha256);
+  assert.equal(result.trustPolicySha256, value.policySha256);
+  assert.equal(result.trustPolicyRevision, value.policy.revision);
+  assert.equal(result.revocationCheckpointSha256,
+    approval.canonicalHash(value.document.signedRevocationCheckpoint));
+  assert.equal(result.revocationCheckpointSequence, payload.sequence);
+  assert.equal(result.revocationCheckpointIssuedAt, payload.issuedAt);
+  assert.equal(result.revocationCheckpointValidUntil, payload.validUntil);
+  assert.equal(
+    result.revocationAuthorityPrincipalIdSha256,
+    value.principals.revocationPrincipal
+  );
+  assert.deepEqual(result.revokedKeyIds, payload.revokedKeyIds);
+  assert.deepEqual(
+    result.revokedPrincipalIdsSha256,
+    payload.revokedPrincipalIdsSha256
+  );
+  assert.deepEqual(
+    result.revokedApprovalIdsSha256,
+    payload.revokedApprovalIdsSha256
+  );
+  assert.deepEqual(result.revokedGrantIdsSha256, payload.revokedGrantIdsSha256);
+  assert.notEqual(result.revokedKeyIds, payload.revokedKeyIds);
+  assert.notEqual(result.revokedPrincipalIdsSha256, payload.revokedPrincipalIdsSha256);
+  assert.notEqual(result.revokedApprovalIdsSha256, payload.revokedApprovalIdsSha256);
+  assert.notEqual(result.revokedGrantIdsSha256, payload.revokedGrantIdsSha256);
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.checks), true);
+  assert.equal(Object.isFrozen(result.operations), true);
+  assert.equal(Object.isFrozen(result.revokedKeyIds), true);
+  assert.equal(Object.isFrozen(result.revokedPrincipalIdsSha256), true);
+  assert.equal(Object.isFrozen(result.revokedApprovalIdsSha256), true);
+  assert.equal(Object.isFrozen(result.revokedGrantIdsSha256), true);
+  assert.equal(result.checks.testOnlyOverridesUsed, false);
+  assert.equal(result.checks.productionPolicyReadPathUsed, true);
+  assert.equal(result.checks.trustPolicyFileStableDuringVerification, true);
+  assert.equal(result.checks.trustPolicyExternallyAuthorizedByThisCommand, false);
+  assert.equal(result.checks.revocationAuthorityIdentityAuthenticatedByThisCommand, false);
+  assert.equal(result.checks.revocationCheckpointLatestAtAuthorityVerified, false);
+  assert.equal(result.checks.trustedTimeVerified, false);
+  assert.equal(result.operations.trustPolicyFileReadOnly, true);
+  assert.equal(result.operations.networkAccessPerformedByVerifier, false);
+  assert.equal(result.operations.fileWritePerformedByVerifier, false);
+  assert.equal(result.operations.databaseWritePerformedByVerifier, false);
+  assert.equal(result.deploymentAuthorization, 'not_granted');
+  assert.equal(result.productionChildGateState, 'not_observed');
+  assert.equal(result.childUseAuthorization, 'not_granted');
+  assert.deepEqual(fs.readdirSync(path.dirname(value.policyFile)), policyDirectoryBefore);
+  assert.deepEqual(policyBytesAfter, policyBytesBefore);
+  const raw = JSON.stringify(result);
+  for (const forbidden of [
+    value.policyFile,
+    value.policyRaw,
+    value.keys.revocationKey.record.publicKeySpkiDerBase64url,
+    value.document.signedRevocationCheckpoint.signatureBase64url
+  ]) assert.equal(raw.includes(forbidden), false, forbidden);
+});
+
+test('checkpoint 测试 seam 明示非生产并保持外部权威与可信时间未验证', () => {
+  const value = fixture('checkpoint-test-seam');
+  const result = verifyCheckpoint(value);
+  assert.equal(result.checks.testOnlyOverridesUsed, true);
+  assert.equal(result.checks.productionPolicyReadPathUsed, false);
+  assert.equal(result.checks.trustPolicyFileStableDuringVerification, false);
+  assert.equal(result.operations.trustPolicyFileReadOnly, false);
+  assert.equal(result.checks.trustPolicyExternallyAuthorizedByThisCommand, false);
+  assert.equal(result.checks.revocationCheckpointLatestAtAuthorityVerified, false);
+  assert.equal(result.checks.trustedTimeVerified, false);
+  assert.equal(result.deploymentAuthorization, 'not_granted');
+});
+
+test('checkpoint API 拒绝未来、完成时过期和错误 Ed25519 签名', () => {
+  const missingAck = fixture('checkpoint-api-missing-ack');
+  delete missingAck.environment.SYNTHETIC_EXTERNAL_APPROVAL_ACK;
+  assertCode(
+    () => verifyCheckpoint(missingAck),
+    'SYNTHETIC_EXTERNAL_APPROVAL_ACK_REQUIRED'
+  );
+
+  const future = fixture('checkpoint-api-future', {
+    mutateRevocation(checkpointValue) {
+      checkpointValue.issuedAt = '2026-08-28T02:10:00.001Z';
+    }
+  });
+  assertCode(
+    () => verifyCheckpoint(future),
+    'SYNTHETIC_EXTERNAL_APPROVAL_REVOCATION_INVALID'
+  );
+
+  const expired = fixture('checkpoint-api-completion-expired');
+  assertCode(
+    () => verifyCheckpoint(expired, {
+      completedAt: new Date(expired.document.signedRevocationCheckpoint.payload.validUntil)
+    }),
+    'SYNTHETIC_EXTERNAL_APPROVAL_REVOCATION_EXPIRED'
+  );
+
+  const signature = fixture('checkpoint-api-signature-invalid');
+  const encoded = signature.document.signedRevocationCheckpoint.signatureBase64url;
+  signature.document.signedRevocationCheckpoint.signatureBase64url =
+    `${encoded[0] === 'A' ? 'B' : 'A'}${encoded.slice(1)}`;
+  assertCode(
+    () => verifyCheckpoint(signature),
+    'SYNTHETIC_EXTERNAL_APPROVAL_SIGNATURE_INVALID'
+  );
+});
+
+test('checkpoint API 在第二次策略读取发生漂移时 fail closed', () => {
+  const value = fixture('checkpoint-api-policy-drift');
+  assertCode(
+    () => approval.verifySyntheticRevocationCheckpointForTest(
+      value.environment,
+      value.document.signedRevocationCheckpoint,
+      {
+        now,
+        completedAt: now,
+        afterFirstPolicyRead() {
+          fs.writeFileSync(value.policyFile, `${value.policyRaw} `, { mode: 0o600 });
+        }
+      }
+    ),
+    'SYNTHETIC_EXTERNAL_APPROVAL_TRUST_POLICY_CHANGED'
+  );
 });
 
 test('输入公钥不能替代独立策略文件，且拒绝额外字段或非 canonical JSON', () => {

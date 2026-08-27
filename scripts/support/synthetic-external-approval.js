@@ -952,6 +952,7 @@ function validateGrant(envelope, policyState, revocationState, s15, gates, appro
   return Object.freeze({
     grantIdSha256,
     grantEnvelopeSha256: canonicalHash(envelope),
+    consumerIdSha256: payload.consumerIdSha256,
     issuedAt,
     expiresAt,
     keyNotAfter: key.notAfter
@@ -959,6 +960,15 @@ function validateGrant(envelope, policyState, revocationState, s15, gates, appro
 }
 
 const TEST_ONLY_OVERRIDE = Symbol('synthetic-external-approval-test-only-override');
+
+function assertTrustPolicyContextsMatch(first, second) {
+  if (canonicalJson(first.snapshot) !== canonicalJson(second.snapshot)
+      || first.fileReal !== second.fileReal
+      || first.policySha256 !== second.policySha256
+      || canonicalJson(first.policy) !== canonicalJson(second.policy)) {
+    fail('SYNTHETIC_EXTERNAL_APPROVAL_TRUST_POLICY_CHANGED');
+  }
+}
 
 function verifySyntheticExternalApprovalInternal(environment, document, options) {
   assertAck(environment);
@@ -1014,12 +1024,7 @@ function verifySyntheticExternalApprovalInternal(environment, document, options)
     fail('SYNTHETIC_EXTERNAL_APPROVAL_REVOCATION_INVALID');
   }
   const secondPolicyContext = readTrustPolicyFile(environment);
-  if (canonicalJson(firstPolicyContext.snapshot) !== canonicalJson(secondPolicyContext.snapshot)
-      || firstPolicyContext.fileReal !== secondPolicyContext.fileReal
-      || firstPolicyContext.policySha256 !== secondPolicyContext.policySha256
-      || canonicalJson(firstPolicyContext.policy) !== canonicalJson(secondPolicyContext.policy)) {
-    fail('SYNTHETIC_EXTERNAL_APPROVAL_TRUST_POLICY_CHANGED');
-  }
+  assertTrustPolicyContextsMatch(firstPolicyContext, secondPolicyContext);
   const validUntil = Math.min(
     s15.validUntil,
     policyState.validUntil,
@@ -1042,11 +1047,16 @@ function verifySyntheticExternalApprovalInternal(environment, document, options)
   }
   const testOnlyOverridesUsed = options[TEST_ONLY_OVERRIDE] === true;
   return Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     profile: 'synthetic-external-approval-verification',
     result: 'signed-bundle-valid-against-provided-policy-unconsumed',
     verifiedAt: completedDate.toISOString(),
     validUntil: new Date(validUntil).toISOString(),
+    trustPolicyIdSha256: policyState.policy.policyIdSha256,
+    consumerIdSha256: grant.consumerIdSha256,
+    sourceCommit: s15.subject.sourceCommit,
+    implementationTreeSha256: s15.subject.implementationTreeSha256,
+    configurationSha256: s15.subject.bindings.configurationSha256,
     subjectSha256: s15.evidence.subjectSha256,
     candidateBindingSha256: s15.evidence.candidateBindingSha256,
     machineStateSha256: s15.evidence.machineStateSha256,
@@ -1110,12 +1120,115 @@ function verifySyntheticExternalApprovalInternal(environment, document, options)
   });
 }
 
+function verifySyntheticRevocationCheckpointInternal(environment, envelope, options) {
+  assertAck(environment);
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  const now = nowDate.getTime();
+  if (!Number.isFinite(now)) fail('SYNTHETIC_EXTERNAL_APPROVAL_REVOCATION_INVALID');
+
+  const firstPolicyContext = readTrustPolicyFile(environment);
+  const policyState = validateTrustPolicy(firstPolicyContext, now);
+  const revocationState = validateRevocationCheckpoint(envelope, policyState, now);
+  const testOnlyOverridesUsed = options[TEST_ONLY_OVERRIDE] === true;
+  if (testOnlyOverridesUsed && typeof options.afterFirstPolicyRead === 'function') {
+    options.afterFirstPolicyRead();
+  }
+
+  let secondPolicyContext;
+  try {
+    secondPolicyContext = readTrustPolicyFile(environment);
+  } catch (error) {
+    if (error instanceof SyntheticExternalApprovalError) {
+      fail('SYNTHETIC_EXTERNAL_APPROVAL_TRUST_POLICY_CHANGED');
+    }
+    throw error;
+  }
+  assertTrustPolicyContextsMatch(firstPolicyContext, secondPolicyContext);
+
+  const completedDate = options.completedAt instanceof Date ? options.completedAt : new Date();
+  const completedAt = completedDate.getTime();
+  if (!Number.isFinite(completedAt) || completedAt < now) {
+    fail('SYNTHETIC_EXTERNAL_APPROVAL_VERIFICATION_FAILED');
+  }
+  const validUntil = Math.min(
+    policyState.validUntil,
+    revocationState.validUntil,
+    revocationState.keyNotAfter
+  );
+  if (completedAt >= validUntil) {
+    fail('SYNTHETIC_EXTERNAL_APPROVAL_REVOCATION_EXPIRED');
+  }
+
+  const revokedKeyIds = Object.freeze([...revocationState.revokedKeyIds]);
+  const revokedPrincipalIdsSha256 = Object.freeze([
+    ...revocationState.revokedPrincipalIds
+  ]);
+  const revokedApprovalIdsSha256 = Object.freeze([
+    ...revocationState.revokedApprovalIds
+  ]);
+  const revokedGrantIdsSha256 = Object.freeze([
+    ...revocationState.revokedGrantIds
+  ]);
+  return Object.freeze({
+    schemaVersion: 1,
+    profile: 'synthetic-external-revocation-checkpoint-verification',
+    result: 'revocation-checkpoint-valid-against-provided-policy-not-authoritative-latest',
+    verifiedAt: completedDate.toISOString(),
+    validUntil: new Date(validUntil).toISOString(),
+    trustPolicyIdSha256: policyState.policy.policyIdSha256,
+    trustPolicySha256: policyState.policySha256,
+    trustPolicyRevision: policyState.policy.revision,
+    revocationCheckpointSha256: revocationState.checkpointSha256,
+    revocationCheckpointSequence: revocationState.sequence,
+    revocationCheckpointIssuedAt: new Date(revocationState.issuedAt).toISOString(),
+    revocationCheckpointValidUntil: new Date(revocationState.validUntil).toISOString(),
+    revocationAuthorityPrincipalIdSha256: revocationState.authorityPrincipalIdSha256,
+    revokedKeyIds,
+    revokedPrincipalIdsSha256,
+    revokedApprovalIdsSha256,
+    revokedGrantIdsSha256,
+    checks: Object.freeze({
+      testOnlyOverridesUsed,
+      productionPolicyReadPathUsed: !testOnlyOverridesUsed,
+      trustPolicyDigestPinnedByEnvironment: true,
+      trustPolicyFileStableDuringVerification: !testOnlyOverridesUsed,
+      ed25519CheckpointSignatureVerifiedAgainstProvidedPolicy: true,
+      localFreshnessWindowChecked: true,
+      trustPolicyExternallyAuthorizedByThisCommand: false,
+      revocationAuthorityIdentityAuthenticatedByThisCommand: false,
+      revocationCheckpointLatestAtAuthorityVerified: false,
+      trustedTimeVerified: false
+    }),
+    operations: Object.freeze({
+      trustPolicyFileReadOnly: !testOnlyOverridesUsed,
+      networkAccessPerformedByVerifier: false,
+      fileWritePerformedByVerifier: false,
+      databaseWritePerformedByVerifier: false,
+      deploymentPerformed: false
+    }),
+    deploymentAuthorization: 'not_granted',
+    productionChildGateState: 'not_observed',
+    childUseAuthorization: 'not_granted'
+  });
+}
+
 function verifySyntheticExternalApproval(environment, document) {
   return verifySyntheticExternalApprovalInternal(environment, document, {});
 }
 
 function verifySyntheticExternalApprovalForTest(environment, document, options = {}) {
   return verifySyntheticExternalApprovalInternal(environment, document, {
+    ...options,
+    [TEST_ONLY_OVERRIDE]: true
+  });
+}
+
+function verifySyntheticRevocationCheckpoint(environment, envelope) {
+  return verifySyntheticRevocationCheckpointInternal(environment, envelope, {});
+}
+
+function verifySyntheticRevocationCheckpointForTest(environment, envelope, options = {}) {
+  return verifySyntheticRevocationCheckpointInternal(environment, envelope, {
     ...options,
     [TEST_ONLY_OVERRIDE]: true
   });
@@ -1186,5 +1299,7 @@ module.exports = {
   safeErrorCode,
   usage,
   verifySyntheticExternalApproval,
-  verifySyntheticExternalApprovalForTest
+  verifySyntheticExternalApprovalForTest,
+  verifySyntheticRevocationCheckpoint,
+  verifySyntheticRevocationCheckpointForTest
 };
