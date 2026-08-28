@@ -241,11 +241,11 @@ childUseAuthorization=not_granted
 
 任何失败都不得通过回拨时间、改摘要、移除吊销项、关闭域名/TLS 校验、重写数据库或使用另一候选的签名来绕过。
 
-## 8. S17 本地边界与 S18 外部/生产硬门
+## 8. S17/S18 本地边界与 S19 外部/生产硬门
 
 S17 已在仓库、synthetic 数据根和策略目录之外增加独立本地 ledger，对本账本已观察 checkpoint 执行 sequence 单调、累计吊销、fork/撤销移除永久 block，并在一个 `BEGIN IMMEDIATE` 内提交本地单次使用或稳定拒绝记录。它没有改变 S16 自身只读、`unconsumed` 的历史边界，也没有把本地 receipt 变成部署授权。
 
-S18/获批外部系统仍至少需要完成：
+S18 只准备 `locally_prepared_unsubmitted` 的本地摘要 intent，不发送外部请求。S19/获批外部系统仍至少需要完成：
 
 1. 权威策略摘要的受控置入、轮换、责任人身份和主机本地卷/ACL 证明；
 2. 声明人、核验人、审批人、grant issuer、revocation authority 与 consumer 的真实身份认证和角色生命周期；

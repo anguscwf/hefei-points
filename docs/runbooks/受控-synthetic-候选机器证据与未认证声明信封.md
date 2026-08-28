@@ -188,8 +188,9 @@ childUseAuthorization=not_granted
 8. 外部系统另行认证声明人、验证权威事实与证据引用，并签发独立 checkpoint、gate verification、approval 和短时 grant。S15 不完成这些动作。
 9. 用 S16 verifier 对完整签名束做本地只读验证；S16 成功仍只是调用方策略下的 `unconsumed`，不是部署许可。
 10. 按 S17 手册初始化独立本地 ledger，并可对同一 S16 verification document 重新核验后提交一次本地使用记录；本 ledger receipt 不是全局消费或部署许可。
-11. 只有 S18/获批外部系统认证权威与 consumer、提供可信时间和全局最新 checkpoint，并把最终撤销、全局单次消费、真实部署动作和可核验回执安全协调，且全部外部硬门关闭后，才可执行一次受控 synthetic 部署。
-12. 部署后仍只用合成家庭在模拟器或成人受控设备完成网络 E2E、HUKS/AssetStore、微信 DevTools/真机和撤销 smoke。
-13. 正式法律文本、PIPIA、存量数据整改、备案、AppGallery 审核和所有生产发布门全部完成前，不开放儿童实际使用。
+11. 按 S18 手册只读恢复精确历史 S17 receipt，并可准备一个 `locally_prepared_unsubmitted` 的本地摘要 intent；它不是外部受理或部署许可。
+12. 只有 S19/获批外部系统认证权威与 consumer、提供可信时间和全局最新 checkpoint，并把最终撤销、全局单次消费、真实部署动作和可核验回执安全协调，且全部外部硬门关闭后，才可执行一次受控 synthetic 部署。
+13. 部署后仍只用合成家庭在模拟器或成人受控设备完成网络 E2E、HUKS/AssetStore、微信 DevTools/真机和撤销 smoke。
+14. 正式法律文本、PIPIA、存量数据整改、备案、AppGallery 审核和所有生产发布门全部完成前，不开放儿童实际使用。
 
-S16 已提供本地签名束 verifier，但只确认调用方提供策略下的签名、吊销 checkpoint、gate、approval 和 grant 绑定。S17 随后只在一个独立本地 ledger 实例内提供 checkpoint sequence 单调、累计吊销和本地 compare-and-record；它仍不认证策略权威或真实身份，不取回证据/审计正文，不提供可信时间、权威最新 checkpoint、跨主机全局单次消费或实际部署。以上外部硬门继续属于 S18/获批外部系统；不得把 S15、S16 或 S17 输出升级措辞为部署许可。
+S16 已提供本地签名束 verifier，但只确认调用方提供策略下的签名、吊销 checkpoint、gate、approval 和 grant 绑定。S17 随后只在一个独立本地 ledger 实例内提供 checkpoint sequence 单调、累计吊销和本地 compare-and-record；S18 又只准备未提交的本地摘要 intent。三者都不认证策略权威或真实身份，不取回证据/审计正文，不提供可信时间、权威最新 checkpoint、跨主机全局单次消费或实际部署。以上外部硬门继续属于 S19/获批外部系统；不得把 S15～S18 输出升级措辞为部署许可。

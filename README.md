@@ -2,16 +2,16 @@
 
 糖罐积分是面向家庭的任务与积分管理系统：家长创建家庭与孩子档案、审批任务和管理积分，孩子通过受控终端查看积分并申报任务。
 
-本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S17 的受控 synthetic 本地准备、候选证据封装、外部签名束离线验证与本地授权账本能力。
+本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S18 的受控 synthetic 本地准备、候选证据封装、外部签名束离线验证、本地授权账本与未提交协调意图能力。
 
 ## 当前状态
 
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
 - HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；S9 新增受控临时 synthetic profile 生成器和 loopback 全链验证，S10 又加入纯本地“设置与数据安全”说明。该说明明确不是正式隐私政策、儿童规则、用户协议或同意页面，不读取动态儿童/设备/会话信息，也不提供假解绑或删除按钮。跟踪配置仍固定禁用网络并使用 `.invalid` 源，尚未连接任何外部业务服务，也不代表完整薄 MVP。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
-- 阶段 1 已完成 S0～S17 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执；S15 把 S12/S13/S14、当前已提交 39 文件/10 迁移、配置、物理根和只读 pristine SQLite/receipt 绑定成短时 machine subject，再把 19 项外部声明包装成未认证信封。S16 只用环境摘要钉住的独立公开策略验证 Ed25519 gate/checkpoint/approval/grant 签名束，并重跑 S15 当前状态；schema 2 成功输出补充本地消费所需的策略、consumer、目标、来源和配置摘要，但 S16 自身仍不持久化或消费。S17 在仓库、synthetic 数据根和策略目录之外创建独立本地授权账本，对本账本已观察 checkpoint 执行 sequence 单调和累计吊销约束，并原子记录一次本地 grant 使用；它不认证外部权威或真实身份，不提供可信时间、权威最新 checkpoint、跨主机全局防重放，也不把真实部署动作纳入同一事务。所有命令始终不授予部署或儿童使用。最终验证结果以最新交接为准，详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
+- 阶段 1 已完成 S0～S18 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执；S15 把 S12/S13/S14、当前已提交 41 文件/10 迁移、配置、物理根和只读 pristine SQLite/receipt 绑定成短时 machine subject，再把 19 项外部声明包装成未认证信封。S16 只用环境摘要钉住的独立公开策略验证 Ed25519 gate/checkpoint/approval/grant 签名束；S17 只在一个独立本地 ledger 内约束已观察 checkpoint 并记录一次本地 grant 使用。S18 又增加只读历史 receipt 恢复和独立摘要 journal，只能形成 `locally_prepared_unsubmitted` 的本地协调意图。它不提交外部请求，不认证权威或真实身份，不提供可信时间、权威最新 checkpoint、跨主机全局消费，也不调用部署器。所有命令始终不授予部署或儿童使用。最终验证结果以最新交接为准，详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
 - 生产迁移已增加“旧库一致性快照 + 清单校验 + 无清单拒绝迁移”门禁；但正式法律文本、PIPIA、存量数据整改和 AppGallery 正式上架均未完成，所有儿童生产功能继续默认关闭。
-- S0～S12 及 Git 迁移收尾已安全存在于专用远端；S13～S17 已在本地主题分支完成，尚未推送。远端落盘或本地完成都不代表已经部署、联网、上架或开放儿童功能。
+- S0～S17 及 Git 迁移收尾已安全存在于专用远端；S18 远端主题分支已建立，功能与测试提交已显式推送。远端落盘或本地完成都不代表已经部署、联网、上架或开放儿童功能。
 
 ## 目录
 
@@ -77,6 +77,8 @@ npm run backup:pre-migration -- --database <旧库路径> --backup-root <备份�
 
 `npm run init:synthetic-authorization-ledger` 与 `npm run consume:synthetic-deployment-grant` 只接受非 TTY stdin 上最多 768 KiB 的单行 canonical JSON，并分别要求 `SYNTHETIC_AUTHORIZATION_LEDGER_INIT_ACK=initialize-local-ledger-not-authority-v1` 与 `SYNTHETIC_AUTHORIZATION_CONSUME_ACK=record-local-single-use-not-deployment-v1`。固定文件 `synthetic-authorization-ledger.sqlite` 必须位于仓库、synthetic 数据根和策略目录之外的独立批准父目录，最大 16 MiB，并绑定 ledger、consumer、目标、文件和主机上下文。账本使用 SQLite DELETE journal 与 FULL 同步；WAL/SHM 始终拒绝，正常瞬态或崩溃遗留的 DELETE journal 只由 SQLite 在可写排他锁内恢复。初始化记录签名 checkpoint genesis；消费重跑 S16 verifier 并要求 schema 2 结果，在同一 `BEGIN IMMEDIATE` 中推进有效 checkpoint、累计吊销集合并提交本地使用记录，并对授权束终态失败或唯一性冲突持久化稳定拒绝。写入只发生在独立账本，不写 synthetic/生产数据库、不联网、不调用部署器；`local_single_use_record_committed` 只表示本 ledger 实例已提交本地单次使用记录，不是实际部署、外部权威或全局消费证明。操作手册见 [本地授权账本初始化与单次消费记录](docs/runbooks/受控-synthetic-本地授权账本初始化与单次消费记录.md)。
 
+`npm run prepare:synthetic-authority-coordination-intent` 只接受非 TTY stdin 上最多 1 MiB 的单行 canonical JSON，并要求 `SYNTHETIC_AUTHORITY_COORDINATION_INTENT_ACK=prepare-local-intent-not-submitted-v1`。首次运行会先只读恢复精确历史 S17 receipt，成功后才在仓库、数据根、策略和 S17 ledger 之外创建独立 `synthetic-authority-coordination-intent.sqlite`；缺失 receipt、历史 rejection 或 S17 journal 活动时不会隐式消费或创建 S18 journal。该 journal 只保存摘要与非敏感元数据，在本文件内执行 request/receipt/grant/approval/候选唯一性和本机观察时间高水位，结果始终是 `locally_prepared_unsubmitted`。它不具备外部防回滚锚，不证明跨 journal/主机全局消费，不联网、不提交外部请求、不调用部署器。操作手册见 [权威协调意图本地准备](docs/runbooks/受控-synthetic-权威协调意图本地准备.md)。
+
 服务端公开法律证据还要求显式配置精确 HTTPS 源 `LEGAL_PUBLIC_ORIGIN`。四类文本和监护关系声明的 URL 必须严格等于 `/legal/<固定文本类型>/<版本>/<小写 SHA-256>.html`；配置缺失、跨域、类型/版本/摘要路径不匹配时统一视为 `LEGAL_TEXTS_UNAVAILABLE`。正式文本、重定向、CSP、微信业务域名及真机加载验证仍属于生产硬门。
 
 HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harmonyos/build-profile.json5` 含本机签名信息并被强制忽略；开发者必须在本机独立配置，严禁提交密码、证书、Profile 或绝对路径。
@@ -86,12 +88,13 @@ HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 
 ## 文档入口
 
 - [仓库工作规范](AGENTS.md)
-- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S17本地授权账本与单次消费记录边界交接-20260828.md)
+- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S18权威协调意图本地准备边界交接-20260828.md)
 - [S13 数据根操作手册](docs/runbooks/受控-synthetic-数据根准备与核验.md)
 - [S14 初始引导操作手册](docs/runbooks/受控-synthetic-初始管理员与法律证据引导.md)
 - [S15 候选证据操作手册](docs/runbooks/受控-synthetic-候选机器证据与未认证声明信封.md)
 - [S16 外部签名束离线验证操作手册](docs/runbooks/受控-synthetic-外部签名束离线验证与未消费授权.md)
 - [S17 本地授权账本操作手册](docs/runbooks/受控-synthetic-本地授权账本初始化与单次消费记录.md)
+- [S18 权威协调意图本地准备操作手册](docs/runbooks/受控-synthetic-权威协调意图本地准备.md)
 - [HarmonyOS MVP 方案与推进计划](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)
 - [阶段 1 现有能力审计与首批实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)
 - [架构决策记录](docs/adr/README.md)
