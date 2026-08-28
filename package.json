@@ -7,6 +7,7 @@
   },
   "main": "server/index.js",
   "scripts": {
+    "report:synthetic-external-saga-blockers": "node scripts/report-synthetic-external-saga-blockers.js",
     "start": "cross-env NODE_ENV=production DEPLOYMENT_TIER=production API_PUBLIC_ORIGIN=https://hefeijifen.cn WX_APPID=wx90237ce600b51eea HARMONY_CHILD_ENABLED=false CHILD_ENROLLMENT_ENABLED=false DEVICE_PAIRING_ENABLED=false POINT_REQUESTS_ENABLED=false CHILD_DATA_RIGHTS_ENABLED=false LEGACY_CHILD_LOGIN_ENABLED=false LEGACY_CHILD_MANAGEMENT_ENABLED=false PORT=3001 DATA_DIR=./data node server/index.js",
     "dev": "cross-env NODE_ENV=development PORT=3002 DATA_DIR=./data-dev node server/index.js",
     "migrate:sqlite": "node scripts/migrate-json-to-sqlite.js",

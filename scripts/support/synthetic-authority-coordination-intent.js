@@ -45,6 +45,7 @@ const STABLE_ERROR_CODES = new Set([
   'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_GRANT_ALREADY_PREPARED',
   'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_APPROVAL_ALREADY_PREPARED',
   'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_TARGET_ALREADY_PREPARED',
+  'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_HISTORICAL_INTENT_REQUIRED',
   'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_RECOVERY_INVALID',
   'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_LOCAL_CLOCK_ROLLBACK',
   'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_TRANSACTION_FAILED',
@@ -345,6 +346,93 @@ function sameFileIdentity(left, right) {
   return canonicalJson(basicFileIdentity(left)) === canonicalJson(basicFileIdentity(right));
 }
 
+function readHeldJournalDigest(descriptor, expectedMetadata) {
+  let before;
+  let after;
+  let buffer;
+  try {
+    before = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameFileIdentity(expectedMetadata, before)
+        || before.size !== expectedMetadata.size
+        || before.size <= 0n || before.size > BigInt(MAX_JOURNAL_BYTES)) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+    }
+    buffer = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = fs.readSync(descriptor, buffer, offset, buffer.length - offset, offset);
+      if (read <= 0) fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+      offset += read;
+    }
+    after = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameFileIdentity(before, after) || before.size !== after.size) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+    }
+    const sqliteMagic = Buffer.from('SQLite format 3\0', 'binary');
+    if (buffer.length < 100 || !buffer.subarray(0, sqliteMagic.length).equals(sqliteMagic)
+        || buffer[18] !== 1 || buffer[19] !== 1) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_SCHEMA_INVALID');
+    }
+    return sha256(buffer);
+  } finally {
+    if (buffer) buffer.fill(0);
+  }
+}
+
+function openHeldJournal(context) {
+  let descriptor;
+  try {
+    let flags = fs.constants.O_RDONLY;
+    if (typeof fs.constants.O_NOFOLLOW === 'number') {
+      flags |= fs.constants.O_NOFOLLOW;
+    }
+    descriptor = fs.openSync(context.filename, flags);
+    const metadata = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameFileIdentity(context.metadata, metadata)
+        || metadata.size !== context.metadata.size) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+    }
+    const digestSha256 = readHeldJournalDigest(descriptor, metadata);
+    return Object.freeze({ descriptor, metadata, digestSha256 });
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch (_) {}
+    }
+    if (error instanceof SyntheticAuthorityCoordinationIntentError) throw error;
+    fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+  }
+}
+
+function assertPathMatchesHeldJournal(context, held) {
+  let before;
+  let after;
+  let real;
+  let buffer;
+  try {
+    before = fs.lstatSync(context.filename, { bigint: true });
+    real = realpathSync(context.filename);
+    if (!sameFileIdentity(held.metadata, before)
+        || !samePath(real, context.filename)
+        || !samePath(path.dirname(real), context.parentReal)) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+    }
+    const heldDigestSha256 = readHeldJournalDigest(held.descriptor, held.metadata);
+    buffer = fs.readFileSync(context.filename);
+    after = fs.lstatSync(context.filename, { bigint: true });
+    if (!sameFileIdentity(before, after)
+        || after.size !== held.metadata.size
+        || heldDigestSha256 !== held.digestSha256
+        || sha256(buffer) !== held.digestSha256) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+    }
+  } catch (error) {
+    if (error instanceof SyntheticAuthorityCoordinationIntentError) throw error;
+    fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+  } finally {
+    if (buffer) buffer.fill(0);
+  }
+}
+
 function hostContextSha256() {
   let user;
   try {
@@ -393,6 +481,19 @@ function assertNoSidecars(filename, code = 'SYNTHETIC_AUTHORITY_COORDINATION_INT
 function assertNoWalSidecars(filename, code = 'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_RESULT_UNKNOWN') {
   if ([`${filename}-wal`, `${filename}-shm`]
     .some(candidate => pathEntryMetadata(candidate, code) !== null)) fail(code);
+}
+
+function assertNoReadOnlyRecoverySidecars(filename) {
+  if (pathEntryMetadata(
+    `${filename}-journal`,
+    'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_RECOVERY_INVALID'
+  ) !== null) {
+    fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_BUSY');
+  }
+  assertNoWalSidecars(
+    filename,
+    'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_RESULT_UNKNOWN'
+  );
 }
 
 function assertSafeDeleteJournal(filename) {
@@ -577,6 +678,20 @@ function configureWritableDatabase(db, initializeJournalMode) {
     fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_SCHEMA_INVALID');
   }
   db.exec('PRAGMA synchronous = FULL');
+}
+
+function configureReadOnlyDatabase(db) {
+  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  db.exec('PRAGMA query_only = ON');
+  db.exec('PRAGMA temp_store = MEMORY');
+  const queryOnly = db.prepare('PRAGMA query_only').get();
+  const tempStore = db.prepare('PRAGMA temp_store').get();
+  const journal = db.prepare('PRAGMA journal_mode').get();
+  if (!queryOnly || queryOnly.query_only !== 1
+      || !tempStore || tempStore.temp_store !== 2
+      || !journal || String(journal.journal_mode).toLowerCase() !== 'delete') {
+    fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_SCHEMA_INVALID');
+  }
 }
 
 function createJournalSchema(db) {
@@ -1055,8 +1170,9 @@ function insertIntent(db, identity, input, receipt, preparedAtObserved) {
     .get(value.intentIdSha256);
 }
 
-function outputFor(identity, row, outcome) {
+function outputFor(identity, row, outcome, options = {}) {
   const value = intentValueFromRow(identity, row);
+  const readOnlyRecovery = options.readOnlyRecovery === true;
   return Object.freeze({
     schemaVersion: 1,
     profile: 'synthetic-authority-coordination-intent',
@@ -1114,7 +1230,8 @@ function outputFor(identity, row, outcome) {
     }),
     operations: Object.freeze({
       coordinationIntentRowInserted: outcome === 'prepared',
-      localIntentJournalOpenedWritable: true,
+      ...(readOnlyRecovery ? { localIntentJournalOpenedReadOnly: true } : {}),
+      localIntentJournalOpenedWritable: !readOnlyRecovery,
       s17AuthorizationLedgerWritten: false,
       syntheticDatabaseWritten: false,
       networkAccessPerformed: false,
@@ -1127,6 +1244,122 @@ function outputFor(identity, row, outcome) {
     productionChildGateState: 'not_observed',
     childUseAuthorization: 'not_granted'
   });
+}
+
+function recoverSyntheticAuthorityCoordinationIntentInternal(
+  environment,
+  document,
+  options
+) {
+  assertEnvironment(environment);
+  const input = normalizeInput(document);
+  const context = createPathContext(environment);
+  if (!context.exists) {
+    fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_HISTORICAL_INTENT_REQUIRED');
+  }
+  const expectedTestOnly = options.testOnly === true ? 1 : 0;
+  const before = fs.lstatSync(context.filename, { bigint: true });
+  if (!sameFileIdentity(context.metadata, before)) {
+    fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+  }
+  const rollbackJournal = `${context.filename}-journal`;
+  assertNoReadOnlyRecoverySidecars(context.filename);
+  let held;
+  let db;
+  let transactionOpen = false;
+  try {
+    held = openHeldJournal(context);
+    assertPathMatchesHeldJournal(context, held);
+    db = new DatabaseSync(context.filename, { readOnly: true });
+    configureReadOnlyDatabase(db);
+    db.exec('BEGIN');
+    transactionOpen = true;
+    assertPathMatchesHeldJournal(context, held);
+    const identity = validateIdentity(db, context, environment, expectedTestOnly);
+    const historical = db.prepare(
+      'SELECT * FROM coordination_intents WHERE intent_id_sha256 = ?'
+    ).get(input.intentIdSha256);
+    if (!historical) {
+      db.exec('ROLLBACK');
+      transactionOpen = false;
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_HISTORICAL_INTENT_REQUIRED');
+    }
+    if (historical.request_fingerprint_sha256 !== input.requestFingerprintSha256) {
+      db.exec('ROLLBACK');
+      transactionOpen = false;
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_IDEMPOTENCY_CONFLICT');
+    }
+    const output = outputFor(identity, historical, 'replayed', {
+      readOnlyRecovery: true
+    });
+    assertPathMatchesHeldJournal(context, held);
+    assertNoReadOnlyRecoverySidecars(context.filename);
+    db.exec('COMMIT');
+    transactionOpen = false;
+    assertPathMatchesHeldJournal(context, held);
+    return output;
+  } catch (error) {
+    if (transactionOpen && db) {
+      try {
+        db.exec('ROLLBACK');
+        transactionOpen = false;
+      } catch (_) {
+        fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_RECOVERY_INVALID');
+      }
+    }
+    if (error instanceof SyntheticAuthorityCoordinationIntentError
+        || error instanceof authorization.SyntheticAuthorizationLedgerError
+        || error instanceof externalApproval.SyntheticExternalApprovalError) {
+      throw error;
+    }
+    if (error && (
+      error.code === 'SQLITE_BUSY'
+      || error.code === 'SQLITE_LOCKED'
+      || String(error.code || '').startsWith('SQLITE_READONLY')
+      || /locked|busy|read.?only|recovery/i.test(error.message || '')
+      || pathEntryMetadata(
+        rollbackJournal,
+        'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_RECOVERY_INVALID'
+      ) !== null
+    )) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_BUSY');
+    }
+    fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_SCHEMA_INVALID');
+  } finally {
+    if (db) {
+      try { db.close(); } catch (_) {}
+    }
+    if (held) {
+      try {
+        assertPathMatchesHeldJournal(context, held);
+      } finally {
+        try { fs.closeSync(held.descriptor); } catch (_) {}
+      }
+    }
+    let after;
+    try {
+      after = fs.lstatSync(context.filename, { bigint: true });
+    } catch (_) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+    }
+    if (!sameFileIdentity(before, after)
+        || after.size <= 0n || after.size > BigInt(MAX_JOURNAL_BYTES)) {
+      fail('SYNTHETIC_AUTHORITY_COORDINATION_INTENT_CONTEXT_MISMATCH');
+    }
+    assertNoReadOnlyRecoverySidecars(context.filename);
+  }
+}
+
+function recoverSyntheticAuthorityCoordinationIntent(environment, document) {
+  return recoverSyntheticAuthorityCoordinationIntentInternal(environment, document, {});
+}
+
+function recoverSyntheticAuthorityCoordinationIntentForTest(environment, document) {
+  return recoverSyntheticAuthorityCoordinationIntentInternal(
+    environment,
+    document,
+    { testOnly: true }
+  );
 }
 
 function currentDate(options) {
@@ -1369,6 +1602,8 @@ module.exports = {
   prepareSyntheticAuthorityCoordinationIntent,
   prepareSyntheticAuthorityCoordinationIntentForTest,
   readStdin,
+  recoverSyntheticAuthorityCoordinationIntent,
+  recoverSyntheticAuthorityCoordinationIntentForTest,
   runCli,
   safeErrorCode,
   usage

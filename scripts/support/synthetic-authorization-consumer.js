@@ -475,6 +475,93 @@ function sameFileIdentity(left, right) {
   return canonicalJson(basicFileIdentity(left)) === canonicalJson(basicFileIdentity(right));
 }
 
+function readHeldLedgerDigest(descriptor, expectedMetadata) {
+  let before;
+  let after;
+  let buffer;
+  try {
+    before = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameFileIdentity(expectedMetadata, before)
+        || before.size !== expectedMetadata.size
+        || before.size <= 0n || before.size > BigInt(MAX_LEDGER_BYTES)) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+    }
+    buffer = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = fs.readSync(descriptor, buffer, offset, buffer.length - offset, offset);
+      if (read <= 0) fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+      offset += read;
+    }
+    after = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameFileIdentity(before, after) || before.size !== after.size) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+    }
+    const sqliteMagic = Buffer.from('SQLite format 3\0', 'binary');
+    if (buffer.length < 100 || !buffer.subarray(0, sqliteMagic.length).equals(sqliteMagic)
+        || buffer[18] !== 1 || buffer[19] !== 1) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_SCHEMA_INVALID');
+    }
+    return sha256(buffer);
+  } finally {
+    if (buffer) buffer.fill(0);
+  }
+}
+
+function openHeldLedger(context) {
+  let descriptor;
+  try {
+    let flags = fs.constants.O_RDONLY;
+    if (typeof fs.constants.O_NOFOLLOW === 'number') {
+      flags |= fs.constants.O_NOFOLLOW;
+    }
+    descriptor = fs.openSync(context.filename, flags);
+    const metadata = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameFileIdentity(context.metadata, metadata)
+        || metadata.size !== context.metadata.size) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+    }
+    const digestSha256 = readHeldLedgerDigest(descriptor, metadata);
+    return Object.freeze({ descriptor, metadata, digestSha256 });
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch (_) {}
+    }
+    if (error instanceof SyntheticAuthorizationLedgerError) throw error;
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+  }
+}
+
+function assertPathMatchesHeldLedger(context, held) {
+  let before;
+  let after;
+  let real;
+  let buffer;
+  try {
+    before = fs.lstatSync(context.filename, { bigint: true });
+    real = realpathSync(context.filename);
+    if (!sameFileIdentity(held.metadata, before)
+        || !samePath(real, context.filename)
+        || !samePath(path.dirname(real), context.parentReal)) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+    }
+    const heldDigestSha256 = readHeldLedgerDigest(held.descriptor, held.metadata);
+    buffer = fs.readFileSync(context.filename);
+    after = fs.lstatSync(context.filename, { bigint: true });
+    if (!sameFileIdentity(before, after)
+        || after.size !== held.metadata.size
+        || heldDigestSha256 !== held.digestSha256
+        || sha256(buffer) !== held.digestSha256) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+    }
+  } catch (error) {
+    if (error instanceof SyntheticAuthorizationLedgerError) throw error;
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+  } finally {
+    if (buffer) buffer.fill(0);
+  }
+}
+
 function hostContextSha256() {
   let user;
   try {
@@ -702,9 +789,12 @@ function configureWritableDatabase(db) {
 function configureReadOnlyDatabase(db) {
   db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
   db.exec('PRAGMA query_only = ON');
+  db.exec('PRAGMA temp_store = MEMORY');
   const queryOnly = db.prepare('PRAGMA query_only').get();
+  const tempStore = db.prepare('PRAGMA temp_store').get();
   const journal = db.prepare('PRAGMA journal_mode').get();
   if (!queryOnly || queryOnly.query_only !== 1
+      || !tempStore || tempStore.temp_store !== 2
       || !journal || String(journal.journal_mode).toLowerCase() !== 'delete') {
     fail('SYNTHETIC_AUTHORIZATION_LEDGER_SCHEMA_INVALID');
   }
@@ -1810,13 +1900,17 @@ function recoverSyntheticAuthorizationReceiptInternal(environment, document, opt
   }
   const journal = `${context.filename}-journal`;
   assertNoReadOnlyRecoverySidecars(context.filename);
+  let held;
   let db;
   let transactionOpen = false;
   try {
+    held = openHeldLedger(context);
+    assertPathMatchesHeldLedger(context, held);
     db = new DatabaseSync(context.filename, { readOnly: true });
     configureReadOnlyDatabase(db);
     db.exec('BEGIN');
     transactionOpen = true;
+    assertPathMatchesHeldLedger(context, held);
     validateSchema(db);
     validateIntegrity(db);
     const { identity } = validateLedgerState(
@@ -1837,8 +1931,11 @@ function recoverSyntheticAuthorizationReceiptInternal(environment, document, opt
       throw recoveredStableError(historical.row.stable_error_code);
     }
     const output = consumptionOutput(identity, historical.row, 'replayed');
+    assertPathMatchesHeldLedger(context, held);
+    assertNoReadOnlyRecoverySidecars(context.filename);
     db.exec('COMMIT');
     transactionOpen = false;
+    assertPathMatchesHeldLedger(context, held);
     return output;
   } catch (error) {
     if (transactionOpen && db) {
@@ -1866,6 +1963,13 @@ function recoverSyntheticAuthorizationReceiptInternal(environment, document, opt
   } finally {
     if (db) {
       try { db.close(); } catch (_) {}
+    }
+    if (held) {
+      try {
+        assertPathMatchesHeldLedger(context, held);
+      } finally {
+        try { fs.closeSync(held.descriptor); } catch (_) {}
+      }
     }
     let after;
     try {
