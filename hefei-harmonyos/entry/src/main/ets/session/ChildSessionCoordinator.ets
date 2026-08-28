@@ -77,6 +77,8 @@ export interface ChildApiPort {
     idempotencyKey: string): Promise<PointRequestResponse>;
   getPointRequests(accessToken: string, limit: number,
     cursor: string): Promise<PointRequestsResponse>;
+  getPointRequest(accessToken: string,
+    pointRequestId: string): Promise<PointRequestResponse>;
 }
 
 export interface DeviceProofVerifierPort {
@@ -140,6 +142,8 @@ export class ChildSessionCoordinator {
   private nextRewardRuleCursorValue: string = '';
   private pointRequestValues: Array<PointRequestDto> = [];
   private nextPointRequestCursorValue: string = '';
+  private pointRequestDetailValue: PointRequestDto | null = null;
+  private pointRequestDetailGeneration: number = 0;
   private operationGeneration: number = 0;
   private busyValue: boolean = false;
   private lockedValue: boolean = false;
@@ -208,6 +212,10 @@ export class ChildSessionCoordinator {
     return this.nextPointRequestCursorValue.length > 0;
   }
 
+  get pointRequestDetail(): PointRequestDto | null {
+    return this.pointRequestDetailValue;
+  }
+
   get pointRequestPending(): boolean {
     return this.pointIntent !== null
       && this.pointIntent.phase === PointRequestIntentPhase.CREATE_INTENT;
@@ -222,6 +230,8 @@ export class ChildSessionCoordinator {
     this.nextRewardRuleCursorValue = '';
     this.pointRequestValues = [];
     this.nextPointRequestCursorValue = '';
+    this.pointRequestDetailGeneration += 1;
+    this.pointRequestDetailValue = null;
   }
 
   lockForBackground(): void {
@@ -695,6 +705,62 @@ export class ChildSessionCoordinator {
     }
   }
 
+  private async pointRequestDetailWithOneRefresh(
+    pointRequestId: string): Promise<PointRequestResponse> {
+    let session: SessionDto = await this.ensureFreshSessionInternal(false);
+    try {
+      return await this.api.getPointRequest(session.accessToken, pointRequestId);
+    } catch (error) {
+      if (error instanceof ChildApiError && error.code === 'ACCESS_TOKEN_EXPIRED') {
+        session = await this.ensureFreshSessionInternal(true);
+        return this.api.getPointRequest(session.accessToken, pointRequestId);
+      }
+      throw throwableError(error as Object);
+    }
+  }
+
+  private samePointRequestIdentity(current: PointRequestDto,
+    latest: PointRequestDto): boolean {
+    return current.id === latest.id
+      && current.rule.id === latest.rule.id
+      && current.rule.categoryId === latest.rule.categoryId
+      && current.rule.label === latest.rule.label
+      && current.rule.categoryLabel === latest.rule.categoryLabel
+      && current.rule.unit === latest.rule.unit
+      && current.rule.minPoints === latest.rule.minPoints
+      && current.rule.defaultPoints === latest.rule.defaultPoints
+      && current.rule.maxPoints === latest.rule.maxPoints
+      && current.rule.revision === latest.rule.revision
+      && current.requestedPoints === latest.requestedPoints
+      && current.occurredAt === latest.occurredAt
+      && current.duplicateSuspected === latest.duplicateSuspected
+      && current.submittedAt === latest.submittedAt
+      && current.clientRequestId === latest.clientRequestId;
+  }
+
+  private assertPointRequestDetailAdvance(current: PointRequestDto,
+    latest: PointRequestDto): void {
+    if (!this.samePointRequestIdentity(current, latest)
+        || latest.revision < current.revision) {
+      throw new Error('PROTOCOL_ERROR');
+    }
+    if (latest.revision === current.revision) {
+      if (latest.status !== current.status
+          || latest.approvedPoints !== current.approvedPoints
+          || latest.description !== current.description
+          || latest.updatedAt !== current.updatedAt
+          || JSON.stringify(latest.requestInfo) !== JSON.stringify(current.requestInfo)
+          || JSON.stringify(latest.decision) !== JSON.stringify(current.decision)) {
+        throw new Error('PROTOCOL_ERROR');
+      }
+      return;
+    }
+    if (current.status === 'approved' || current.status === 'rejected'
+        || current.status === 'cancelled' || latest.updatedAt <= current.updatedAt) {
+      throw new Error('PROTOCOL_ERROR');
+    }
+  }
+
   private pointRequestMatchesIntent(value: PointRequestDto,
     body: PointRequestCreateRequest): boolean {
     return value.clientRequestId === body.clientRequestId
@@ -851,6 +917,8 @@ export class ChildSessionCoordinator {
       return;
     }
     this.busyValue = true;
+    this.pointRequestDetailGeneration += 1;
+    this.pointRequestDetailValue = null;
     const generation: number = this.operationGeneration;
     try {
       const current: SessionEnvelope = this.requireEnvelope();
@@ -970,6 +1038,58 @@ export class ChildSessionCoordinator {
       await this.handleFailure(error as Object);
     } finally {
       this.busyValue = false;
+    }
+  }
+
+  async loadPointRequestDetail(pointRequestId: string): Promise<void> {
+    if (this.busyValue || this.lockedValue || this.pointRequestPending) {
+      return;
+    }
+    this.pointRequestDetailGeneration += 1;
+    const detailGeneration: number = this.pointRequestDetailGeneration;
+    this.pointRequestDetailValue = null;
+    const visible: Array<PointRequestDto> = this.pointRequestValues.filter(
+      (value: PointRequestDto) => value.id === pointRequestId
+    );
+    if (!/^point_request_[a-f0-9]{32}$/.test(pointRequestId) || visible.length !== 1) {
+      this.statusCodeValue = 'LOCAL_REQUEST_INVALID';
+      return;
+    }
+    this.busyValue = true;
+    const generation: number = this.operationGeneration;
+    try {
+      const response: PointRequestResponse = await this.pointRequestDetailWithOneRefresh(
+        pointRequestId
+      );
+      if (generation !== this.operationGeneration
+          || detailGeneration !== this.pointRequestDetailGeneration) {
+        return;
+      }
+      const currentVisible: Array<PointRequestDto> = this.pointRequestValues.filter(
+        (value: PointRequestDto) => value.id === pointRequestId
+      );
+      if (currentVisible.length !== 1) {
+        throw new Error('LOCAL_REQUEST_INVALID');
+      }
+      this.assertPointRequestDetailAdvance(currentVisible[0], response.pointRequest);
+      this.pointRequestValues = this.pointRequestValues.map((value: PointRequestDto) =>
+        value.id === pointRequestId ? response.pointRequest : value
+      );
+      this.pointRequestDetailValue = response.pointRequest;
+      this.statusCodeValue = 'POINT_REQUEST_DETAIL_CURRENT';
+    } catch (error) {
+      this.pointRequestDetailValue = null;
+      await this.handleFailure(error as Object);
+    } finally {
+      this.busyValue = false;
+    }
+  }
+
+  dismissPointRequestDetail(): void {
+    this.pointRequestDetailGeneration += 1;
+    this.pointRequestDetailValue = null;
+    if (this.statusCodeValue === 'POINT_REQUEST_DETAIL_CURRENT') {
+      this.statusCodeValue = 'READY';
     }
   }
 }

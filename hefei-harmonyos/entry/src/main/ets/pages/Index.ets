@@ -48,6 +48,7 @@ struct Index {
   @State pointRequests: Array<PointRequestDto> = [];
   @State hasMorePointRequests: boolean = false;
   @State pointRequestPending: boolean = false;
+  @State pointRequestDetail: PointRequestDto | null = null;
   @State showPrivacySafety: boolean = false;
 
   aboutToAppear(): void {
@@ -92,6 +93,7 @@ struct Index {
     this.pointRequests = this.coordinator.pointRequests;
     this.hasMorePointRequests = this.coordinator.hasMorePointRequests;
     this.pointRequestPending = this.coordinator.pointRequestPending;
+    this.pointRequestDetail = this.coordinator.pointRequestDetail;
     if (this.locked || this.phase !== EnvelopePhase.ACTIVE || !this.hasSummary) {
       this.clearPointDraft();
     }
@@ -127,6 +129,7 @@ struct Index {
 
   private async refreshSelf(): Promise<void> {
     this.busy = true;
+    this.pointRequestDetail = null;
     await this.coordinator.refreshSelf();
     this.syncView();
   }
@@ -174,6 +177,18 @@ struct Index {
     this.syncView();
   }
 
+  private async togglePointRequestDetail(item: PointRequestDto): Promise<void> {
+    if (this.pointRequestDetail !== null && this.pointRequestDetail.id === item.id) {
+      this.coordinator.dismissPointRequestDetail();
+      this.syncView();
+      return;
+    }
+    this.busy = true;
+    this.pointRequestDetail = null;
+    await this.coordinator.loadPointRequestDetail(item.id);
+    this.syncView();
+  }
+
   private statusText(): string {
     if (this.statusCode === 'BOOT') return '正在检查本机安全状态';
     if (this.statusCode === 'UNPAIRED') return '这台设备尚未开通';
@@ -188,6 +203,10 @@ struct Index {
     }
     if (this.statusCode === 'POINT_REQUEST_SUBMITTED') return '积分申请已提交，等待家长处理';
     if (this.statusCode === 'POINT_REQUEST_RECONCILED') return '已确认原积分申请存在';
+    if (this.statusCode === 'POINT_REQUEST_DETAIL_CURRENT') return '这条申请已刷新为服务端当前状态';
+    if (this.statusCode === 'POINT_REQUEST_NOT_FOUND') return '这条申请当前无法读取，请整体刷新申请列表';
+    if (this.statusCode === 'LOCAL_REQUEST_INVALID') return '只能查看当前列表中唯一的一条申请';
+    if (this.statusCode === 'PROTOCOL_ERROR') return '返回内容未通过安全校验，请整体刷新后再试';
     if (this.statusCode === 'SESSION_RECOVERY_REQUIRED') return '设备会话需要安全恢复';
     if (this.statusCode === 'PAIRING_CODE_INVALID') return '配对码无效或已不可用';
     if (this.statusCode === 'PAIRING_LOCKED') return '配对尝试已锁定，请稍后再试';
@@ -556,6 +575,83 @@ struct Index {
   }
 
   @Builder
+  private pointRequestDetailBody(item: PointRequestDto) {
+    Column({ space: 6 }) {
+      Text(`当前详情 · 版本 ${item.revision}`)
+        .width('100%')
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#5B463A')
+      Text(`分类：${item.rule.categoryLabel}`)
+        .width('100%')
+        .fontSize(12)
+        .fontColor('#76665C')
+      Text(`规则范围：${item.rule.minPoints}—${item.rule.maxPoints} 分${item.rule.unit}`)
+        .width('100%')
+        .fontSize(12)
+        .fontColor('#76665C')
+      Text(`完整说明：${item.description}`)
+        .width('100%')
+        .fontSize(13)
+        .fontColor('#5F5148')
+      Text(`申报 ${item.requestedPoints} 分${item.approvedPoints === null
+        ? '' : ` · 通过 ${item.approvedPoints} 分`}`)
+        .width('100%')
+        .fontSize(13)
+        .fontColor('#5F5148')
+      if (item.duplicateSuspected) {
+        Text('这条申请可能与近期记录重复，最终由家长确认。')
+          .width('100%')
+          .fontSize(12)
+          .fontColor('#9A5B36')
+      }
+      if (item.requestInfo !== null) {
+        Text(`家长留言：${item.requestInfo.note}`)
+          .width('100%')
+          .fontSize(13)
+          .fontColor('#9A5B36')
+        Text(`留言时间：${new Date(item.requestInfo.requestedAt).toLocaleString()}`)
+          .width('100%')
+          .fontSize(11)
+          .fontColor('#928178')
+        if (item.requestInfo.resubmittedAt !== null) {
+          Text(`补充时间：${new Date(item.requestInfo.resubmittedAt).toLocaleString()}`)
+            .width('100%')
+            .fontSize(11)
+            .fontColor('#928178')
+        }
+      }
+      if (item.decision !== null) {
+        if (item.decision.note !== null) {
+          Text(`处理说明：${item.decision.note}`)
+            .width('100%')
+            .fontSize(13)
+            .fontColor('#5F5148')
+        }
+        Text(`处理时间：${new Date(item.decision.reviewedAt).toLocaleString()}`)
+          .width('100%')
+          .fontSize(11)
+          .fontColor('#928178')
+      }
+      Text(`发生时间：${new Date(item.occurredAt).toLocaleString()}`)
+        .width('100%')
+        .fontSize(11)
+        .fontColor('#928178')
+      Text(`提交时间：${new Date(item.submittedAt).toLocaleString()}`)
+        .width('100%')
+        .fontSize(11)
+        .fontColor('#928178')
+      Text(`最近更新：${new Date(item.updatedAt).toLocaleString()}`)
+        .width('100%')
+        .fontSize(11)
+        .fontColor('#928178')
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding({ top: 8 })
+  }
+
+  @Builder
   private pointRequestList() {
     if (this.hasSummary) {
       Column({ space: 10 }) {
@@ -619,6 +715,18 @@ struct Index {
                 .width('100%')
                 .fontSize(11)
                 .fontColor('#928178')
+              if (this.pointRequestDetail !== null
+                  && this.pointRequestDetail.id === item.id) {
+                this.pointRequestDetailBody(item)
+              }
+              Button(this.pointRequestDetail !== null
+                && this.pointRequestDetail.id === item.id ? '收起详情' : '查看最新详情')
+                .width('100%')
+                .height(38)
+                .enabled(this.networkReady() && !this.busy && !this.pointRequestPending)
+                .backgroundColor('#F1E8E2')
+                .fontColor('#5B463A')
+                .onClick(() => this.togglePointRequestDetail(item))
             }
             .alignItems(HorizontalAlign.Start)
             .width('100%')
