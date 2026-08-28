@@ -1597,6 +1597,45 @@ export default function recoveryTests(): void {
         }
       });
 
+    it('rejects terminal evolution and immutable point request identity drift', 0, async () => {
+      const terminalApi: PointDetailApi = new PointDetailApi();
+      terminalApi.firstValue = pointRequestSnapshot(
+        FIRST_POINT_REQUEST_ID, 2, '合成终态说明', '2026-08-25T00:02:00.000Z'
+      );
+      terminalApi.firstValue.status = 'approved';
+      terminalApi.firstValue.approvedPoints = 4;
+      terminalApi.detailValue = pointRequestSnapshot(
+        FIRST_POINT_REQUEST_ID, 3, '合成终态说明', '2026-08-25T00:03:00.000Z'
+      );
+      terminalApi.detailValue.status = 'approved';
+      terminalApi.detailValue.approvedPoints = 4;
+
+      const identityApi: PointDetailApi = new PointDetailApi();
+      identityApi.firstValue = pointRequestSnapshot(
+        FIRST_POINT_REQUEST_ID, 2, '合成身份说明', '2026-08-25T00:02:00.000Z'
+      );
+      identityApi.detailValue = pointRequestSnapshot(
+        FIRST_POINT_REQUEST_ID, 3, '合成身份说明', '2026-08-25T00:03:00.000Z'
+      );
+      identityApi.detailValue.rule.label = '漂移规则';
+
+      const apis: Array<PointDetailApi> = [terminalApi, identityApi];
+      for (let index: number = 0; index < apis.length; index += 1) {
+        const coordinator: ChildSessionCoordinator = await initializedCoordinator(
+          apis[index],
+          new FakeVault(activeEnvelope(
+            DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
+          ))
+        );
+        await coordinator.refreshSelf();
+        await coordinator.loadPointRequestDetail(FIRST_POINT_REQUEST_ID);
+        expect(coordinator.statusCode).assertEqual('PROTOCOL_ERROR');
+        expect(coordinator.pointRequestDetail === null).assertTrue();
+        expect(coordinator.pointRequests[0].revision).assertEqual(2);
+        expect(coordinator.pointRequests[0].rule.label).assertEqual('合成任务');
+      }
+    });
+
     it('enforces the tracked or approved synthetic environment boundary', 0, () => {
       const identity: DeviceIdentity = new DeviceIdentity();
       const vault: SessionVault = new SessionVault();

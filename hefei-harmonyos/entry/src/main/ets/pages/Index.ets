@@ -717,7 +717,7 @@ struct Index {
                 .fontColor('#928178')
               if (this.pointRequestDetail !== null
                   && this.pointRequestDetail.id === item.id) {
-                this.pointRequestDetailBody(item)
+                this.pointRequestDetailBody(this.pointRequestDetail)
               }
               Button(this.pointRequestDetail !== null
                 && this.pointRequestDetail.id === item.id ? '收起详情' : '查看最新详情')
