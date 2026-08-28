@@ -14,6 +14,7 @@
     "backup:pre-migration": "node scripts/pre-migration-backup.js",
     "prepare:harmonyos-synthetic": "node scripts/prepare-harmonyos-synthetic-workspace.js",
     "prepare:miniapp-synthetic": "node scripts/prepare-miniapp-synthetic-workspace.js",
+    "prepare:synthetic-authority-coordination-intent": "node scripts/prepare-synthetic-authority-coordination-intent.js",
     "prepare:synthetic-data-root": "node scripts/prepare-synthetic-data-root.js",
     "bootstrap:synthetic-database": "node scripts/bootstrap-synthetic-database.js",
     "capture:synthetic-candidate-evidence": "node scripts/capture-synthetic-candidate-evidence.js",

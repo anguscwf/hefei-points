@@ -40,6 +40,7 @@ const STABLE_ERROR_CODES = new Set([
   'SYNTHETIC_AUTHORIZATION_LEDGER_ROOT_UNAVAILABLE',
   'SYNTHETIC_AUTHORIZATION_LEDGER_ROOT_UNSAFE',
   'SYNTHETIC_AUTHORIZATION_LEDGER_REQUIRED',
+  'SYNTHETIC_AUTHORIZATION_LEDGER_HISTORICAL_RECEIPT_REQUIRED',
   'SYNTHETIC_AUTHORIZATION_LEDGER_ALREADY_INITIALIZED',
   'SYNTHETIC_AUTHORIZATION_LEDGER_SCHEMA_INVALID',
   'SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH',
@@ -509,17 +510,38 @@ function sidecarPaths(filename) {
   return [`${filename}-journal`, `${filename}-wal`, `${filename}-shm`];
 }
 
+function pathEntryExists(filename, code) {
+  try {
+    fs.lstatSync(filename, { bigint: true });
+    return true;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return false;
+    fail(code);
+  }
+}
+
 function assertNoSidecars(filename, code = 'SYNTHETIC_AUTHORIZATION_LEDGER_RESULT_UNKNOWN') {
-  if (sidecarPaths(filename).some(candidate => fs.existsSync(candidate))) fail(code);
+  if (sidecarPaths(filename).some(candidate => pathEntryExists(candidate, code))) fail(code);
 }
 
 function assertNoWalSidecars(
   filename,
   code = 'SYNTHETIC_AUTHORIZATION_LEDGER_RESULT_UNKNOWN'
 ) {
-  if ([`${filename}-wal`, `${filename}-shm`].some(candidate => fs.existsSync(candidate))) {
+  if ([`${filename}-wal`, `${filename}-shm`]
+    .some(candidate => pathEntryExists(candidate, code))) {
     fail(code);
   }
+}
+
+function assertNoReadOnlyRecoverySidecars(filename) {
+  if (pathEntryExists(
+    `${filename}-journal`,
+    'SYNTHETIC_AUTHORIZATION_LEDGER_RESULT_UNKNOWN'
+  )) {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_BUSY');
+  }
+  assertNoWalSidecars(filename);
 }
 
 function createPathContext(environment, requireLedger) {
@@ -675,6 +697,17 @@ function configureWritableDatabase(db) {
     fail('SYNTHETIC_AUTHORIZATION_LEDGER_SCHEMA_INVALID');
   }
   db.exec('PRAGMA synchronous = FULL');
+}
+
+function configureReadOnlyDatabase(db) {
+  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  db.exec('PRAGMA query_only = ON');
+  const queryOnly = db.prepare('PRAGMA query_only').get();
+  const journal = db.prepare('PRAGMA journal_mode').get();
+  if (!queryOnly || queryOnly.query_only !== 1
+      || !journal || String(journal.journal_mode).toLowerCase() !== 'delete') {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_SCHEMA_INVALID');
+  }
 }
 
 function createLedgerSchema(db) {
@@ -900,6 +933,15 @@ function validateStoredRecords(db, identity) {
         || canonicalHash(record) !== row.rejection_record_sha256) {
       fail('SYNTHETIC_AUTHORIZATION_LEDGER_INTEGRITY_INVALID');
     }
+  }
+  if (db.prepare(`
+    SELECT 1
+    FROM grant_consumptions AS consumption
+    INNER JOIN grant_rejections AS rejection
+      ON rejection.request_id_sha256 = consumption.request_id_sha256
+    LIMIT 1
+  `).get()) {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_INTEGRITY_INVALID');
   }
   const blocks = db.prepare('SELECT * FROM ledger_blocks').all();
   for (const row of blocks) {
@@ -1697,15 +1739,18 @@ function findHistoricalRequest(db, input) {
   const consumption = db.prepare(`
     SELECT * FROM grant_consumptions WHERE request_id_sha256 = ?
   `).get(input.requestIdSha256);
+  const rejection = db.prepare(`
+    SELECT * FROM grant_rejections WHERE request_id_sha256 = ?
+  `).get(input.requestIdSha256);
+  if (consumption && rejection) {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_INTEGRITY_INVALID');
+  }
   if (consumption) {
     if (consumption.request_fingerprint_sha256 !== input.requestFingerprintSha256) {
       fail('SYNTHETIC_AUTHORIZATION_LEDGER_IDEMPOTENCY_CONFLICT');
     }
     return Object.freeze({ type: 'consumption', row: consumption });
   }
-  const rejection = db.prepare(`
-    SELECT * FROM grant_rejections WHERE request_id_sha256 = ?
-  `).get(input.requestIdSha256);
   if (rejection) {
     if (rejection.request_fingerprint_sha256 !== input.requestFingerprintSha256) {
       fail('SYNTHETIC_AUTHORIZATION_LEDGER_IDEMPOTENCY_CONFLICT');
@@ -1713,6 +1758,139 @@ function findHistoricalRequest(db, input) {
     return Object.freeze({ type: 'rejection', row: rejection });
   }
   return null;
+}
+
+function validateLedgerState(db, context, environment, expectedTestOnly) {
+  const identity = identityRow(db);
+  if (!identity || identity.context_sha256 !== context.contextSha256
+      || identity.ledger_id_sha256 !== environment[LEDGER_ID_ENV]
+      || identity.consumer_id_sha256 !== environment[CONSUMER_ID_ENV]
+      || identity.target_environment_sha256 !== environment[TARGET_ENVIRONMENT_ENV]
+      || !validDigest(identity.active_policy_id_sha256)
+      || !validDigest(identity.active_policy_sha256)
+      || !Number.isSafeInteger(identity.test_only_initialized)
+      || ![0, 1].includes(identity.test_only_initialized)
+      || !Number.isSafeInteger(identity.active_policy_revision)
+      || identity.active_policy_revision < 1
+      || !Number.isSafeInteger(identity.genesis_checkpoint_sequence)
+      || identity.genesis_checkpoint_sequence < 1
+      || !validDigest(identity.genesis_checkpoint_sha256)) {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+  }
+  if (identity.test_only_initialized !== expectedTestOnly) {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_TEST_ONLY_STATE_REJECTED');
+  }
+  if (identity.active_policy_sha256 !== environment[externalApproval.POLICY_SHA256_ENV]) {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_POLICY_ROTATION_REQUIRED');
+  }
+  const lockedRecords = validateStoredRecords(db, identity);
+  if (lockedRecords.checkpoints[0].sequence !== identity.genesis_checkpoint_sequence
+      || lockedRecords.checkpoints[0].checkpointSha256
+        !== identity.genesis_checkpoint_sha256
+      || identity.created_at_observed
+        !== lockedRecords.checkpoints[0].recordedAtObserved
+      || lockedRecords.checkpoints.some(checkpoint => (
+        checkpoint.policyIdSha256 !== identity.active_policy_id_sha256
+        || checkpoint.policySha256 !== identity.active_policy_sha256
+        || checkpoint.policyRevision !== identity.active_policy_revision
+      ))) {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_INTEGRITY_INVALID');
+  }
+  return Object.freeze({ identity, lockedRecords });
+}
+
+function recoverSyntheticAuthorizationReceiptInternal(environment, document, options) {
+  assertEnvironment(environment, CONSUME_ACK_ENV, CONSUME_ACK);
+  const input = normalizeConsumptionDocument(document);
+  const context = createPathContext(environment, true);
+  const expectedTestOnly = options.testOnly === true ? 1 : 0;
+  const before = fs.lstatSync(context.filename, { bigint: true });
+  if (!sameFileIdentity(context.metadata, before)) {
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+  }
+  const journal = `${context.filename}-journal`;
+  assertNoReadOnlyRecoverySidecars(context.filename);
+  let db;
+  let transactionOpen = false;
+  try {
+    db = new DatabaseSync(context.filename, { readOnly: true });
+    configureReadOnlyDatabase(db);
+    db.exec('BEGIN');
+    transactionOpen = true;
+    validateSchema(db);
+    validateIntegrity(db);
+    const { identity } = validateLedgerState(
+      db,
+      context,
+      environment,
+      expectedTestOnly
+    );
+    const historical = findHistoricalRequest(db, input);
+    if (!historical) {
+      db.exec('ROLLBACK');
+      transactionOpen = false;
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_HISTORICAL_RECEIPT_REQUIRED');
+    }
+    if (historical.type === 'rejection') {
+      db.exec('ROLLBACK');
+      transactionOpen = false;
+      throw recoveredStableError(historical.row.stable_error_code);
+    }
+    const output = consumptionOutput(identity, historical.row, 'replayed');
+    db.exec('COMMIT');
+    transactionOpen = false;
+    return output;
+  } catch (error) {
+    if (transactionOpen && db) {
+      try {
+        db.exec('ROLLBACK');
+        transactionOpen = false;
+      } catch (_) {
+        fail('SYNTHETIC_AUTHORIZATION_LEDGER_RESULT_UNKNOWN');
+      }
+    }
+    if (error instanceof SyntheticAuthorizationLedgerError
+        || error instanceof externalApproval.SyntheticExternalApprovalError) {
+      throw error;
+    }
+    if (error && (
+      error.code === 'SQLITE_BUSY'
+      || error.code === 'SQLITE_LOCKED'
+      || String(error.code || '').startsWith('SQLITE_READONLY')
+      || /locked|busy|read.?only|recovery/i.test(error.message || '')
+      || pathEntryExists(journal, 'SYNTHETIC_AUTHORIZATION_LEDGER_RESULT_UNKNOWN')
+    )) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_BUSY');
+    }
+    fail('SYNTHETIC_AUTHORIZATION_LEDGER_SCHEMA_INVALID');
+  } finally {
+    if (db) {
+      try { db.close(); } catch (_) {}
+    }
+    let after;
+    try {
+      after = fs.lstatSync(context.filename, { bigint: true });
+    } catch (_) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+    }
+    if (!sameFileIdentity(before, after)
+        || after.size <= 0n || after.size > BigInt(MAX_LEDGER_BYTES)) {
+      fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
+    }
+    assertNoReadOnlyRecoverySidecars(context.filename);
+  }
+}
+
+function recoverSyntheticAuthorizationReceipt(environment, document) {
+  return recoverSyntheticAuthorizationReceiptInternal(environment, document, {});
+}
+
+function recoverSyntheticAuthorizationReceiptForTest(environment, document) {
+  return recoverSyntheticAuthorizationReceiptInternal(
+    environment,
+    document,
+    { testOnly: true }
+  );
 }
 
 function insertConsumption(db, identity, input, verification, observedAt) {
@@ -1827,41 +2005,12 @@ function consumeLedgerInternal(environment, document, options) {
     callFault(options, 'after_begin');
     validateSchema(db);
     validateIntegrity(db);
-    const identity = identityRow(db);
-    if (!identity || identity.context_sha256 !== context.contextSha256
-        || identity.ledger_id_sha256 !== environment[LEDGER_ID_ENV]
-        || identity.consumer_id_sha256 !== environment[CONSUMER_ID_ENV]
-        || identity.target_environment_sha256 !== environment[TARGET_ENVIRONMENT_ENV]
-        || !validDigest(identity.active_policy_id_sha256)
-        || !validDigest(identity.active_policy_sha256)
-        || !Number.isSafeInteger(identity.test_only_initialized)
-        || ![0, 1].includes(identity.test_only_initialized)
-        || !Number.isSafeInteger(identity.active_policy_revision)
-        || identity.active_policy_revision < 1
-        || !Number.isSafeInteger(identity.genesis_checkpoint_sequence)
-        || identity.genesis_checkpoint_sequence < 1
-        || !validDigest(identity.genesis_checkpoint_sha256)) {
-      fail('SYNTHETIC_AUTHORIZATION_LEDGER_CONTEXT_MISMATCH');
-    }
-    if (identity.test_only_initialized !== expectedTestOnly) {
-      fail('SYNTHETIC_AUTHORIZATION_LEDGER_TEST_ONLY_STATE_REJECTED');
-    }
-    if (identity.active_policy_sha256 !== environment[externalApproval.POLICY_SHA256_ENV]) {
-      fail('SYNTHETIC_AUTHORIZATION_LEDGER_POLICY_ROTATION_REQUIRED');
-    }
-    const lockedRecords = validateStoredRecords(db, identity);
-    if (lockedRecords.checkpoints[0].sequence !== identity.genesis_checkpoint_sequence
-        || lockedRecords.checkpoints[0].checkpointSha256
-          !== identity.genesis_checkpoint_sha256
-        || identity.created_at_observed
-          !== lockedRecords.checkpoints[0].recordedAtObserved
-        || lockedRecords.checkpoints.some(checkpoint => (
-          checkpoint.policyIdSha256 !== identity.active_policy_id_sha256
-          || checkpoint.policySha256 !== identity.active_policy_sha256
-          || checkpoint.policyRevision !== identity.active_policy_revision
-        ))) {
-      fail('SYNTHETIC_AUTHORIZATION_LEDGER_INTEGRITY_INVALID');
-    }
+    const { identity, lockedRecords } = validateLedgerState(
+      db,
+      context,
+      environment,
+      expectedTestOnly
+    );
     const historical = findHistoricalRequest(db, input);
     if (historical?.type === 'consumption') {
       db.exec('COMMIT');
@@ -2114,6 +2263,8 @@ module.exports = {
   initializationUsage,
   parseArguments,
   readStdin,
+  recoverSyntheticAuthorizationReceipt,
+  recoverSyntheticAuthorizationReceiptForTest,
   runConsumeCli,
   runInitializeCli,
   safeErrorCode
