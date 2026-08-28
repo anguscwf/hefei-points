@@ -27,8 +27,10 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tangguan-s19-readiness-'
 
 const BLOCKING_REASONS = [
   'approved_authority_protocol_missing',
+  'approved_coordinator_protocol_missing',
   'approved_deployer_protocol_missing',
   'approved_parent_acl_and_same_account_process_isolation_unverified',
+  'authoritative_evidence_and_audit_retrieval_unverified',
   'authoritative_latest_checkpoint_unverified',
   'authoritative_trust_root_missing',
   'compensation_authorization_protocol_missing',
@@ -44,6 +46,8 @@ const BLOCKING_REASONS = [
 ];
 
 const REQUIRED_PROTOCOL_CAPABILITIES = [
+  'approved_coordinator_protocol',
+  'authenticated_authority_evidence_and_audit_retrieval',
   'authenticated_platform_change_event',
   'authoritative_trust_root_and_role_lifecycle',
   'global_linearizable_reservation_and_single_consumption',
@@ -61,9 +65,11 @@ const REQUIRED_PROTOCOL_CAPABILITIES = [
 const CHECK_KEYS = [
   'testOnlyOverridesUsed',
   'historicalLocalCoordinationIntentRecovered',
-  'rawAuthorizationMaterialExcluded',
+  'rawAuthorizationMaterialExcludedFromReport',
+  'inputDocumentPersistedByThisCommand',
   'approvedParentAclAndSameAccountProcessIsolationExternallyVerified',
   'callerProvidedExternalFactsAccepted',
+  'overallDeploymentReadinessAssessed',
   'externalProtocolApproved',
   'authorityTrustRootApproved',
   'authorityAuthenticated',
@@ -321,7 +327,7 @@ test('S19 readiness 固定报告完整 blocker/requirement 且零写、零网、
   assert.deepEqual(treeEvidence(value.root), before);
   assert.deepEqual(Object.keys(result).sort(), [
     'schemaVersion', 'profile', 'result', 'scope', 'readyForExternalIntegration',
-    'localIntentStatus', 'localIntentBinding', 'blockingReasons',
+    'blockerSetCompleteness', 'localIntentStatus', 'localIntentBinding', 'blockingReasons',
     'blockingReasonsSha256', 'requiredProtocolCapabilities',
     'requiredProtocolCapabilitiesSha256', 'checks', 'operations',
     'deploymentAuthorization', 'productionChildGateState', 'childUseAuthorization'
@@ -331,6 +337,7 @@ test('S19 readiness 固定报告完整 blocker/requirement 且零写、零网、
   assert.equal(result.result, 'external_integration_blocked');
   assert.equal(result.scope, 'local_read_only_blocker_report');
   assert.equal(result.readyForExternalIntegration, false);
+  assert.equal(result.blockerSetCompleteness, 'minimum_known_non_exhaustive');
   assert.equal(result.localIntentStatus, 'locally_prepared_unsubmitted');
   assert.deepEqual(result.blockingReasons, BLOCKING_REASONS);
   assert.deepEqual(result.requiredProtocolCapabilities, REQUIRED_PROTOCOL_CAPABILITIES);
@@ -365,11 +372,13 @@ test('S19 readiness 固定报告完整 blocker/requirement 且零写、零网、
   assert.deepEqual(Object.keys(result.checks).sort(), [...CHECK_KEYS].sort());
   assert.equal(result.checks.testOnlyOverridesUsed, true);
   assert.equal(result.checks.historicalLocalCoordinationIntentRecovered, true);
-  assert.equal(result.checks.rawAuthorizationMaterialExcluded, true);
+  assert.equal(result.checks.rawAuthorizationMaterialExcludedFromReport, true);
+  assert.equal(result.checks.inputDocumentPersistedByThisCommand, false);
+  assert.equal(result.checks.overallDeploymentReadinessAssessed, false);
   for (const key of CHECK_KEYS.filter(key => ![
     'testOnlyOverridesUsed',
     'historicalLocalCoordinationIntentRecovered',
-    'rawAuthorizationMaterialExcluded'
+    'rawAuthorizationMaterialExcludedFromReport'
   ].includes(key))) assert.equal(result.checks[key], false, key);
   assert.deepEqual(Object.keys(result.operations).sort(), [...OPERATION_KEYS].sort());
   assert.equal(result.operations.s18IntentJournalOpenedReadOnly, true);
@@ -461,6 +470,67 @@ test('S19 readiness 严格拒绝 caller 外部事实并隔离 test recovery seam
   assert.deepEqual(treeEvidence(value.root), before);
 });
 
+test('S19 production 遇到 WX_APPSECRET 键时在 recovery 前拒绝且绝不读取 secret 值', () => {
+  const value = createFixture('forbidden-secret-environment-key');
+  const before = treeEvidence(value.root);
+  const target = { ...value.environment };
+  let secretValueReads = 0;
+  let secretPresenceChecks = 0;
+  Object.defineProperty(target, 'WX_APPSECRET', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      secretValueReads += 1;
+      throw new Error('WX_APPSECRET value must never be read');
+    }
+  });
+  const guardedEnvironment = new Proxy(target, {
+    has(object, key) {
+      if (key === 'WX_APPSECRET') secretPresenceChecks += 1;
+      return Reflect.has(object, key);
+    },
+    get(object, key, receiver) {
+      if (key === 'WX_APPSECRET') {
+        secretValueReads += 1;
+        throw new Error('WX_APPSECRET value must never be read');
+      }
+      return Reflect.get(object, key, receiver);
+    }
+  });
+  const originalRecovery = coordination.recoverSyntheticAuthorityCoordinationIntent;
+  let recoveryCalls = 0;
+  coordination.recoverSyntheticAuthorityCoordinationIntent = () => {
+    recoveryCalls += 1;
+    assert.fail('credential-bearing environment 必须在 S18 recovery 前被拒绝');
+  };
+  try {
+    assertCode(
+      () => readiness.assessSyntheticExternalSagaReadiness(
+        guardedEnvironment,
+        value.input
+      ),
+      'SYNTHETIC_EXTERNAL_SAGA_READINESS_PRODUCTION_RESOURCE_REJECTED'
+    );
+  } finally {
+    coordination.recoverSyntheticAuthorityCoordinationIntent = originalRecovery;
+  }
+  assert.ok(secretPresenceChecks >= 1);
+  assert.equal(secretValueReads, 0);
+  assert.equal(recoveryCalls, 0);
+  assert.deepEqual(treeEvidence(value.root), before);
+
+  const source = fs.readFileSync(supportFile, 'utf8');
+  for (const forbiddenValueRead of [
+    'environment.WX_APPSECRET',
+    "environment['WX_APPSECRET']",
+    'environment["WX_APPSECRET"]',
+    'Reflect.get(environment',
+    'Object.values(environment)',
+    'Object.entries(environment)',
+    'Object.getOwnPropertyDescriptor(environment'
+  ]) assert.equal(source.includes(forbiddenValueRead), false, forbiddenValueRead);
+});
+
 test('S19 readiness CLI ACK、canonical stdin、脱敏与静态零 production action 保持稳定', async () => {
   const help = spawnSync(process.execPath, [cli, '--help'], {
     cwd: projectRoot,
@@ -487,6 +557,7 @@ test('S19 readiness CLI ACK、canonical stdin、脱敏与静态零 production ac
 
   const value = createFixture('cli-contract');
   const childEnvironment = { ...process.env, ...value.environment };
+  delete childEnvironment.WX_APPSECRET;
   const noAck = { ...childEnvironment };
   delete noAck[readiness.ACK_ENV];
   const ackFailure = spawnSync(process.execPath, [cli], {
@@ -538,21 +609,43 @@ test('S19 readiness CLI ACK、canonical stdin、脱敏与静态零 production ac
   );
 
   const secret = 'synthetic-s19-secret-must-not-appear';
-  const sensitive = spawnSync(process.execPath, [cli], {
+  const forbiddenCredential = spawnSync(process.execPath, [cli], {
     cwd: projectRoot,
     encoding: 'utf8',
-    input: JSON.stringify({ ...value.input, endpoint: secret }),
+    input: `${canonical}\n`,
     windowsHide: true,
     env: { ...childEnvironment, WX_APPSECRET: secret }
   });
-  assert.equal(sensitive.status, 1);
-  assert.equal(sensitive.stdout, '');
+  assert.equal(forbiddenCredential.status, 1);
+  assert.equal(forbiddenCredential.stdout, '');
   assert.equal(
-    sensitive.stderr,
+    forbiddenCredential.stderr,
     'Synthetic external saga blocker report failed '
-      + '(SYNTHETIC_EXTERNAL_SAGA_READINESS_SENSITIVE_INPUT).\n'
+      + '(SYNTHETIC_EXTERNAL_SAGA_READINESS_PRODUCTION_RESOURCE_REJECTED).\n'
   );
-  assert.equal(sensitive.stderr.includes(secret), false);
+  assert.equal(forbiddenCredential.stderr.includes(secret), false);
+
+  for (const environmentKey of [
+    'SYNTHETIC_APPROVAL_TRUST_POLICY_FILE',
+    'SYNTHETIC_APPROVAL_TRUST_POLICY_APPROVED_PARENT'
+  ]) {
+    const rawPolicyPath = value.environment[environmentKey];
+    const sensitivePolicyPath = spawnSync(process.execPath, [cli], {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      input: JSON.stringify({ ...value.input, endpoint: rawPolicyPath }),
+      windowsHide: true,
+      env: childEnvironment
+    });
+    assert.equal(sensitivePolicyPath.status, 1, environmentKey);
+    assert.equal(sensitivePolicyPath.stdout, '');
+    assert.equal(
+      sensitivePolicyPath.stderr,
+      'Synthetic external saga blocker report failed '
+        + '(SYNTHETIC_EXTERNAL_SAGA_READINESS_SENSITIVE_INPUT).\n'
+    );
+    assert.equal(sensitivePolicyPath.stderr.includes(rawPolicyPath), false);
+  }
 
   const baseProductionRecovery = recoveredIntent('cli-production-success');
   const productionRecovery = {

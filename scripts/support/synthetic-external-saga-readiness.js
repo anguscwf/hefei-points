@@ -5,13 +5,18 @@ const coordination = require('./synthetic-authority-coordination-intent');
 const MAX_STDIN_BYTES = 1024 * 1024;
 const ACK_ENV = 'SYNTHETIC_EXTERNAL_SAGA_READINESS_ACK';
 const ACK = 'report-blockers-no-external-action-v1';
+const FORBIDDEN_CREDENTIAL_ENVIRONMENT_KEYS = Object.freeze([
+  'WX_APPSECRET'
+]);
 const SHA256 = /^[0-9a-f]{64}$/;
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 const BLOCKING_REASONS = Object.freeze([
   'approved_authority_protocol_missing',
+  'approved_coordinator_protocol_missing',
   'approved_deployer_protocol_missing',
   'approved_parent_acl_and_same_account_process_isolation_unverified',
+  'authoritative_evidence_and_audit_retrieval_unverified',
   'authoritative_latest_checkpoint_unverified',
   'authoritative_trust_root_missing',
   'compensation_authorization_protocol_missing',
@@ -27,6 +32,8 @@ const BLOCKING_REASONS = Object.freeze([
 ]);
 
 const REQUIRED_PROTOCOL_CAPABILITIES = Object.freeze([
+  'approved_coordinator_protocol',
+  'authenticated_authority_evidence_and_audit_retrieval',
   'authenticated_platform_change_event',
   'authoritative_trust_root_and_role_lifecycle',
   'global_linearizable_reservation_and_single_consumption',
@@ -116,6 +123,9 @@ function assertEnvironment(environment) {
       || environment.DEPLOYMENT_TIER !== 'synthetic') {
     fail('SYNTHETIC_EXTERNAL_SAGA_READINESS_PRODUCTION_RESOURCE_REJECTED');
   }
+  if (FORBIDDEN_CREDENTIAL_ENVIRONMENT_KEYS.some(key => key in environment)) {
+    fail('SYNTHETIC_EXTERNAL_SAGA_READINESS_PRODUCTION_RESOURCE_REJECTED');
+  }
   if (environment[ACK_ENV] !== ACK) {
     fail('SYNTHETIC_EXTERNAL_SAGA_READINESS_ACK_REQUIRED');
   }
@@ -126,13 +136,12 @@ function sensitiveValues(environment) {
     environment.API_PUBLIC_ORIGIN,
     environment.LEGAL_PUBLIC_ORIGIN,
     environment.WX_APPID,
-    environment.WX_APPSECRET,
     environment.SYNTHETIC_DATASET_ID,
     environment.SYNTHETIC_DATA_ROOT,
     environment.DATA_DIR,
     environment.SQLITE_FILE,
-    environment.SYNTHETIC_EXTERNAL_APPROVAL_POLICY_FILE,
-    environment.SYNTHETIC_EXTERNAL_APPROVAL_POLICY_APPROVED_PARENT,
+    environment.SYNTHETIC_APPROVAL_TRUST_POLICY_FILE,
+    environment.SYNTHETIC_APPROVAL_TRUST_POLICY_APPROVED_PARENT,
     environment.SYNTHETIC_AUTHORIZATION_LEDGER_FILE,
     environment.SYNTHETIC_AUTHORIZATION_LEDGER_APPROVED_PARENT,
     environment.SYNTHETIC_AUTHORITY_COORDINATION_INTENT_JOURNAL_FILE,
@@ -356,6 +365,7 @@ function assessInternal(environment, document, options) {
     result: 'external_integration_blocked',
     scope: 'local_read_only_blocker_report',
     readyForExternalIntegration: false,
+    blockerSetCompleteness: 'minimum_known_non_exhaustive',
     localIntentStatus: 'locally_prepared_unsubmitted',
     localIntentBinding: localIntentBinding(recovered),
     blockingReasons: BLOCKING_REASONS,
@@ -373,8 +383,10 @@ function assessInternal(environment, document, options) {
     checks: Object.freeze({
       testOnlyOverridesUsed: options.testOnly === true,
       historicalLocalCoordinationIntentRecovered: true,
-      rawAuthorizationMaterialExcluded: true,
+      rawAuthorizationMaterialExcludedFromReport: true,
+      inputDocumentPersistedByThisCommand: false,
       callerProvidedExternalFactsAccepted: false,
+      overallDeploymentReadinessAssessed: false,
       approvedParentAclAndSameAccountProcessIsolationExternallyVerified: false,
       externalProtocolApproved: false,
       authorityTrustRootApproved: false,
