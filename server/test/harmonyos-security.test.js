@@ -135,6 +135,16 @@ function createFixture() {
     '}'
   ].join('\n'));
   write(root, 'entry/src/main/ets/pages/Index.ets', safePrivacyIndex());
+  write(root, 'entry/src/main/ets/session/ChildSessionCoordinator.ets', [
+    'export interface ChildApiPort {',
+    '  getPointRequest(accessToken: string, pointRequestId: string): Promise<Object>;',
+    '}',
+    'export class ChildSessionCoordinator {',
+    '  async loadPointRequestDetail(pointRequestId: string): Promise<void> {',
+    '    void pointRequestId;',
+    '  }',
+    '}'
+  ].join('\n'));
   write(root, 'entry/src/main/ets/network/ChildApi.ets', [
     "const CLAIM = '/api/v2/device-pairings/claim-by-code';",
     "const COMPLETE = '/api/v2/device-pairings/claim/complete';",
@@ -165,6 +175,73 @@ function assertHas(errors, fragment) {
 test('HarmonyOS 主源码通过儿童设备静态安全门', () => {
   const errors = harmonyCheck.scan();
   assert.deepEqual(errors, [], errors.join('\n'));
+});
+
+test('S20b HarmonyOS 详情 UI 与 coordinator 保持只读且拒绝写操作契约消费', () => {
+  const realHarmonyRoot = path.resolve(__dirname, '..', '..', 'hefei-harmonyos');
+  assert.deepEqual(
+    harmonyCheck.checkPointRequestReadOnlyBoundary(
+      realHarmonyRoot,
+      harmonyCheck.sourceFiles(realHarmonyRoot)
+    ),
+    []
+  );
+
+  withFixture(root => {
+    const unsafeIndex = safePrivacyIndex().replace(
+      'PointRequestDto, RewardRuleDto, TransactionDto',
+      'PointRequestDto, PointRequestOperationResponse, RewardRuleDto, TransactionDto'
+    );
+    write(root, 'entry/src/main/ets/pages/Index.ets', unsafeIndex);
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'pages/Index.ets: S20b UI/coordinator must not consume point-request operation reconciliation'
+    );
+  });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/session/ChildSessionCoordinator.ets', [
+      "import { PointRequestOperationReconcileRequest } from '../network/ApiContracts';",
+      'export interface ChildApiPort {',
+      '  reconcilePointRequestOperation(accessToken: string, action: string,',
+      '    bodyJson: string, idempotencyKey: string): Promise<Object>;',
+      '}',
+      'void PointRequestOperationReconcileRequest;'
+    ].join('\n'));
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'session/ChildSessionCoordinator.ets: S20b UI/coordinator must not consume point-request operation reconciliation'
+    );
+  });
+
+  withFixture(root => {
+    const unsafeIndex = safePrivacyIndex().replace(
+      'struct Index {',
+      [
+        'struct Index {',
+        '  private cancelPointRequest(pointRequestId: string): void { void pointRequestId; }',
+        '  private resubmit(): void {}'
+      ].join('\n')
+    );
+    write(root, 'entry/src/main/ets/pages/Index.ets', unsafeIndex);
+    write(root, 'entry/src/main/ets/session/ChildSessionCoordinator.ets', [
+      "const action: string = 'resubmit';",
+      "const endpoint: string = '/api/v2/point-requests/' + pointRequestId;",
+      "const method: string = 'PATCH';",
+      'void action;',
+      'void endpoint;',
+      'void method;'
+    ].join('\n'));
+    const errors = harmonyCheck.scan({ harmonyRoot: root });
+    assertHas(
+      errors,
+      'pages/Index.ets: S20b UI/coordinator must not consume point-request resubmit/cancel mutation'
+    );
+    assertHas(
+      errors,
+      'session/ChildSessionCoordinator.ets: S20b UI/coordinator must not consume point-request resubmit/cancel mutation'
+    );
+  });
 });
 
 test('合成安全基线通过且扫描范围不依赖私有根构建配置', () => {

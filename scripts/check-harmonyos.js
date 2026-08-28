@@ -31,6 +31,12 @@ const indexPageRelative = path.join(
   'pages',
   'Index.ets'
 );
+const childSessionCoordinatorRelative = path.join(
+  mainSourceRelative,
+  'ets',
+  'session',
+  'ChildSessionCoordinator.ets'
+);
 const textExtensions = new Set(['.ets', '.ts', '.js', '.json', '.json5']);
 const productionOriginPattern = /(?:https?:\/\/)?(?:www\.)?hefeijifen\.cn/i;
 const healthRoutePattern = /(?:^|["'`\s])\/(?:api\/)?health(?:\/|[?"'`\s]|$)/i;
@@ -736,6 +742,30 @@ function checkApiBoundary(harmonyRoot, files) {
   return errors;
 }
 
+function checkPointRequestReadOnlyBoundary(harmonyRoot, files) {
+  const errors = [];
+  const targets = [indexPageRelative, childSessionCoordinatorRelative];
+  const reconciliationConsumption = /\breconcilePointRequestOperation\b|\b(?:parse|serialize|validate|copy)?PointRequestOperation[A-Za-z0-9_]*\b|\/api\/v2\/me\/point-request-operations\/(?:resubmit|cancel)\/reconcile\b/;
+  const mutationConsumption = /\b(?:resubmit|cancel)PointRequest[A-Za-z0-9_]*\b|\bpointRequest(?:Resubmit|Cancel)[A-Za-z0-9_]*\b|\b(?:resubmit|cancel)\s*\(|['"`](?:resubmit|cancel)['"`]|\bPATCH\b|\/api\/v2\/point-requests\//;
+
+  for (const target of targets) {
+    const filename = path.join(harmonyRoot, target);
+    const displayName = relative(harmonyRoot, filename);
+    if (!files.includes(filename)) {
+      errors.push(`${displayName}: S20b point-request read-only boundary target is required`);
+      continue;
+    }
+    const source = codeWithoutComments(fs.readFileSync(filename, 'utf8'));
+    if (reconciliationConsumption.test(source)) {
+      errors.push(`${displayName}: S20b UI/coordinator must not consume point-request operation reconciliation or PointRequestOperation DTOs`);
+    }
+    if (mutationConsumption.test(source)) {
+      errors.push(`${displayName}: S20b UI/coordinator must not consume point-request resubmit/cancel mutation methods or endpoints`);
+    }
+  }
+  return errors;
+}
+
 function checkMethodScopedMutation(harmonyRoot, files) {
   const hasPointCreationPath = files.some(filename => stringLiterals(
     fs.readFileSync(filename, 'utf8')
@@ -1099,6 +1129,7 @@ function scan(options = {}) {
     ...checkSecurityPrimitives(harmonyRoot, files),
     ...checkEnvironmentPolicy(harmonyRoot, files),
     ...checkApiBoundary(harmonyRoot, files),
+    ...checkPointRequestReadOnlyBoundary(harmonyRoot, files),
     ...checkMethodScopedMutation(harmonyRoot, files),
     ...checkPrivacySafetyShell(harmonyRoot, files)
   ];
@@ -1126,6 +1157,7 @@ module.exports = {
   checkSecurityPrimitives,
   checkEnvironmentPolicy,
   checkApiBoundary,
+  checkPointRequestReadOnlyBoundary,
   checkMethodScopedMutation,
   checkPrivacySafetyShell,
   isAllowedApiPath
