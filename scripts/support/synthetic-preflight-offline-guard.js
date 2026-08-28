@@ -54,7 +54,6 @@ const stringSplit = Function.call.bind(String.prototype.split);
 const stringStartsWith = Function.call.bind(String.prototype.startsWith);
 const implementationFiles = Object.freeze([
   'package.json',
-  'scripts/report-synthetic-external-saga-blockers.js',
   'scripts/bootstrap-synthetic-database.js',
   'scripts/capture-synthetic-candidate-evidence.js',
   'scripts/consume-synthetic-deployment-grant.js',
@@ -63,6 +62,7 @@ const implementationFiles = Object.freeze([
   'scripts/preflight-synthetic-api.js',
   'scripts/prepare-synthetic-authority-coordination-intent.js',
   'scripts/prepare-synthetic-data-root.js',
+  'scripts/report-synthetic-external-saga-blockers.js',
   'scripts/support/synthetic-authority-coordination-intent.js',
   'scripts/support/synthetic-authorization-consumer.js',
   'scripts/support/synthetic-bootstrap.js',
