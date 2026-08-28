@@ -29,7 +29,7 @@
 - `SYNTHETIC_DATASET_ID`、API/法律 origin、微信 AppID/AppSecret 只属于本次独立 synthetic 候选，绝非生产资源；
 - 监护关系声明和四类法律页面是获批的 synthetic 测试内容，版本、内容 SHA-256 和 canonical URL 已由责任人核对；
 - 管理员标识和批准引用只描述合成对象，不含姓名、手机号、OpenID、设备标识或其他真实身份；
-- 当前候选 commit 已完成安全复核；当前 S12 schema 4 artifact 锁定的 39 个实现文件与 10 个迁移精确一致；
+- 当前候选 commit 已完成安全复核；当前 S12 schema 4 artifact 锁定的 43 个实现文件与 10 个迁移精确一致；
 - 操作员知道：bootstrap 成功只证明本地最小种子和回执，不证明任何外部硬门已经关闭。
 
 不得先启动服务“让它迁移空库”。synthetic runtime 会在任何可写 SQLite 打开、迁移或 secret 创建之前要求有效且与当前环境绑定的完成回执。
@@ -161,7 +161,7 @@ stderr 只应包含一个稳定码；stdout 失败时必须为空。不得把数
 9. 严格按 S15 的 19 项表（包括 DevTools 域名/TLS 校验）完成真实观察，并在 30 分钟 subject 窗口内形成未认证声明信封；
 10. S15 finalize 只核验信封契约，不认证声明或授权部署。外部系统另行验证事实、认证责任人并签发 checkpoint、gate、approval 和 grant 后，先由 S16 离线 verifier 校验签名束；S16 成功仍只是 `unconsumed`，不是部署许可；
 11. 按 S17 手册在仓库、数据根和策略目录之外初始化独立本地 ledger，并可对同一 S16 verification document 重新核验后提交一次本地使用记录；本 ledger 的 checkpoint 单调、累计吊销和 receipt 不证明外部权威、可信时间、权威最新 checkpoint、跨主机全局消费或真实部署；
-12. S18 只把精确历史 S17 receipt 准备为未提交本地 intent；只有 S19/获批外部系统把最终撤销判断、全局单次消费、真实部署动作和可核验回执安全协调，且全部外部硬门关闭后，才可执行一次受控 synthetic 部署；
+12. S18 只把精确历史 S17 receipt 准备为未提交本地 intent，S19-readiness 只生成固定 blocked report；只有真实 S19/获批外部系统把最终撤销判断、全局单次消费、真实部署动作和可核验回执安全协调，且全部外部硬门关闭后，才可执行一次受控 synthetic 部署；
 13. 部署后仅在模拟器或成人受控设备使用 S9/S11 临时客户端做合成 E2E 和 HUKS/AssetStore smoke。
 
 bootstrap 成功、runtime 能启动或 synthetic smoke 通过，都不是生产发布、正式法律合规、AppGallery 上架或儿童实际可用的证据。

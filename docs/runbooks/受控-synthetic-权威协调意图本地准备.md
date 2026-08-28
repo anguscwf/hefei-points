@@ -83,6 +83,18 @@ CLI 除 `--help` 外不接受参数，只从非 TTY stdin 读取最多 1 MiB 的
 
 S17 的任一 `-journal` 条目都会使只读恢复返回 `SYNTHETIC_AUTHORIZATION_LEDGER_BUSY`；它不会删除或恢复 S17 journal。S17 `-wal/-shm` 始终 fail closed。S18 只允许自己安全、普通、单链接的 DELETE journal 由 SQLite 恢复；S18 `-wal/-shm` 或未知 sidecar 始终拒绝。
 
+### 给 S19-readiness 使用的历史 intent 只读恢复
+
+S19-readiness 只调用：
+
+```text
+recoverSyntheticAuthorityCoordinationIntent(environment, document)
+```
+
+该入口仅恢复精确历史 S18 intent。它使用 `{ readOnly: true }`、`query_only=ON`、`temp_store=MEMORY` 和普通 `BEGIN`，不调用 S17、不重新消费、不重判当前授权或本机时间，也不创建或更新任何行。成功固定为 `outcome=replayed`、`localIntentJournalOpenedReadOnly=true`、`localIntentJournalOpenedWritable=false`、`coordinationIntentRowInserted=false`。
+
+只读入口在 DatabaseSync 打开前持有 `O_RDONLY` fd，检查 SQLite header 必须为 DELETE 模式并计算全文件 SHA-256；事务期间重复核对 pathname、realpath、文件身份和摘要。`-journal` 返回 BUSY，`-wal/-shm` 或没有 sidecar 但 header 持久为 WAL 的数据库在开库前 fail closed，目录保持零变化。只读入口不会恢复 hot journal；只有原 S18 可写入口可以在既有安全边界内恢复自己的 DELETE journal。
+
 ## 5. 本地状态与幂等
 
 唯一持久状态是：
@@ -134,6 +146,7 @@ journal identity 不绑定单一 S17 ledger，因而一个 journal 可在本地�
 | `...ACK_REQUIRED` | 缺少逐字确认；停止，不降低确认文本 |
 | `...INPUT_INVALID` | 非 canonical、字段多缺或 purpose/request ID 不匹配；修正原请求，不添加旁路字段 |
 | `SYNTHETIC_AUTHORIZATION_LEDGER_HISTORICAL_RECEIPT_REQUIRED` | S17 没有精确历史 consumption；不得让 S18 隐式消费 |
+| `SYNTHETIC_AUTHORITY_COORDINATION_INTENT_HISTORICAL_INTENT_REQUIRED` | S18 没有精确历史 intent；不得创建新 intent 冒充历史 |
 | `SYNTHETIC_AUTHORIZATION_LEDGER_BUSY` | S17 正在写入或留有 DELETE journal；稍后用精确原请求重试，不手删 journal |
 | `...LOCAL_CLOCK_ROLLBACK` | 本机观察时间早于 receipt 或 journal 高水位；停止并调查主机时钟/快照，不能靠改钟形成可信时间 |
 | `...IDEMPOTENCY_CONFLICT` | 同 request ID 对应不同内容；隔离调查，禁止换键掩盖 |
@@ -159,3 +172,7 @@ S18 本地切片没有关闭以下硬门：
 - 成人受控设备网络 E2E，以及正式法律文本、PIPIA、存量整改、备案和 AppGallery 正式发布。
 
 这些事实只能由获批外部系统和现场证据建立。生产儿童功能门必须继续关闭；不得部署、侧载、切换成人账号、关闭未成年人模式、开启孩子设备开发者模式或采用其他绕过正式分发的路线。
+
+## 9. S19-readiness 交接
+
+`npm run report:synthetic-external-saga-blockers` 只通过上述 read-only API 绑定 S18，不直接读取或裁决 S17。它生成固定 blocked、非权威、非穷尽的最小已知 blocker report；不会创建 operation、reservation、outbox、fence、部署或补偿状态。退出码 0 只表示报告生成成功，不表示 readiness 通过。完整契约见 [受控 synthetic 外部 saga 阻断报告](受控-synthetic-外部saga阻断报告.md)。

@@ -32,7 +32,7 @@ childUseAuthorization=not_granted
 
 任一项不成立即停止：
 
-- 候选实现已提交，index 与工作树中的 39 个受审实现文件和 001～010 迁移精确匹配 `HEAD`；
+- 候选实现已提交，index 与工作树中的 43 个受审实现文件和 001～010 迁移精确匹配 `HEAD`；
 - `npm run verify:synthetic-api-preflight` 已通过，并由同一配置生成并保存当前 schema 4 S12 artifact；
 - S13 全新根、S14 bootstrap 和 S15 capture/finalize 来自同一候选，数据库仍为 pristine 最小状态且 S15 未过期；
 - 外部系统已经真实完成身份认证、权威证据取回和事实核验，并生成独立签名记录；本地人员不得自行伪造“外部”结果；
@@ -241,11 +241,11 @@ childUseAuthorization=not_granted
 
 任何失败都不得通过回拨时间、改摘要、移除吊销项、关闭域名/TLS 校验、重写数据库或使用另一候选的签名来绕过。
 
-## 8. S17/S18 本地边界与 S19 外部/生产硬门
+## 8. S17/S18/S19-readiness 本地边界与 S19 外部/生产硬门
 
 S17 已在仓库、synthetic 数据根和策略目录之外增加独立本地 ledger，对本账本已观察 checkpoint 执行 sequence 单调、累计吊销、fork/撤销移除永久 block，并在一个 `BEGIN IMMEDIATE` 内提交本地单次使用或稳定拒绝记录。它没有改变 S16 自身只读、`unconsumed` 的历史边界，也没有把本地 receipt 变成部署授权。
 
-S18 只准备 `locally_prepared_unsubmitted` 的本地摘要 intent，不发送外部请求。S19/获批外部系统仍至少需要完成：
+S18 只准备 `locally_prepared_unsubmitted` 的本地摘要 intent，不发送外部请求。S19-readiness 只读恢复该 intent 并生成固定 blocked、非穷尽的最小已知阻断报告，不直接读取 S17，也不验证下列事实。真实 S19/获批外部系统仍至少需要完成：
 
 1. 权威策略摘要的受控置入、轮换、责任人身份和主机本地卷/ACL 证明；
 2. 声明人、核验人、审批人、grant issuer、revocation authority 与 consumer 的真实身份认证和角色生命周期；

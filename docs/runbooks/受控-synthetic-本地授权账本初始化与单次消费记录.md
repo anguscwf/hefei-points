@@ -32,7 +32,7 @@ local-single-use-record-replayed
 
 任一项不成立即停止：
 
-- 当前候选已提交，index、工作树中的 39 个受审实现文件和精确 001～010 迁移与 `HEAD` 一致；
+- 当前候选已提交，index、工作树中的 43 个受审实现文件和精确 001～010 迁移与 `HEAD` 一致；
 - `npm run verify:synthetic-api-preflight` 已通过，并由同一候选配置保存当前 schema 4 artifact；
 - S13 数据根、S14 bootstrap、S15 capture/finalize 和 S16 verification document 属于同一候选、配置、物理根与短时 subject；
 - S16 信任策略文件及批准父目录仍位于仓库和 synthetic 数据根之外，并由环境摘要精确钉住；
@@ -257,4 +257,4 @@ S17 没有关闭以下事项：
 9. AppID/权限/AppSecret、域名、DNS/TLS、基础设施、法律页面和数据库隔离的真实核验；
 10. 正式法律文本、儿童易懂摘要、PIPIA、存量整改、逐类留存/删除、受托方约束、备案、AppGallery 审核与正式签名发布。
 
-S18 只通过 `prepare:synthetic-authority-coordination-intent` 把精确历史 receipt 固化为 `locally_prepared_unsubmitted` 的摘要 intent，不发送请求、不关闭上述任一硬门。只有 S19/获批外部系统把这些工程硬门真实关闭后，才可另行批准一次受控 synthetic 部署。仍只允许合成家庭、模拟器或成人受控设备；不得侧载到孩子设备、切换成人账号、关闭未成年人模式、开启孩子设备开发者模式或采用其他绕过正式分发的路线。正式合规与发布硬门全部关闭前，production 儿童功能门必须继续保持关闭。
+S18 只通过 `prepare:synthetic-authority-coordination-intent` 把精确历史 receipt 固化为 `locally_prepared_unsubmitted` 的摘要 intent，不发送请求、不关闭上述任一硬门。S19-readiness blocker report 只读恢复精确 S18 intent，不直接读取 S17，也不决定 ledger 的恢复、备份、轮换、重建或隔离处置。只有真实 S19/获批外部系统把这些工程硬门真实关闭后，才可另行批准一次受控 synthetic 部署。仍只允许合成家庭、模拟器或成人受控设备；不得侧载到孩子设备、切换成人账号、关闭未成年人模式、开启孩子设备开发者模式或采用其他绕过正式分发的路线。正式合规与发布硬门全部关闭前，production 儿童功能门必须继续保持关闭。
