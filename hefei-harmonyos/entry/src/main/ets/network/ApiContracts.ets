@@ -211,6 +211,41 @@ export interface PointRequestsResponse {
   nextCursor: string | null;
 }
 
+export interface PointRequestOperationReconcileRequest {
+  pointRequestId: string;
+  expectedRevision: number;
+  description?: string;
+}
+
+export interface PointRequestOperationResultDto {
+  fromStatus: string;
+  toStatus: string;
+  resultRevision: number;
+  recordedAt: string;
+}
+
+export interface PointRequestOperationObservationDto {
+  completionEventObserved: boolean;
+  noEffectProven: boolean;
+  currentResourceStateIncluded: boolean;
+  safeToClearLocalIntent: boolean;
+  sameLogicalOperationMayUseNewIdempotencyKey: boolean;
+  retryDisposition: string;
+}
+
+export interface PointRequestOperationDto {
+  action: string;
+  pointRequestId: string;
+  status: string;
+  observation: PointRequestOperationObservationDto;
+  result: PointRequestOperationResultDto | null;
+}
+
+export interface PointRequestOperationResponse {
+  success: boolean;
+  pointRequestOperation: PointRequestOperationDto;
+}
+
 export interface ApiErrorDto {
   success: boolean;
   code: string;
@@ -467,6 +502,29 @@ export function parsePointRequestCreateRequest(text: string): PointRequestCreate
   return value;
 }
 
+export function parsePointRequestOperationReconcileRequest(text: string,
+  action: string): PointRequestOperationReconcileRequest {
+  const value: PointRequestOperationReconcileRequest =
+    JSON.parse(text) as PointRequestOperationReconcileRequest;
+  const allowed: Array<string> = action === 'resubmit'
+    ? ['pointRequestId', 'expectedRevision', 'description']
+    : action === 'cancel'
+      ? ['pointRequestId', 'expectedRevision']
+      : [];
+  requireCondition(allowed.length > 0 && exactKeys(value as Object, allowed)
+    && Object.keys(value as Object).length === allowed.length, 'VALIDATION_ERROR');
+  requireCondition(POINT_REQUEST_ID_PATTERN.test(value.pointRequestId), 'VALIDATION_ERROR');
+  requireCondition(Number.isSafeInteger(value.expectedRevision)
+    && value.expectedRevision >= 0 && value.expectedRevision < Number.MAX_SAFE_INTEGER,
+  'VALIDATION_ERROR');
+  if (action === 'resubmit') {
+    requireCondition(value.description !== undefined
+      && validText(value.description, 1, 300)
+      && value.description === value.description.trim().normalize('NFC'), 'VALIDATION_ERROR');
+  }
+  return value;
+}
+
 function validatePointRequestRule(value: PointRequestRuleDto): void {
   requireCondition(exactKeys(value as Object, [
     'id', 'categoryId', 'label', 'categoryLabel', 'unit',
@@ -548,6 +606,70 @@ export function parsePointRequestResponse(text: string,
   validatePointRequest(value.pointRequest);
   requireCondition(value.pointRequest.clientRequestId === expectedClientRequestId,
     'PROTOCOL_ERROR');
+  return value;
+}
+
+export function parsePointRequestDetailResponse(text: string,
+  expectedPointRequestId: string): PointRequestResponse {
+  const value: PointRequestResponse = JSON.parse(text) as PointRequestResponse;
+  requireCondition(exactKeys(value as Object, ['success', 'pointRequest']), 'PROTOCOL_ERROR');
+  requireCondition(value.success === true, 'PROTOCOL_ERROR');
+  validatePointRequest(value.pointRequest);
+  requireCondition(value.pointRequest.id === expectedPointRequestId, 'PROTOCOL_ERROR');
+  return value;
+}
+
+export function parsePointRequestOperationResponse(text: string, expectedAction: string,
+  expectedRequest: PointRequestOperationReconcileRequest): PointRequestOperationResponse {
+  const value: PointRequestOperationResponse = JSON.parse(text) as PointRequestOperationResponse;
+  requireCondition(exactKeys(value as Object, ['success', 'pointRequestOperation'])
+    && Object.keys(value as Object).length === 2, 'PROTOCOL_ERROR');
+  requireCondition(value.success === true, 'PROTOCOL_ERROR');
+  const operation: PointRequestOperationDto = value.pointRequestOperation;
+  requireCondition(exactKeys(operation as Object, [
+    'action', 'pointRequestId', 'status', 'observation', 'result'
+  ]) && Object.keys(operation as Object).length === 5, 'PROTOCOL_ERROR');
+  requireCondition((expectedAction === 'resubmit' || expectedAction === 'cancel')
+    && operation.action === expectedAction, 'PROTOCOL_ERROR');
+  requireCondition(POINT_REQUEST_ID_PATTERN.test(expectedRequest.pointRequestId)
+    && operation.pointRequestId === expectedRequest.pointRequestId, 'PROTOCOL_ERROR');
+  requireCondition(operation.status === 'not_observed' || operation.status === 'completed',
+    'PROTOCOL_ERROR');
+  const observation: PointRequestOperationObservationDto = operation.observation;
+  requireCondition(exactKeys(observation as Object, [
+    'completionEventObserved', 'noEffectProven', 'currentResourceStateIncluded',
+    'safeToClearLocalIntent', 'sameLogicalOperationMayUseNewIdempotencyKey',
+    'retryDisposition'
+  ]) && Object.keys(observation as Object).length === 6, 'PROTOCOL_ERROR');
+  requireCondition(observation.noEffectProven === false
+    && observation.currentResourceStateIncluded === false
+    && observation.sameLogicalOperationMayUseNewIdempotencyKey === false,
+  'PROTOCOL_ERROR');
+  if (operation.status === 'not_observed') {
+    requireCondition(operation.result === null
+      && observation.completionEventObserved === false
+      && observation.safeToClearLocalIntent === false
+      && observation.retryDisposition === 'retry_exact_original_only', 'PROTOCOL_ERROR');
+    return value;
+  }
+  requireCondition(operation.result !== null
+    && observation.completionEventObserved === true
+    && observation.safeToClearLocalIntent === true
+    && observation.retryDisposition === 'read_current_detail_do_not_repeat',
+  'PROTOCOL_ERROR');
+  const result: PointRequestOperationResultDto =
+    operation.result as PointRequestOperationResultDto;
+  requireCondition(exactKeys(result as Object, [
+    'fromStatus', 'toStatus', 'resultRevision', 'recordedAt'
+  ]) && Object.keys(result as Object).length === 4, 'PROTOCOL_ERROR');
+  const transitionValid: boolean = expectedAction === 'resubmit'
+    ? result.fromStatus === 'needs_info' && result.toStatus === 'pending'
+    : (result.fromStatus === 'pending' || result.fromStatus === 'needs_info')
+      && result.toStatus === 'cancelled';
+  requireCondition(transitionValid, 'PROTOCOL_ERROR');
+  requireCondition(Number.isSafeInteger(result.resultRevision)
+    && result.resultRevision === expectedRequest.expectedRevision + 1
+    && validTimestamp(result.recordedAt), 'PROTOCOL_ERROR');
   return value;
 }
 

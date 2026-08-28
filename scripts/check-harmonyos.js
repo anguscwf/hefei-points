@@ -46,6 +46,8 @@ const allowedApiPaths = new Set([
   '/api/v2/me/transactions',
   '/api/v2/me/reward-rules',
   '/api/v2/me/point-requests',
+  '/api/v2/me/point-request-operations/resubmit/reconcile',
+  '/api/v2/me/point-request-operations/cancel/reconcile',
   '/api/v2/point-requests'
 ]);
 
@@ -676,7 +678,8 @@ function normalizeApiPath(value) {
 function isAllowedApiPath(value) {
   const endpoint = normalizeApiPath(value);
   if (allowedApiPaths.has(endpoint)) return true;
-  return /^\/api\/v2\/devices\/\$\{[A-Za-z_$][^}]*\}\/session-challenges$/.test(endpoint);
+  return /^\/api\/v2\/devices\/\$\{[A-Za-z_$][^}]*\}\/session-challenges$/.test(endpoint)
+    || /^\/api\/v2\/me\/point-requests\/\$\{[A-Za-z_$][^}]*\}$/.test(endpoint);
 }
 
 function requestVariableCarriesIdentity(source, identifier, beforeIndex) {
@@ -704,6 +707,10 @@ function checkApiBoundary(harmonyRoot, files) {
       } else if (normalizeApiPath(candidate) === '/api/v2/point-requests'
           && relative(harmonyRoot, filename) !== 'entry/src/main/ets/network/ApiClient.ets') {
         errors.push(`${relative(harmonyRoot, filename)}: point creation path must stay inside the method-scoped API client`);
+      } else if ((normalizeApiPath(candidate).startsWith('/api/v2/me/point-request-operations/')
+          || /^\/api\/v2\/me\/point-requests\/\$\{/.test(normalizeApiPath(candidate)))
+          && relative(harmonyRoot, filename) !== 'entry/src/main/ets/network/ApiClient.ets') {
+        errors.push(`${relative(harmonyRoot, filename)}: point detail and operation reconciliation paths must stay inside the method-scoped API client`);
       }
     }
     for (const call of callExpressions(source, requestPattern)) {

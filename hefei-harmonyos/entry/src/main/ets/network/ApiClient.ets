@@ -7,7 +7,10 @@ import {
   parseApiErrorCode,
   parseClaimResponse,
   parseCompletionResponse,
+  parsePointRequestDetailResponse,
   parsePointRequestCreateRequest,
+  parsePointRequestOperationReconcileRequest,
+  parsePointRequestOperationResponse,
   parsePointRequestResponse,
   parsePointRequestsResponse,
   parseProofResponse,
@@ -15,7 +18,9 @@ import {
   parseRewardRulesResponse,
   parseSummaryResponse,
   parseTransactionsResponse,
+  PointRequestOperationReconcileRequest,
   PointRequestResponse,
+  PointRequestOperationResponse,
   PointRequestsResponse,
   ProofResponse,
   RefreshResponse,
@@ -127,6 +132,15 @@ export function isAllowedTransportRequest(value: TransportRequest): boolean {
       || pagedPath(value.path, '/api/v2/me/point-requests')) {
     return value.method === 'GET' && !value.mutating && accessBearer(value.bearer)
       && value.idempotencyKey.length === 0 && value.body.length === 0;
+  }
+  if (/^\/api\/v2\/me\/point-requests\/point_request_[a-f0-9]{32}$/.test(value.path)) {
+    return value.method === 'GET' && !value.mutating && accessBearer(value.bearer)
+      && value.idempotencyKey.length === 0 && value.body.length === 0;
+  }
+  if (value.path === '/api/v2/me/point-request-operations/resubmit/reconcile'
+      || value.path === '/api/v2/me/point-request-operations/cancel/reconcile') {
+    return value.method === 'POST' && !value.mutating && accessBearer(value.bearer)
+      && validIdempotencyKey(value.idempotencyKey) && value.body.length > 0;
   }
   if (value.path === '/api/v2/point-requests') {
     return value.method === 'POST' && value.mutating && accessBearer(value.bearer)
@@ -398,6 +412,53 @@ export class ChildApiClient {
     });
     try {
       return parsePointRequestsResponse(response.body);
+    } catch (_) {
+      throw protocolFailure(false);
+    }
+  }
+
+  async getPointRequest(accessToken: string,
+    pointRequestId: string): Promise<PointRequestResponse> {
+    if (!/^point_request_[a-f0-9]{32}$/.test(pointRequestId)) {
+      throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
+    }
+    const response: TransportResponse = await this.send({
+      method: 'GET',
+      path: `/api/v2/me/point-requests/${pointRequestId}`,
+      body: '',
+      bearer: accessToken,
+      idempotencyKey: '',
+      mutating: false
+    });
+    try {
+      return parsePointRequestDetailResponse(response.body, pointRequestId);
+    } catch (_) {
+      throw protocolFailure(false);
+    }
+  }
+
+  async reconcilePointRequestOperation(accessToken: string, action: string,
+    bodyJson: string, idempotencyKey: string): Promise<PointRequestOperationResponse> {
+    let request: PointRequestOperationReconcileRequest;
+    try {
+      request = parsePointRequestOperationReconcileRequest(bodyJson, action);
+    } catch (_) {
+      throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
+    }
+    const path: string = action === 'resubmit'
+      ? '/api/v2/me/point-request-operations/resubmit/reconcile'
+      : action === 'cancel'
+        ? '/api/v2/me/point-request-operations/cancel/reconcile'
+        : '';
+    if (path.length === 0) {
+      throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
+    }
+    const response: TransportResponse = await this.send({
+      method: 'POST', path, body: bodyJson, bearer: accessToken,
+      idempotencyKey, mutating: false
+    });
+    try {
+      return parsePointRequestOperationResponse(response.body, action, request);
     } catch (_) {
       throw protocolFailure(false);
     }

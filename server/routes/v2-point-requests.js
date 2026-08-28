@@ -66,6 +66,41 @@ router.get('/v2/me/point-requests', endpoint(req => {
   });
 }));
 
+router.get('/v2/me/point-requests/:id', endpoint(req => {
+  const now = new Date();
+  return service.getMine({
+    actor: device(req, now),
+    requestId: pointRequestId(req),
+    query: req.query,
+    body: req.body,
+    now
+  });
+}));
+
+function reconcileDeviceMutation(action) {
+  return endpoint(req => {
+    const now = new Date();
+    return service.reconcileDeviceMutation({
+      actor: requireDeviceV2(req, now),
+      action,
+      body: req.body,
+      query: req.query,
+      idempotencyKey: req.get('Idempotency-Key'),
+      now
+    });
+  });
+}
+
+router.post(
+  '/v2/me/point-request-operations/resubmit/reconcile',
+  reconcileDeviceMutation('resubmit')
+);
+
+router.post(
+  '/v2/me/point-request-operations/cancel/reconcile',
+  reconcileDeviceMutation('cancel')
+);
+
 router.post('/v2/point-requests', endpoint(req => {
   const now = new Date();
   return service.createRequest({

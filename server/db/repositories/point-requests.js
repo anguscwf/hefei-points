@@ -60,7 +60,7 @@ function toEvent(row) {
     resultRevision: Number(row.result_revision),
     responseStatus: Number(row.response_status),
     transactionId: row.transaction_id || null,
-    eventData: parseJson(row.event_data_json),
+    eventData: parseJson(row.event_data_json, null),
     createdAt: row.created_at
   };
 }
@@ -270,6 +270,20 @@ function findAdultEvent(input, db = getDb()) {
       AND action = ?
       AND idempotency_key_hash = ?
   `).get(input.familyId, input.actorUserId, input.action, input.idempotencyKeyHash));
+}
+
+function listEventIdsForResult(input, db = getDb()) {
+  return db.prepare(`
+    SELECT id FROM point_request_events
+    WHERE family_id = ? AND child_id = ? AND point_request_id = ?
+      AND result_revision = ?
+    LIMIT 2
+  `).all(
+    input.familyId,
+    input.childId,
+    input.pointRequestId,
+    input.resultRevision
+  ).map(row => row.id);
 }
 
 function insertRequest(input, db = getDb()) {
@@ -501,6 +515,7 @@ module.exports = {
   findEventById,
   findDeviceEvent,
   findAdultEvent,
+  listEventIdsForResult,
   insertRequest,
   hasDuplicateSignal,
   updateRequest,

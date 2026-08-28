@@ -10,6 +10,8 @@ const credentials = require('../lib/device-credentials');
 
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{16,128}$/;
 const CLIENT_REQUEST_ID = /^[A-Za-z0-9._:-]{8,128}$/;
+const POINT_REQUEST_ID = /^point_request_[a-f0-9]{32}$/;
+const CANONICAL_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const RULE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const RFC3339_INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
@@ -45,6 +47,11 @@ function fingerprint(value) {
   return sha256(JSON.stringify(stable(value)));
 }
 
+function isCanonicalInstant(value) {
+  return typeof value === 'string' && CANONICAL_INSTANT.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+}
+
 function requireObject(body) {
   if (!isPlainObject(body)) fail(400, 'VALIDATION_ERROR', '请求体必须是对象');
   return body;
@@ -73,7 +80,7 @@ function optionalNote(value, field = 'note') {
 }
 
 function requireRevision(value) {
-  if (!Number.isSafeInteger(value) || value < 0) {
+  if (!Number.isSafeInteger(value) || value < 0 || value >= Number.MAX_SAFE_INTEGER) {
     fail(400, 'REVISION_REQUIRED', 'expectedRevision 必须是非负整数', 'expectedRevision');
   }
   return value;
@@ -720,6 +727,26 @@ function listMine({ actor, query, body, now = new Date() }) {
   });
 }
 
+function getMine({ actor, requestId, query, body, now = new Date() }) {
+  assertEnabled();
+  const device = assertDeviceActor(actor);
+  validateEmptyBody(body);
+  validateQuery(query, new Set());
+  return inReadTransaction(db => {
+    deviceScope(db, device, now);
+    const request = repositories.pointRequests.findById({
+      id: requestId,
+      familyId: device.familyId
+    }, db);
+    if (!request || request.childId !== device.childId) {
+      fail(404, 'POINT_REQUEST_NOT_FOUND', '积分申请不存在');
+    }
+    return result(request, {
+      audience: 'device', actorDeviceBindingId: device.deviceBindingId
+    }).body;
+  });
+}
+
 function parseDeviceMutation(action, body) {
   requireObject(body);
   if (action === 'resubmit') {
@@ -733,14 +760,137 @@ function parseDeviceMutation(action, body) {
   return { expectedRevision: requireRevision(body.expectedRevision) };
 }
 
+function deviceMutationFingerprint(action, requestId, input) {
+  return fingerprint({
+    operation: `point_request_${action}`, requestId, ...input
+  });
+}
+
+function parseDeviceOperationReconcile(action, body) {
+  if (action !== 'resubmit' && action !== 'cancel') {
+    fail(400, 'VALIDATION_ERROR', '设备操作类型无效', 'action');
+  }
+  requireObject(body);
+  const allowed = action === 'resubmit'
+    ? new Set(['pointRequestId', 'expectedRevision', 'description'])
+    : new Set(['pointRequestId', 'expectedRevision']);
+  exactKeys(body, allowed);
+  const pointRequestId = requireText(body.pointRequestId, {
+    field: 'pointRequestId', min: 46, max: 46, pattern: POINT_REQUEST_ID
+  });
+  const mutation = parseDeviceMutation(action, {
+    expectedRevision: body.expectedRevision,
+    ...(action === 'resubmit' ? { description: body.description } : {})
+  });
+  return { pointRequestId, mutation };
+}
+
+function operationResult(action, pointRequestId, event = null) {
+  const completed = Boolean(event);
+  return {
+    success: true,
+    pointRequestOperation: {
+      action,
+      pointRequestId,
+      status: completed ? 'completed' : 'not_observed',
+      observation: {
+        completionEventObserved: completed,
+        noEffectProven: false,
+        currentResourceStateIncluded: false,
+        safeToClearLocalIntent: completed,
+        sameLogicalOperationMayUseNewIdempotencyKey: false,
+        retryDisposition: completed
+          ? 'read_current_detail_do_not_repeat'
+          : 'retry_exact_original_only'
+      },
+      result: event ? {
+        fromStatus: event.fromStatus,
+        toStatus: event.toStatus,
+        resultRevision: event.resultRevision,
+        recordedAt: event.createdAt
+      } : null
+    }
+  };
+}
+
+function reconcileDeviceMutation({
+  actor, action, body, query, idempotencyKey, now = new Date()
+}) {
+  const device = assertDeviceActor(actor);
+  validateQuery(query, new Set());
+  const input = parseDeviceOperationReconcile(action, body);
+  const keyHash = normalizeIdempotencyKey(idempotencyKey);
+  const requestFingerprint = deviceMutationFingerprint(
+    action, input.pointRequestId, input.mutation
+  );
+  return inReadTransaction(db => {
+    deviceScope(db, device, now);
+    const event = repositories.pointRequests.findDeviceEvent({
+      deviceBindingId: device.deviceBindingId,
+      action,
+      idempotencyKeyHash: keyHash
+    }, db);
+    if (!event) {
+      return operationResult(action, input.pointRequestId);
+    }
+    if (event.pointRequestId !== input.pointRequestId
+        || event.requestFingerprint !== requestFingerprint) {
+      fail(409, 'IDEMPOTENCY_CONFLICT', '该幂等键已用于不同请求');
+    }
+    const request = repositories.pointRequests.findById({
+      id: event.pointRequestId,
+      familyId: device.familyId
+    }, db);
+    const resultEventIds = repositories.pointRequests.listEventIdsForResult({
+      familyId: device.familyId,
+      childId: device.childId,
+      pointRequestId: input.pointRequestId,
+      resultRevision: input.mutation.expectedRevision + 1
+    }, db);
+    const expectedToStatus = action === 'resubmit' ? 'pending' : 'cancelled';
+    const validFromStatus = action === 'resubmit'
+      ? event.fromStatus === 'needs_info'
+      : event.fromStatus === 'pending' || event.fromStatus === 'needs_info';
+    const eventDataValid = isPlainObject(event.eventData)
+      && (action === 'resubmit'
+        ? Object.keys(event.eventData).length === 1
+          && event.eventData.description === input.mutation.description
+        : Object.keys(event.eventData).length === 0);
+    const recordedAtValid = isCanonicalInstant(event.createdAt);
+    const requestUpdatedAtValid = recordedAtValid && request
+      && isCanonicalInstant(request.updatedAt)
+      && event.createdAt <= request.updatedAt;
+    if (!request || request.childId !== device.childId
+        || event.familyId !== device.familyId || event.childId !== device.childId
+        || event.actorDeviceBindingId !== device.deviceBindingId
+        || event.actorUserId !== null
+        || event.transactionId !== null
+        || event.responseStatus !== 200 || !eventDataValid || !recordedAtValid
+        || !requestUpdatedAtValid
+        || resultEventIds.length !== 1 || resultEventIds[0] !== event.id
+        || !validFromStatus || event.toStatus !== expectedToStatus
+        || event.resultRevision !== input.mutation.expectedRevision + 1
+        || !Number.isSafeInteger(request.revision) || request.revision < event.resultRevision
+        || (action === 'cancel' && request.revision !== event.resultRevision)
+        || (request.revision > event.resultRevision
+          && request.updatedAt <= event.createdAt)
+        || (request.revision === event.resultRevision
+          && (request.status !== event.toStatus || request.updatedAt !== event.createdAt
+            || (action === 'resubmit'
+              && (request.description !== input.mutation.description
+                || request.resubmittedAt !== event.createdAt))))) {
+      fail(409, 'IDEMPOTENCY_RESULT_UNAVAILABLE', '积分申请幂等结果不可用');
+    }
+    return operationResult(action, input.pointRequestId, event);
+  });
+}
+
 function mutateByDevice({ actor, requestId, action, body, idempotencyKey, now = new Date() }) {
   assertEnabled();
   const device = assertDeviceActor(actor);
   const input = parseDeviceMutation(action, body);
   const keyHash = normalizeIdempotencyKey(idempotencyKey);
-  const requestFingerprint = fingerprint({
-    operation: `point_request_${action}`, requestId, ...input
-  });
+  const requestFingerprint = deviceMutationFingerprint(action, requestId, input);
   return inTransaction(db => {
     deviceScope(db, device, now);
     const request = repositories.pointRequests.findById({ id: requestId, familyId: device.familyId }, db);
@@ -979,7 +1129,9 @@ module.exports = {
   listRewardRules,
   createRequest,
   listMine,
+  getMine,
   mutateByDevice,
+  reconcileDeviceMutation,
   listForAdult,
   getForAdult,
   mutateByAdult,
