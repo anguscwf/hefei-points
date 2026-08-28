@@ -745,6 +745,10 @@ function checkApiBoundary(harmonyRoot, files) {
 function checkPointRequestReadOnlyBoundary(harmonyRoot, files) {
   const errors = [];
   const targets = [indexPageRelative, childSessionCoordinatorRelative];
+  const allowedFoundationFiles = new Set([
+    path.join(harmonyRoot, mainSourceRelative, 'ets', 'network', 'ApiClient.ets'),
+    path.join(harmonyRoot, mainSourceRelative, 'ets', 'network', 'ApiContracts.ets')
+  ]);
   const reconciliationConsumption = /\breconcilePointRequestOperation\b|\b(?:parse|serialize|validate|copy)?PointRequestOperation[A-Za-z0-9_]*\b|\/api\/v2\/me\/point-request-operations\/(?:resubmit|cancel)\/reconcile\b/;
   const mutationConsumption = /\b(?:resubmit|cancel)PointRequest[A-Za-z0-9_]*\b|\bpointRequest(?:Resubmit|Cancel)[A-Za-z0-9_]*\b|\b(?:resubmit|cancel)\s*\(|['"`](?:resubmit|cancel)['"`]|\bPATCH\b|\/api\/v2\/point-requests\//;
 
@@ -753,8 +757,13 @@ function checkPointRequestReadOnlyBoundary(harmonyRoot, files) {
     const displayName = relative(harmonyRoot, filename);
     if (!files.includes(filename)) {
       errors.push(`${displayName}: S20b point-request read-only boundary target is required`);
-      continue;
     }
+  }
+  const consumerFiles = files.filter(filename => /\.(?:ets|ts)$/i.test(filename)
+    && filename.startsWith(path.join(harmonyRoot, mainSourceRelative))
+    && !allowedFoundationFiles.has(filename));
+  for (const filename of consumerFiles) {
+    const displayName = relative(harmonyRoot, filename);
     const source = codeWithoutComments(fs.readFileSync(filename, 'utf8'));
     if (reconciliationConsumption.test(source)) {
       errors.push(`${displayName}: S20b UI/coordinator must not consume point-request operation reconciliation or PointRequestOperation DTOs`);

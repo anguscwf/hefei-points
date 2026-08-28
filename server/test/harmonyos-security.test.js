@@ -242,6 +242,18 @@ test('S20b HarmonyOS 详情 UI 与 coordinator 保持只读且拒绝写操作契
       'session/ChildSessionCoordinator.ets: S20b UI/coordinator must not consume point-request resubmit/cancel mutation'
     );
   });
+
+  withFixture(root => {
+    write(root, 'entry/src/main/ets/session/PointRequestActions.ets', [
+      'export function readHistoricalOperation(client: Object): void {',
+      '  client.reconcilePointRequestOperation();',
+      '}'
+    ].join('\n'));
+    assertHas(
+      harmonyCheck.scan({ harmonyRoot: root }),
+      'session/PointRequestActions.ets: S20b UI/coordinator must not consume point-request operation reconciliation'
+    );
+  });
 });
 
 test('合成安全基线通过且扫描范围不依赖私有根构建配置', () => {

@@ -755,8 +755,12 @@ export class ChildSessionCoordinator {
       }
       return;
     }
+    const currentUpdatedAt: number = Date.parse(current.updatedAt);
+    const latestUpdatedAt: number = Date.parse(latest.updatedAt);
     if (current.status === 'approved' || current.status === 'rejected'
-        || current.status === 'cancelled' || latest.updatedAt <= current.updatedAt) {
+        || current.status === 'cancelled'
+        || !Number.isFinite(currentUpdatedAt) || !Number.isFinite(latestUpdatedAt)
+        || latestUpdatedAt <= currentUpdatedAt) {
       throw new Error('PROTOCOL_ERROR');
     }
   }

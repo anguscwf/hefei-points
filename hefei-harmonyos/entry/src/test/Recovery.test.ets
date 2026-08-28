@@ -1552,7 +1552,7 @@ export default function recoveryTests(): void {
         expect(pendingVault.value.idempotencyKey).assertEqual(idempotencyKey);
       });
 
-    it('rejects detail revision rollback and same-revision drift as protocol errors', 0,
+    it('rejects detail revision or time rollback and same-revision drift as protocol errors', 0,
       async () => {
         const rollbackApi: PointDetailApi = new PointDetailApi();
         rollbackApi.firstValue = pointRequestSnapshot(
@@ -1568,7 +1568,14 @@ export default function recoveryTests(): void {
         driftApi.detailValue = pointRequestSnapshot(
           FIRST_POINT_REQUEST_ID, 2, '合成漂移说明', '2026-08-25T00:02:00.000Z'
         );
-        const apis: Array<PointDetailApi> = [rollbackApi, driftApi];
+        const offsetRollbackApi: PointDetailApi = new PointDetailApi();
+        offsetRollbackApi.firstValue = pointRequestSnapshot(
+          FIRST_POINT_REQUEST_ID, 2, '合成当前说明', '2026-08-25T00:02:00.000Z'
+        );
+        offsetRollbackApi.detailValue = pointRequestSnapshot(
+          FIRST_POINT_REQUEST_ID, 3, '合成偏移回拨说明', '2026-08-25T01:01:00.000+01:00'
+        );
+        const apis: Array<PointDetailApi> = [rollbackApi, driftApi, offsetRollbackApi];
 
         for (let index: number = 0; index < apis.length; index += 1) {
           const coordinator: ChildSessionCoordinator = await initializedCoordinator(
