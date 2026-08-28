@@ -297,6 +297,41 @@ function rowCount(value, table) {
   return withDatabase(value, db => db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count);
 }
 
+function ledgerSnapshot(value) {
+  const tables = [
+    'ledger_identity',
+    'revocation_checkpoints',
+    'grant_consumptions',
+    'grant_rejections',
+    'ledger_blocks'
+  ];
+  const db = new DatabaseSync(value.ledgerFile, { readOnly: true });
+  let counts;
+  try {
+    counts = Object.fromEntries(tables.map(table => [
+      table,
+      db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count
+    ]));
+  } finally {
+    db.close();
+  }
+  const metadata = fs.statSync(value.ledgerFile, { bigint: true });
+  return {
+    bytes: fs.readFileSync(value.ledgerFile),
+    size: metadata.size,
+    mtimeNs: metadata.mtimeNs,
+    counts
+  };
+}
+
+function assertLedgerUnchanged(value, before) {
+  const after = ledgerSnapshot(value);
+  assert.deepEqual(after.bytes, before.bytes);
+  assert.equal(after.size, before.size);
+  assert.equal(after.mtimeNs, before.mtimeNs);
+  assert.deepEqual(after.counts, before.counts);
+}
+
 function mutateImmutableRow(value, triggerName, statement, parameters = []) {
   withDatabase(value, db => {
     const trigger = db.prepare(
@@ -383,6 +418,165 @@ test('S17 消费提交一次且精确重放在 verifier 前恢复同一 receipt'
   assert.equal(replayed.checks.grantCompareAndConsumeAtomicLocallyForThisCall, false);
   assert.equal(replayed.checks.grantSingleUseRecordCommitted, true);
   assert.equal(rowCount(value, 'grant_consumptions'), 1);
+});
+
+test('S17 只读 API 仅恢复精确历史 receipt 且生产与 test provenance 隔离', () => {
+  const value = createFixture('read-only-receipt-recovery');
+  const request = consumeRequest(value, 'read-only-receipt-recovery-request');
+  const consumed = consumeFixture(value, request);
+  const before = ledgerSnapshot(value);
+
+  const recovered = consumer.recoverSyntheticAuthorizationReceiptForTest(
+    value.environment,
+    request
+  );
+  assert.equal(recovered.outcome, 'replayed');
+  assert.equal(recovered.result, 'local-single-use-record-replayed');
+  assert.equal(recovered.receiptSha256, consumed.receiptSha256);
+  assert.equal(recovered.checks.historicalReceiptRecovered, true);
+  assert.equal(recovered.checks.currentLedgerHeadRevalidatedForThisCall, false);
+  assert.equal(recovered.checks.externalApprovalRevalidatedForNewConsumption, false);
+  assert.equal(recovered.operations.localAuthorizationLedgerWritten, false);
+  assert.equal(recovered.operations.networkAccessPerformed, false);
+  assert.equal(recovered.operations.deploymentPerformed, false);
+  assert.equal(recovered.deploymentAuthorization, 'not_granted');
+
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceipt(value.environment, request),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_TEST_ONLY_STATE_REJECTED'
+  );
+  const missing = consumeRequest(value, 'read-only-receipt-recovery-missing');
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+      value.environment,
+      missing
+    ),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_HISTORICAL_RECEIPT_REQUIRED'
+  );
+  const conflicting = {
+    ...request,
+    verificationDocument: verificationDocument(
+      value,
+      'read-only-receipt-recovery-conflicting-fingerprint'
+    )
+  };
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+      value.environment,
+      conflicting
+    ),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_IDEMPOTENCY_CONFLICT'
+  );
+  assertLedgerUnchanged(value, before);
+});
+
+test('S17 只读 API 恢复稳定 rejection，拒绝 sidecar 与跨表 request 歧义', () => {
+  const rejected = createFixture('read-only-rejection-recovery');
+  const rejectedRequest = consumeRequest(rejected, 'read-only-rejection-recovery-request', {
+    consumerIdSha256: digest('read-only-rejection-recovery:wrong-consumer')
+  });
+  assertCode(
+    () => consumeFixture(rejected, rejectedRequest),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_CONSUMER_MISMATCH'
+  );
+  const rejectedBefore = ledgerSnapshot(rejected);
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+      rejected.environment,
+      rejectedRequest
+    ),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_CONSUMER_MISMATCH'
+  );
+  assertLedgerUnchanged(rejected, rejectedBefore);
+
+  const externallyRejected = createFixture('read-only-external-rejection-recovery');
+  const externalRequest = consumeRequest(
+    externallyRejected,
+    'read-only-external-rejection-recovery-request'
+  );
+  const externalCode = 'SYNTHETIC_EXTERNAL_APPROVAL_AUTHORIZATION_REVOKED';
+  assertCode(
+    () => consumeFixture(externallyRejected, externalRequest, {
+      approvalVerifier() {
+        throw new externalApproval.SyntheticExternalApprovalError(externalCode);
+      }
+    }),
+    externalCode
+  );
+  const externallyRejectedBefore = ledgerSnapshot(externallyRejected);
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+      externallyRejected.environment,
+      externalRequest
+    ),
+    externalCode
+  );
+  assertLedgerUnchanged(externallyRejected, externallyRejectedBefore);
+
+  const sidecars = createFixture('read-only-recovery-sidecars');
+  const sidecarRequest = consumeRequest(sidecars, 'read-only-recovery-sidecars-request');
+  consumeFixture(sidecars, sidecarRequest);
+  for (const [suffix, code] of [
+    ['-journal', 'SYNTHETIC_AUTHORIZATION_LEDGER_BUSY'],
+    ['-wal', 'SYNTHETIC_AUTHORIZATION_LEDGER_RESULT_UNKNOWN'],
+    ['-shm', 'SYNTHETIC_AUTHORIZATION_LEDGER_RESULT_UNKNOWN']
+  ]) {
+    const sidecar = `${sidecars.ledgerFile}${suffix}`;
+    const marker = Buffer.from(`test-only-sidecar:${suffix}`);
+    fs.writeFileSync(sidecar, marker);
+    assertCode(
+      () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+        sidecars.environment,
+        sidecarRequest
+      ),
+      code
+    );
+    assert.deepEqual(fs.readFileSync(sidecar), marker);
+    fs.unlinkSync(sidecar);
+  }
+
+  const ambiguous = createFixture('read-only-recovery-ambiguous-request');
+  const ambiguousRequest = consumeRequest(
+    ambiguous,
+    'read-only-recovery-ambiguous-request'
+  );
+  consumeFixture(ambiguous, ambiguousRequest);
+  withDatabase(ambiguous, db => {
+    const consumption = db.prepare(`
+      SELECT request_id_sha256, request_fingerprint_sha256, checkpoint_sha256
+      FROM grant_consumptions
+      LIMIT 1
+    `).get();
+    const rejection = {
+      schemaVersion: 1,
+      purpose: 'synthetic-local-grant-rejection-record',
+      requestIdSha256: consumption.request_id_sha256,
+      requestFingerprintSha256: consumption.request_fingerprint_sha256,
+      checkpointSha256: consumption.checkpoint_sha256,
+      stableErrorCode: 'SYNTHETIC_AUTHORIZATION_LEDGER_GRANT_ALREADY_CONSUMED',
+      recordedAtObserved: FIXED_NOW_ISO
+    };
+    db.prepare(`
+      INSERT INTO grant_rejections(
+        request_id_sha256, request_fingerprint_sha256, checkpoint_sha256,
+        stable_error_code, rejection_record_sha256, recorded_at_observed
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      rejection.requestIdSha256,
+      rejection.requestFingerprintSha256,
+      rejection.checkpointSha256,
+      rejection.stableErrorCode,
+      consumer.canonicalHash(rejection),
+      rejection.recordedAtObserved
+    );
+  });
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+      ambiguous.environment,
+      ambiguousRequest
+    ),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_INTEGRITY_INVALID'
+  );
 });
 
 test('S17 同 grant 新 request 被拒绝，同 request 不同指纹稳定冲突', () => {
@@ -1126,6 +1320,11 @@ Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);
 
 test('S17 可写排他入口恢复真实 hot DELETE journal 后再完整验证与消费', async () => {
   const value = createFixture('hot-journal-recovery');
+  const historicalRequest = consumeRequest(
+    value,
+    'hot-journal-recovery-historical-receipt'
+  );
+  const historicalReceipt = consumeFixture(value, historicalRequest);
   const marker = path.join(value.ledgerParent, 'hot-journal-ready.marker');
   const child = spawn(process.execPath, ['-e', HOT_JOURNAL_WRITER], {
     cwd: projectRoot,
@@ -1142,6 +1341,24 @@ test('S17 可写排他入口恢复真实 hot DELETE journal 后再完整验证�
   child.stderr.on('data', chunk => { stderr += chunk; });
   await waitForFile(marker);
   assert.equal(fs.existsSync(`${value.ledgerFile}-journal`), true);
+
+  const liveBytes = {
+    main: fs.readFileSync(value.ledgerFile),
+    journal: fs.readFileSync(`${value.ledgerFile}-journal`)
+  };
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+      value.environment,
+      historicalRequest
+    ),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_BUSY'
+  );
+  assert.deepEqual(fs.readFileSync(value.ledgerFile), liveBytes.main);
+  assert.deepEqual(
+    fs.readFileSync(`${value.ledgerFile}-journal`),
+    liveBytes.journal
+  );
+
   const closed = new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('close', (code, signal) => resolve({ code, signal }));
@@ -1151,11 +1368,34 @@ test('S17 可写排他入口恢复真实 hot DELETE journal 后再完整验证�
   assert.notEqual(exit.code, 0, stderr);
   assert.equal(fs.existsSync(`${value.ledgerFile}-journal`), true);
 
+  const crashedBytes = {
+    main: fs.readFileSync(value.ledgerFile),
+    journal: fs.readFileSync(`${value.ledgerFile}-journal`)
+  };
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+      value.environment,
+      historicalRequest
+    ),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_BUSY'
+  );
+  assert.deepEqual(fs.readFileSync(value.ledgerFile), crashedBytes.main);
+  assert.deepEqual(
+    fs.readFileSync(`${value.ledgerFile}-journal`),
+    crashedBytes.journal
+  );
+
   const request = consumeRequest(value, 'hot-journal-recovery-request');
   assert.equal(consumeFixture(value, request).outcome, 'consumed');
   assert.equal(rowCount(value, 'ledger_blocks'), 0);
-  assert.equal(rowCount(value, 'grant_consumptions'), 1);
+  assert.equal(rowCount(value, 'grant_consumptions'), 2);
   assert.equal(fs.existsSync(`${value.ledgerFile}-journal`), false);
+  const recovered = consumer.recoverSyntheticAuthorizationReceiptForTest(
+    value.environment,
+    historicalRequest
+  );
+  assert.equal(recovered.outcome, 'replayed');
+  assert.equal(recovered.receiptSha256, historicalReceipt.receiptSha256);
 });
 
 test('S17 两个真实 Node 进程争抢同一 grant 时仅一个提交，另一方稳定拒绝', async () => {
