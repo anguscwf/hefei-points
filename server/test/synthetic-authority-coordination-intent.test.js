@@ -10,6 +10,7 @@ const { DatabaseSync } = require('node:sqlite');
 const coordination = require('../../scripts/support/synthetic-authority-coordination-intent');
 const authorization = require('../../scripts/support/synthetic-authorization-consumer');
 const externalApproval = require('../../scripts/support/synthetic-external-approval');
+const sagaReadiness = require('../../scripts/support/synthetic-external-saga-readiness');
 const { installLoopbackOnlyNetwork } = require('../test-support/loopback-only-network');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
@@ -217,6 +218,7 @@ function createFixture(label, options = {}) {
       path.join(journalParent, coordination.JOURNAL_FILENAME),
     [coordination.JOURNAL_PARENT_ENV]: journalParent,
     [coordination.JOURNAL_ID_ENV]: digest(`${label}:coordination-journal-id`),
+    [sagaReadiness.ACK_ENV]: sagaReadiness.ACK,
     SYNTHETIC_DATA_ROOT: dataRoot,
     SYNTHETIC_APPROVAL_TRUST_POLICY_APPROVED_PARENT: policyParent,
     SYNTHETIC_APPROVAL_TRUST_POLICY_FILE: policyFile,
@@ -327,6 +329,64 @@ function coordinationJournalSnapshot(value) {
       'SELECT * FROM coordination_intents ORDER BY intent_id_sha256'
     ).all()
   }));
+}
+
+function coordinationReadOnlyEvidence(value) {
+  const db = new DatabaseSync(value.journalFile, { readOnly: true });
+  let rows;
+  try {
+    db.exec('PRAGMA query_only = ON');
+    rows = {
+      identity: db.prepare('SELECT * FROM journal_identity').all(),
+      intents: db.prepare(
+        'SELECT * FROM coordination_intents ORDER BY intent_id_sha256'
+      ).all()
+    };
+  } finally {
+    db.close();
+  }
+  const metadata = fs.lstatSync(value.journalFile, { bigint: true });
+  return {
+    bytes: fs.readFileSync(value.journalFile),
+    metadata: {
+      dev: metadata.dev,
+      ino: metadata.ino,
+      mode: metadata.mode,
+      nlink: metadata.nlink,
+      size: metadata.size,
+      mtimeNs: metadata.mtimeNs,
+      ctimeNs: metadata.ctimeNs,
+      birthtimeNs: metadata.birthtimeNs
+    },
+    rows
+  };
+}
+
+function directoryTreeEvidence(root) {
+  const rows = [];
+  const visit = (filename, relative) => {
+    const metadata = fs.lstatSync(filename, { bigint: true });
+    rows.push({
+      relative,
+      kind: metadata.isDirectory() ? 'directory' : 'file',
+      dev: String(metadata.dev),
+      ino: String(metadata.ino),
+      mode: String(metadata.mode),
+      nlink: String(metadata.nlink),
+      size: String(metadata.size),
+      mtimeNs: String(metadata.mtimeNs),
+      ctimeNs: String(metadata.ctimeNs),
+      birthtimeNs: String(metadata.birthtimeNs),
+      bytes: metadata.isFile() ? fs.readFileSync(filename).toString('hex') : null
+    });
+    if (metadata.isDirectory()) {
+      for (const entry of fs.readdirSync(filename).sort()) {
+        visit(path.join(filename, entry), relative ? path.join(relative, entry) : entry);
+      }
+    }
+  };
+  visit(root, '');
+  return rows;
 }
 
 const HOT_COORDINATION_JOURNAL_WRITER = String.raw`
@@ -533,6 +593,186 @@ test('S18 精确幂等重放不再读取 S17，同 key 异指纹及 test/product
     ),
     'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_TEST_ONLY_STATE_REJECTED'
   );
+});
+
+test('S18 只读 API 精确恢复历史 intent，拒绝 sidecar 且不读取 S17 或改动 journal', () => {
+  const absent = createFixture('intent-read-only-absent');
+  assertCode(
+    () => coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+      absent.environment,
+      absent.intentDocument
+    ),
+    'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_HISTORICAL_INTENT_REQUIRED'
+  );
+  assertJournalFamilyAbsent(absent);
+
+  const value = createFixture('intent-read-only-recovery');
+  const prepared = prepare(value);
+  const before = coordinationReadOnlyEvidence(value);
+  const originalProductionS17Recovery = authorization.recoverSyntheticAuthorizationReceipt;
+  const originalTestS17Recovery = authorization.recoverSyntheticAuthorizationReceiptForTest;
+  authorization.recoverSyntheticAuthorizationReceipt = () => {
+    assert.fail('S18 intent read-only recovery 不得读取 S17 production ledger API');
+  };
+  authorization.recoverSyntheticAuthorizationReceiptForTest = () => {
+    assert.fail('S18 intent read-only recovery 不得读取 S17 test ledger API');
+  };
+  try {
+    const recovered = coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+      value.environment,
+      value.intentDocument
+    );
+    assert.equal(recovered.outcome, 'replayed');
+    assert.equal(recovered.result, 'locally_prepared_unsubmitted');
+    assert.equal(recovered.intentRecordSha256, prepared.intentRecordSha256);
+    assert.equal(recovered.checks.historicalIntentRecovered, true);
+    assert.equal(recovered.checks.localReceiptRecoveryPerformedForThisCall, false);
+    assert.deepEqual(recovered.operations, {
+      coordinationIntentRowInserted: false,
+      localIntentJournalOpenedReadOnly: true,
+      localIntentJournalOpenedWritable: false,
+      s17AuthorizationLedgerWritten: false,
+      syntheticDatabaseWritten: false,
+      networkAccessPerformed: false,
+      externalSubmissionPerformed: false,
+      deploymentPerformed: false,
+      productionDataRead: false,
+      productionChildGateChanged: false
+    });
+
+    const missing = {
+      ...value.intentDocument,
+      requestId: requestId('authority-intent', 'intent-read-only-recovery-missing')
+    };
+    assertCode(
+      () => coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+        value.environment,
+        missing
+      ),
+      'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_HISTORICAL_INTENT_REQUIRED'
+    );
+
+    const conflict = structuredClone(value.intentDocument);
+    conflict.authorizationConsumptionDocument.verificationDocument
+      .signedDeploymentApproval.nonce = digest('intent-read-only-recovery-conflict');
+    assertCode(
+      () => coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+        value.environment,
+        conflict
+      ),
+      'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_IDEMPOTENCY_CONFLICT'
+    );
+
+    assertCode(
+      () => coordination.recoverSyntheticAuthorityCoordinationIntent(
+        value.environment,
+        value.intentDocument
+      ),
+      'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_TEST_ONLY_STATE_REJECTED'
+    );
+
+    for (const [suffix, code] of [
+      ['-journal', 'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_BUSY'],
+      ['-wal', 'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_RESULT_UNKNOWN'],
+      ['-shm', 'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_RESULT_UNKNOWN']
+    ]) {
+      const sidecar = `${value.journalFile}${suffix}`;
+      const marker = Buffer.from(`synthetic-read-only-sidecar:${suffix}`);
+      fs.writeFileSync(sidecar, marker, { mode: 0o600 });
+      try {
+        assertCode(
+          () => coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+            value.environment,
+            value.intentDocument
+          ),
+          code
+        );
+        assert.deepEqual(fs.readFileSync(sidecar), marker);
+      } finally {
+        fs.rmSync(sidecar, { force: true });
+      }
+    }
+  } finally {
+    authorization.recoverSyntheticAuthorizationReceipt = originalProductionS17Recovery;
+    authorization.recoverSyntheticAuthorizationReceiptForTest = originalTestS17Recovery;
+  }
+  assert.deepEqual(coordinationReadOnlyEvidence(value), before);
+  for (const suffix of ['-journal', '-wal', '-shm']) {
+    assert.equal(fs.existsSync(`${value.journalFile}${suffix}`), false, suffix);
+  }
+
+  const source = fs.readFileSync(supportFile, 'utf8');
+  const recoveryStart = source.indexOf(
+    'function recoverSyntheticAuthorityCoordinationIntentInternal('
+  );
+  const recoveryEnd = source.indexOf(
+    'function recoverSyntheticAuthorityCoordinationIntent(environment',
+    recoveryStart
+  );
+  const recoverySource = source.slice(recoveryStart, recoveryEnd);
+  const heldOpen = recoverySource.indexOf('openHeldJournal(context)');
+  const sqliteOpen = recoverySource.indexOf(
+    'new DatabaseSync(context.filename, { readOnly: true })'
+  );
+  assert.ok(heldOpen >= 0 && sqliteOpen > heldOpen);
+  assert.match(source, /function readHeldJournalDigest\(descriptor, expectedMetadata\)/);
+  const heldFunctionStart = source.indexOf('function openHeldJournal(context)');
+  const heldFunctionEnd = source.indexOf(
+    'function assertPathMatchesHeldJournal(context, held)',
+    heldFunctionStart
+  );
+  assert.match(
+    source.slice(heldFunctionStart, heldFunctionEnd),
+    /readHeldJournalDigest\(descriptor, metadata\)/
+  );
+  assert.match(recoverySource, /new DatabaseSync\(context\.filename, \{ readOnly: true \}\)/);
+  assert.match(recoverySource, /configureReadOnlyDatabase\(db\)/);
+  assert.match(recoverySource, /db\.exec\('BEGIN'\)/);
+  assert.equal(recoverySource.includes('BEGIN IMMEDIATE'), false);
+  const transactionSource = recoverySource.slice(
+    recoverySource.indexOf("db.exec('BEGIN')"),
+    recoverySource.indexOf("db.exec('COMMIT')")
+  );
+  assert.ok(
+    (transactionSource.match(/assertPathMatchesHeldJournal\(context, held\)/g) || [])
+      .length >= 2
+  );
+  const configureStart = source.indexOf('function configureReadOnlyDatabase(db)');
+  const configureEnd = source.indexOf('function createJournalSchema(db)', configureStart);
+  const configureSource = source.slice(configureStart, configureEnd);
+  assert.match(configureSource, /PRAGMA query_only = ON/);
+  assert.match(configureSource, /PRAGMA temp_store = MEMORY/);
+  assert.match(configureSource, /tempStore\.temp_store !== 2/);
+  assert.equal(configureSource.includes('journal_mode = DELETE'), false);
+});
+
+test('S18 只读 recovery 在 SQLite open 前拒绝无 sidecar 的持久 WAL header 且目录零变化', () => {
+  const value = createFixture('intent-read-only-wal-header');
+  prepare(value);
+  withDatabase(value.journalFile, db => {
+    assert.equal(
+      String(db.prepare('PRAGMA journal_mode = WAL').get().journal_mode).toLowerCase(),
+      'wal'
+    );
+  });
+  for (const suffix of ['-journal', '-wal', '-shm']) {
+    assert.equal(fs.existsSync(`${value.journalFile}${suffix}`), false, suffix);
+  }
+  const header = fs.readFileSync(value.journalFile);
+  assert.equal(header[18], 2);
+  assert.equal(header[19], 2);
+  const before = directoryTreeEvidence(value.journalParent);
+  assertCode(
+    () => coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+      value.environment,
+      value.intentDocument
+    ),
+    'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_SCHEMA_INVALID'
+  );
+  assert.deepEqual(directoryTreeEvidence(value.journalParent), before);
+  for (const suffix of ['-journal', '-wal', '-shm']) {
+    assert.equal(fs.existsSync(`${value.journalFile}${suffix}`), false, suffix);
+  }
 });
 
 test('S18 本地观察时钟不得早于 receipt 或 journal 高水位，精确 replay 不重判时钟', () => {
@@ -808,6 +1048,19 @@ test('S18 可写入口恢复真实 hot DELETE journal 后全量校验并精确 r
   child.stderr.on('data', chunk => { stderr += chunk; });
   await waitForFile(marker);
   assert.equal(fs.existsSync(`${value.journalFile}-journal`), true);
+  const liveBytes = {
+    main: fs.readFileSync(value.journalFile),
+    journal: fs.readFileSync(`${value.journalFile}-journal`)
+  };
+  assertCode(
+    () => coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+      value.environment,
+      value.intentDocument
+    ),
+    'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_BUSY'
+  );
+  assert.deepEqual(fs.readFileSync(value.journalFile), liveBytes.main);
+  assert.deepEqual(fs.readFileSync(`${value.journalFile}-journal`), liveBytes.journal);
   const closed = new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('close', (code, signal) => resolve({ code, signal }));
@@ -816,6 +1069,19 @@ test('S18 可写入口恢复真实 hot DELETE journal 后全量校验并精确 r
   const exit = await closed;
   assert.notEqual(exit.code, 0, stderr);
   assert.equal(fs.existsSync(`${value.journalFile}-journal`), true);
+  const crashedBytes = {
+    main: fs.readFileSync(value.journalFile),
+    journal: fs.readFileSync(`${value.journalFile}-journal`)
+  };
+  assertCode(
+    () => coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+      value.environment,
+      value.intentDocument
+    ),
+    'SYNTHETIC_AUTHORITY_COORDINATION_INTENT_BUSY'
+  );
+  assert.deepEqual(fs.readFileSync(value.journalFile), crashedBytes.main);
+  assert.deepEqual(fs.readFileSync(`${value.journalFile}-journal`), crashedBytes.journal);
 
   const replayed = prepare(value, value.intentDocument, {
     now: new Date('2026-08-27T00:00:00.000Z')
@@ -827,6 +1093,25 @@ test('S18 可写入口恢复真实 hot DELETE journal 后全量校验并精确 r
   assert.equal(fs.existsSync(`${value.journalFile}-journal`), false);
   assert.equal(fs.existsSync(`${value.journalFile}-wal`), false);
   assert.equal(fs.existsSync(`${value.journalFile}-shm`), false);
+  const readOnlyRecovered = coordination.recoverSyntheticAuthorityCoordinationIntentForTest(
+    value.environment,
+    value.intentDocument
+  );
+  assert.equal(readOnlyRecovered.outcome, 'replayed');
+  assert.equal(readOnlyRecovered.intentRecordSha256, prepared.intentRecordSha256);
+  assert.equal(readOnlyRecovered.operations.localIntentJournalOpenedReadOnly, true);
+  assert.equal(readOnlyRecovered.operations.localIntentJournalOpenedWritable, false);
+  const readinessReport = sagaReadiness.assessSyntheticExternalSagaReadinessForTest(
+    value.environment,
+    {
+      schemaVersion: 1,
+      purpose: 'synthetic_s19_external_integration_blocker_report',
+      authorityCoordinationIntentDocument: value.intentDocument
+    }
+  );
+  assert.equal(readinessReport.result, 'external_integration_blocked');
+  assert.equal(readinessReport.readyForExternalIntegration, false);
+  assert.equal(readinessReport.operations.s18IntentJournalOpenedReadOnly, true);
   assert.deepEqual(coordinationJournalSnapshot(value), before);
   withDatabase(value.journalFile, db => {
     assert.equal(db.prepare(

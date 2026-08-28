@@ -332,6 +332,33 @@ function assertLedgerUnchanged(value, before) {
   assert.deepEqual(after.counts, before.counts);
 }
 
+function ledgerDirectoryEvidence(value) {
+  const rows = [];
+  const visit = (filename, relative) => {
+    const metadata = fs.lstatSync(filename, { bigint: true });
+    rows.push({
+      relative,
+      kind: metadata.isDirectory() ? 'directory' : 'file',
+      dev: String(metadata.dev),
+      ino: String(metadata.ino),
+      mode: String(metadata.mode),
+      nlink: String(metadata.nlink),
+      size: String(metadata.size),
+      mtimeNs: String(metadata.mtimeNs),
+      ctimeNs: String(metadata.ctimeNs),
+      birthtimeNs: String(metadata.birthtimeNs),
+      bytes: metadata.isFile() ? fs.readFileSync(filename).toString('hex') : null
+    });
+    if (metadata.isDirectory()) {
+      for (const entry of fs.readdirSync(filename).sort()) {
+        visit(path.join(filename, entry), relative ? path.join(relative, entry) : entry);
+      }
+    }
+  };
+  visit(value.ledgerParent, '');
+  return rows;
+}
+
 function mutateImmutableRow(value, triggerName, statement, parameters = []) {
   withDatabase(value, db => {
     const trigger = db.prepare(
@@ -468,6 +495,77 @@ test('S17 只读 API 仅恢复精确历史 receipt 且生产与 test provenance 
     'SYNTHETIC_AUTHORIZATION_LEDGER_IDEMPOTENCY_CONFLICT'
   );
   assertLedgerUnchanged(value, before);
+});
+
+test('S17 只读 recovery 在 SQLite open 前拒绝无 sidecar 的持久 WAL header 且目录零变化', () => {
+  const value = createFixture('read-only-wal-header');
+  const request = consumeRequest(value, 'read-only-wal-header-request');
+  consumeFixture(value, request);
+  withDatabase(value, db => {
+    assert.equal(
+      String(db.prepare('PRAGMA journal_mode = WAL').get().journal_mode).toLowerCase(),
+      'wal'
+    );
+  });
+  for (const suffix of ['-journal', '-wal', '-shm']) {
+    assert.equal(fs.existsSync(`${value.ledgerFile}${suffix}`), false, suffix);
+  }
+  const header = fs.readFileSync(value.ledgerFile);
+  assert.equal(header[18], 2);
+  assert.equal(header[19], 2);
+  const before = ledgerDirectoryEvidence(value);
+  assertCode(
+    () => consumer.recoverSyntheticAuthorizationReceiptForTest(
+      value.environment,
+      request
+    ),
+    'SYNTHETIC_AUTHORIZATION_LEDGER_SCHEMA_INVALID'
+  );
+  assert.deepEqual(ledgerDirectoryEvidence(value), before);
+  for (const suffix of ['-journal', '-wal', '-shm']) {
+    assert.equal(fs.existsSync(`${value.ledgerFile}${suffix}`), false, suffix);
+  }
+
+  const source = fs.readFileSync(consumerModule, 'utf8');
+  const recoveryStart = source.indexOf(
+    'function recoverSyntheticAuthorizationReceiptInternal(environment, document, options)'
+  );
+  const recoveryEnd = source.indexOf(
+    'function recoverSyntheticAuthorizationReceipt(environment',
+    recoveryStart
+  );
+  const recoverySource = source.slice(recoveryStart, recoveryEnd);
+  const heldOpen = recoverySource.indexOf('openHeldLedger(context)');
+  const sqliteOpen = recoverySource.indexOf(
+    'new DatabaseSync(context.filename, { readOnly: true })'
+  );
+  assert.ok(heldOpen >= 0 && sqliteOpen > heldOpen);
+  assert.match(source, /function readHeldLedgerDigest\(descriptor, expectedMetadata\)/);
+  const heldFunctionStart = source.indexOf('function openHeldLedger(context)');
+  const heldFunctionEnd = source.indexOf(
+    'function assertPathMatchesHeldLedger(context, held)',
+    heldFunctionStart
+  );
+  const heldSource = source.slice(heldFunctionStart, heldFunctionEnd);
+  assert.match(heldSource, /readHeldLedgerDigest\(descriptor, metadata\)/);
+  assert.match(source, /buffer\[18\] !== 1 \|\| buffer\[19\] !== 1/);
+  assert.match(recoverySource, /db\.exec\('BEGIN'\)/);
+  assert.equal(recoverySource.includes('BEGIN IMMEDIATE'), false);
+  const transactionSource = recoverySource.slice(
+    recoverySource.indexOf("db.exec('BEGIN')"),
+    recoverySource.indexOf("db.exec('COMMIT')")
+  );
+  assert.ok(
+    (transactionSource.match(/assertPathMatchesHeldLedger\(context, held\)/g) || [])
+      .length >= 2
+  );
+  const configureStart = source.indexOf('function configureReadOnlyDatabase(db)');
+  const configureEnd = source.indexOf('function createLedgerSchema(db)', configureStart);
+  const configureSource = source.slice(configureStart, configureEnd);
+  assert.match(configureSource, /PRAGMA query_only = ON/);
+  assert.match(configureSource, /PRAGMA temp_store = MEMORY/);
+  assert.match(configureSource, /tempStore\.temp_store !== 2/);
+  assert.equal(configureSource.includes('journal_mode = DELETE'), false);
 });
 
 test('S17 只读 API 恢复稳定 rejection，拒绝 sidecar 与跨表 request 歧义', () => {

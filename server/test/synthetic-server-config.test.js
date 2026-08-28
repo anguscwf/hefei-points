@@ -19,6 +19,7 @@ const {
 } = require('../../scripts/support/synthetic-bootstrap');
 const committedPreflightImplementationFiles = Object.freeze([
   'package.json',
+  'scripts/report-synthetic-external-saga-blockers.js',
   'scripts/bootstrap-synthetic-database.js',
   'scripts/capture-synthetic-candidate-evidence.js',
   'scripts/consume-synthetic-deployment-grant.js',
@@ -33,6 +34,7 @@ const committedPreflightImplementationFiles = Object.freeze([
   'scripts/support/synthetic-candidate-evidence.js',
   'scripts/support/synthetic-data-root-tools.js',
   'scripts/support/synthetic-external-approval.js',
+  'scripts/support/synthetic-external-saga-readiness.js',
   'scripts/support/synthetic-preflight-offline-guard.js',
   'scripts/verify-synthetic-api-preflight.js',
   'scripts/verify-synthetic-data-root.js',
