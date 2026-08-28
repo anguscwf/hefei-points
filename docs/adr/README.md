@@ -15,3 +15,4 @@
 - [ADR-0007：积分申报、审批与来源流水边界](0007-point-request-approval-ledger-boundary.md)
 - [ADR-0008：儿童数据权利、撤回与留存阻断边界](0008-child-data-rights-retention-boundary.md)
 - [ADR-0009：外部部署 saga 仅允许测试专用、非规范性安全参考机](0009-test-only-external-saga-reference-model.md)
+- [ADR-0010：设备积分申请详情与操作回执对账边界](0010-device-point-request-detail-operation-reconciliation-boundary.md)

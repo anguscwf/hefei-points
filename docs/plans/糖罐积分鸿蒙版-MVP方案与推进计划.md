@@ -1,6 +1,6 @@
 # 糖罐积分鸿蒙版 MVP 方案与推进计划
 
-> 文档版本：v1.7（S19a test-only 外部 saga 负向安全参考边界）
+> 文档版本：v1.8（S20a 设备积分申请详情与历史操作对账边界）
 > 初版日期：2026-08-09；修订日期：2026-08-29
 > 适用项目：糖罐积分微信小程序 / Web 管理端 / HarmonyOS 孩子端
 > 当前决策：采用“无 Screen Time Guard ACL”路线；华为远程守护中的用机时长由家长手动发放。未成年人账号不再走 AppGallery 邀请测试或 AppTest；儿童真机安装改为正式上架后验收。
@@ -17,7 +17,7 @@ HarmonyOS 版本采用双轨验证与分发：
 
 1. **成人预发布验证轨：** 邀请测试、模拟器、自动化测试、Mate 80 真机和必要的云测试只用于成人账号与受控设备，验证安装、启动、网络、业务、权限和回归。
 2. **儿童正式使用轨：** 儿童账号只安装已通过 AppGallery 正式审核、内容分级适龄的公开版本；孩子设备保持未成年人模式和远程守护，不切换成人账号，不开启开发者模式。
-3. **首发先核心后增强：** 历史 `0.1.0 (10000)` 仅为阶段 0 诊断包；当前跟踪的 `0.2.0 (20000)` 仍只是未连接外部服务、未发布且不完整的 S10 本地安全壳，S11～S18 也只补齐临时 synthetic 客户端工作区、服务端配置/预检、离线数据根、一次性初始引导、候选证据封装、签名束离线验证、独立本地授权账本和未提交协调意图；S19-readiness 仅生成本地只读阻断报告，S19a 也只增加测试目录中的非规范性、纯内存负向安全参考机。这些能力均不能直接公开上架。完成“监护人授权与配对 → 查看积分 → 申报任务 → 家长审批 → 查看结果 → 解绑/删除”的薄 MVP 及全部发布硬门后，才能生成正式首发候选版。
+3. **首发先核心后增强：** 历史 `0.1.0 (10000)` 仅为阶段 0 诊断包；当前跟踪的 `0.2.0 (20000)` 仍只是未连接外部服务、未发布且不完整的 S10 本地安全壳，S11～S18 也只补齐临时 synthetic 客户端工作区、服务端配置/预检、离线数据根、一次性初始引导、候选证据封装、签名束离线验证、独立本地授权账本和未提交协调意图；S19-readiness 仅生成本地只读阻断报告，S19a 也只增加测试目录中的非规范性、纯内存负向安全参考机。与真实 S19 正交的 S20a 只增加设备作用域积分申请单条详情、来源设备既有 resubmit/cancel 历史结果只读对账，以及 HarmonyOS 严格协议/client 基座；它没有 mutation UI、持久 mutation intent/coordinator 或新写路径。这些能力均不能直接公开上架。完成“监护人授权与配对 → 查看积分 → 申报任务 → 家长审批 → 查看结果 → 解绑/删除”的薄 MVP 及全部发布硬门后，才能生成正式首发候选版。
 4. **渠道公开、功能克制：** AppGallery 首次正式发布不能使用分阶段发布。首发可以零推广，但必须对普通家庭具备真实、完整的基本价值，不能仅对白名单家庭或开发者自家设备可用。
 
 范围口径：`0.2.0` 是用于取得正式儿童安装渠道的“正式首发基础版”，完成监护人授权、配对、积分查询、申报审批和数据权利闭环；阶段 6 完成人工用机兑换后，才达到本文定义的完整 MVP。照片、Push 等仍属于后续增强。
@@ -491,6 +491,9 @@ stateDiagram-v2
 | `GET /api/v2/me/transactions` | 设备只读取当前绑定孩子的最小流水与作用域绑定游标 |
 | `GET /api/v2/me/reward-rules` | 设备只读取当前家庭可申报鼓励规则的最小规范化快照与作用域绑定游标 |
 | `GET /api/v2/me/point-requests` | 设备读取当前绑定孩子的申请 |
+| `GET /api/v2/me/point-requests/:id` | 同孩子有效设备读取单条最小详情；来源 clientRequestId 只向来源设备回显 |
+| `POST /api/v2/me/point-request-operations/resubmit/reconcile` | 来源设备按原键/原载荷只读恢复既有重新提交的历史回执，不执行 mutation |
+| `POST /api/v2/me/point-request-operations/cancel/reconcile` | 来源设备按原键/原载荷只读恢复既有取消的历史回执，不执行 mutation |
 | `GET /api/v2/point-requests` | 家长读取本人当前授权范围内的家庭待办 |
 | `POST /api/v2/point-requests` | 孩子提交积分申请 |
 | `PATCH /api/v2/point-requests/:id` | 孩子按 revision 补充并重新提交申请 |
@@ -733,6 +736,8 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 
 2026-08-29 实施记录：S19a-test-model 只在 `server/test-support` 增加 `inspectSyntheticExternalSagaReferenceTraceForTest` 纯函数和对应测试，以 ADR-0009 固定“非规范性、非穷尽、不得形成部署事实”的边界。模型只接受与 S19-readiness test seam 一致的固定 blocked report shape、摘要化 test operation、彼此分离的七个 test participant/fault-domain 和 exact-key trace；caller report 来源不认证，production seam、外部事实、accessor/Proxy、隐藏字段、未知字段、循环/非标量和超限输入 fail closed。reservation/outbox 只能作为一条不可拆分的 coordinator reference event，queued/accepted/2xx/delivery/signed ACK 都不推进；admission、平台事件、独立 read 和 health 必须分别绑定同 operation/fingerprint/fence。dispatch UNKNOWN 与矛盾证据分态；no-effect 只允许绑定变更前状态且不能洗掉已见的冲突证据。unhealthy 只阻断为 compensation protocol required，v1 不实现 compensation/rollback/release/grant reuse。参考机无 CLI、package script、环境、时间、文件、SQLite、网络或 production export，不进入 43 文件 production provenance，也没有 migration 011；所有输出保持非规范、真实 conformance/readiness/外部事实为 false，部署状态未观察且三项授权未授予。S19/S19a 定向 17/17、根回归 354/354、已提交 verifier、工程检查与 diff 检查通过，最终安全审计无剩余 P0/P1。真实 S19 仍被 S19-readiness 的 17/14 非穷尽硬门阻断。
 
+2026-08-29 实施记录：S20a 与真实 S19 正交，只补齐设备积分申请单条详情和既有 resubmit/cancel 写操作历史结果的只读对账技术基座。`GET /api/v2/me/point-requests/:id` 允许同孩子任一当前有效设备读取最小详情，但来源 `clientRequestId` 只对来源设备回显。两个 operation reconcile POST 只承载原请求体和原 `Idempotency-Key`，在只读事务中按来源 binding、action、申请 ID、revision、规范化载荷、键摘要和唯一不可变事件恢复历史回执，不执行 mutation、生成事件或写状态。`completed` 只返回当时 transition/revision/time，不含当前资源；客户端必须随后读详情。`not_observed` 不是 no-effect 证明，只允许保留意图并原键原载荷重试。事件歧义、损坏或无法证明一致时 fail closed；家庭/儿童/设备/会话/授权隔离不放宽。`POINT_REQUESTS_ENABLED` 关闭只保留历史对账恢复，详情和普通写仍关闭，Harmony/device/session/privacy/consent/account 门不豁免。HarmonyOS 只新增 strict DTO/parser、allowlist 与只读 client 方法；没有 migration 011、mutation UI、持久 AssetStore mutation intent/coordinator、新写路径、联网或部署。point-request 专测 19/19、根回归 361/361、当前提交临时 unsigned 工程 BUILD SUCCESSFUL、Hypium 46/46、工程检查与 diff 检查通过，三路只读复核无剩余 P0/P1。真实 S19 的 17/14 非穷尽 blocker 没有关闭；description 保留期限和监护人授权安全放弃策略未获批前，不得开放补充、取消或重新提交 UI。
+
 ### 阶段 4：合规门、正式首发与儿童设备安装（5～10 个工作日 + 外部审核时间）
 
 交付物：
@@ -924,13 +929,13 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 
 ## 15. 立即执行的下一步
 
-1. 保持 HarmonyOS `NETWORK_ENABLED=false`、跟踪小程序 develop/trial 零联网配置、`.invalid` 源和全部儿童生产功能门关闭；S9 loopback 全链、S10 工程安全壳、S11 临时小程序生成器、S12 配置/预检、S13 数据根、S14 bootstrap、S15 未认证证据封装、S16 签名束离线 verifier、S17 本地授权账本、S18 本地未提交协调意图和 S19-readiness blocker report 只作为本地基线，不连接外部业务服务或生产，不把测试签名包、本地 receipt、intent 或 blocker 摘要解释为部署许可。
+1. 保持 HarmonyOS `NETWORK_ENABLED=false`、跟踪小程序 develop/trial 零联网配置、`.invalid` 源和全部儿童生产功能门关闭；S9 loopback 全链、S10 工程安全壳、S11 临时小程序生成器、S12 配置/预检、S13 数据根、S14 bootstrap、S15 未认证证据封装、S16 签名束离线 verifier、S17 本地授权账本、S18 本地未提交协调意图、S19-readiness blocker report、S19a test-only 参考机与 S20a 详情/历史对账协议都只作为本地基线，不连接外部业务服务或生产，不把测试签名包、本地 receipt、intent、blocker 摘要或历史积分操作回执解释为部署许可或当前资源状态。
 2. S19-readiness 前置已完成；推进真实 S19“获批外部权威、全局消费与部署 saga 接入”前，先取得并批准 authority/coordinator/deployer 协议。随后由获批外部系统认证策略发布者和各角色真实身份，取回并核验权威证据/审计正文，引入可信时间和权威最新 checkpoint，通过线性一致 reservation、同事务 durable outbox、operation ID/fence 和目标幂等 admission 协调最终撤销、全局 compare-and-consume、真实部署及可核验观察/补偿。S16 `unconsumed`、S17 receipt、S18 `locally_prepared_unsubmitted` intent 和 S19-readiness 报告都只表示本地边界，不证明全局状态、外部受理或部署。
 3. 由受权操作员在批准的外部非生产主机按 S13 建立全新专用根，再按 S14 通过不落盘 stdin 引导；在任何状态演进前按 S15 capture，并在 30 分钟内真实核验专用 OS 账号、ACL/所有权、磁盘/备份边界、独立密钥和数据库内容/生产隔离。残根、既有 SQLite、未知锁或跨环境数据库一律隔离，不自动接管。
 4. 外部验证独立 synthetic AppID provisioning、开发者权限、AppSecret 独立性、request/business domain、DNS/TLS、基础设施、法律记录和数据库内容隔离，并确认 DevTools 私有设置未关闭域名/TLS 校验。候选先运行 `npm run verify:synthetic-api-preflight` 自检，再以同一配置运行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>` 保存 schema 4、43 文件/10 迁移的实际 artifact；S15 finalize 只封装 19 项未认证声明，S16 只离线验证签名束，S17 只在独立本地账本记录单次使用，S18 只形成未提交本地 intent，S19-readiness 只生成非穷尽 blocked report。只有真实 S19 的权威身份/事实/审计/时间/全局吊销/消费和部署执行硬门真实关闭，才可另行审批一次受控 synthetic 部署。客户端只使用 S9/S11 受控系统临时配置，禁止运行时改源或访问生产 host。
 5. 在 HarmonyOS 模拟器或成人受控 API 20+ 设备完成“授权 → 配对 → 查积分/规则 → 申报 → 家长审批 → 查看结果 → Refresh → 撤销”端到端 smoke，并验证 HUKS、AssetStore、前后台、重启、结果未知恢复和清数据行为。
 6. 在微信开发者工具和成人受控设备完成家长端同链路 smoke，交付安全文件导出/披露回执；全部证据只使用合成家庭且不记录凭据或儿童个人信息。
-7. 以 S10 工程安全壳为边界，由合规工作流定稿儿童易懂版正式摘要、完整法律文本、处理者联系方式、客服/投诉和真实行权入口；不得把工程说明当作同意或法律页面。并明确未决申报文字的保留期限和监护人授权安全放弃流程；设备作用域单条详情和写操作对账完成前，不开放申请补充、取消或重新提交。
+7. 以 S10 工程安全壳为边界，由合规工作流定稿儿童易懂版正式摘要、完整法律文本、处理者联系方式、客服/投诉和真实行权入口；不得把工程说明当作同意或法律页面。S20a 已完成设备作用域单条详情和来源设备历史操作对账技术前置，但未决申报文字的生产保留期限和监护人授权安全放弃流程仍未获批；在此之前不得接入补充、取消或重新提交 UI、持久 mutation intent/coordinator，也不得在 `not_observed` 时清意图或换键。
 8. 完成正式《隐私政策》《儿童个人信息保护规则》《儿童用户协议》、PIPIA、存量儿童数据逐类整改、留存/删除规则、受托方约束、儿童信息保护负责人和安全事件流程。
 9. 完成生产密钥托管与轮换、加密备份/恢复演练、迁移清单门、监控、回滚、正式法律页面及其重定向/CSP/业务域名验证。
 10. 准备 APP 备案、内容分级、隐私标签、发布素材、客服、审核测试家庭和可复现操作说明；使用全新成人测试账号和合成孩子完成从零成人预验收。
@@ -1004,3 +1009,5 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 | v1.4 | 2026-08-28 | 记录 S17 的独立本地授权账本、checkpoint 本 ledger 单调与累计吊销、本地原子单次使用记录、幂等/结果未知/永久 block 边界；把权威身份、可信时间、全局最新 checkpoint、全局消费和真实部署原子接入移至 S18 |
 | v1.5 | 2026-08-28 | 记录 S18 的 S17 历史 receipt 只读恢复、独立摘要 coordination journal、未提交状态、journal 内跨 ledger 唯一性、时钟高水位与 hot-journal 边界；把获批外部权威、全局消费和真实部署 saga 接入移至 S19 |
 | v1.6 | 2026-08-29 | 记录 S19-readiness 的精确 S18 intent 只读恢复、WAL/文件身份零写加固、固定非穷尽 blocker/capability 报告、凭据零读取与 blocked CLI 语义；明确真实 S19 外部 saga 尚未开始 |
+| v1.7 | 2026-08-29 | 记录 S19a test-only、纯内存、非规范性外部 saga 负向安全参考机，固定 ACK 不推进、sticky UNKNOWN、独立观察与补偿协议缺失边界；不形成真实 S19 或部署事实 |
+| v1.8 | 2026-08-29 | 记录 S20a 设备积分申请单条详情、来源设备 resubmit/cancel 历史结果只读对账及 HarmonyOS 严格协议基座；明确历史回执与当前资源分离、not_observed 不是 no-effect，以及保留/安全放弃策略未批前不开放 mutation UI |
