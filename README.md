@@ -2,16 +2,16 @@
 
 糖罐积分是面向家庭的任务与积分管理系统：家长创建家庭与孩子档案、审批任务和管理积分，孩子通过受控终端查看积分并申报任务。
 
-本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S18 的受控 synthetic 本地准备、候选证据封装、外部签名束离线验证、本地授权账本与未提交协调意图能力。S19-readiness 仅新增本地只读外部 saga 阻断报告；真实 S19 外部接入尚未开始。
+本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S18 的受控 synthetic 本地准备、候选证据封装、外部签名束离线验证、本地授权账本与未提交协调意图能力。S19-readiness 仅新增本地只读外部 saga 阻断报告；S19a 只在测试目录增加非规范性、纯内存的 saga 负向安全参考机。真实 S19 外部接入尚未开始。
 
 ## 当前状态
 
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
 - HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；S9 新增受控临时 synthetic profile 生成器和 loopback 全链验证，S10 又加入纯本地“设置与数据安全”说明。该说明明确不是正式隐私政策、儿童规则、用户协议或同意页面，不读取动态儿童/设备/会话信息，也不提供假解绑或删除按钮。跟踪配置仍固定禁用网络并使用 `.invalid` 源，尚未连接任何外部业务服务，也不代表完整薄 MVP。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
-- 阶段 1 已完成 S0～S18 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执；S15 把 S12/S13/S14、当前已提交 43 文件/10 迁移、配置、物理根和只读 pristine SQLite/receipt 绑定成短时 machine subject，再把 19 项外部声明包装成未认证信封。S16 只用环境摘要钉住的独立公开策略验证 Ed25519 gate/checkpoint/approval/grant 签名束；S17 只在一个独立本地 ledger 内约束已观察 checkpoint 并记录一次本地 grant 使用。S18 又增加只读历史 receipt 恢复和独立摘要 journal，只能形成 `locally_prepared_unsubmitted` 的本地协调意图。S19-readiness 可以精确只读恢复该历史 intent 并生成固定 `external_integration_blocked` 报告；17 项 blocker 和 14 项能力要求只是非穷尽的最小已知集合，不能证明完整 readiness。它不提交外部请求，不认证权威或真实身份，不提供可信时间、权威最新 checkpoint、跨主机全局消费，也不调用部署器。所有命令始终不授予部署或儿童使用。最终验证结果以最新交接为准，详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
+- 阶段 1 已完成 S0～S18 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执；S15 把 S12/S13/S14、当前已提交 43 文件/10 迁移、配置、物理根和只读 pristine SQLite/receipt 绑定成短时 machine subject，再把 19 项外部声明包装成未认证信封。S16 只用环境摘要钉住的独立公开策略验证 Ed25519 gate/checkpoint/approval/grant 签名束；S17 只在一个独立本地 ledger 内约束已观察 checkpoint 并记录一次本地 grant 使用。S18 又增加只读历史 receipt 恢复和独立摘要 journal，只能形成 `locally_prepared_unsubmitted` 的本地协调意图。S19-readiness 可以精确只读恢复该历史 intent 并生成固定 `external_integration_blocked` 报告；17 项 blocker 和 14 项能力要求只是非穷尽的最小已知集合，不能证明完整 readiness。S19a 只把该 test-only blocked report 作为纯函数 reference trace 的输入，检查 ACK 假成功、观察缺项、参与方混域、冲突 replay、sticky UNKNOWN 与补偿协议缺失等负向不变量；它没有 CLI、文件、SQLite、网络或 production export。所有命令和测试结果始终不授予部署或儿童使用。最终验证结果以最新交接为准，详见 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
 - 生产迁移已增加“旧库一致性快照 + 清单校验 + 无清单拒绝迁移”门禁；但正式法律文本、PIPIA、存量数据整改和 AppGallery 正式上架均未完成，所有儿童生产功能继续默认关闭。
-- S0～S18 及 Git 迁移收尾已安全存在于专用远端；S19-readiness 远端主题分支已建立，功能、安全修正与测试提交已显式推送。远端落盘或本地完成都不代表已经部署、联网、上架、完成真实 S19 或开放儿童功能。
+- S0～S18 及 Git 迁移收尾已安全存在于专用远端；S19-readiness 与 S19a 远端主题分支均已建立，功能、安全修正、测试和交接提交均使用完整 refspec 显式推送。远端落盘或本地完成都不代表已经部署、联网、上架、完成真实 S19 或开放儿童功能。
 
 ## 目录
 
@@ -81,6 +81,8 @@ npm run backup:pre-migration -- --database <旧库路径> --backup-root <备份�
 
 `npm run report:synthetic-external-saga-blockers` 只接受非 TTY stdin 上最多 1 MiB 的单行 canonical JSON，并要求 `SYNTHETIC_EXTERNAL_SAGA_READINESS_ACK=report-blockers-no-external-action-v1`。它使用 S18 的只读恢复 API 绑定精确历史 intent，输出固定 `readyForExternalIntegration=false`、`blockerSetCompleteness=minimum_known_non_exhaustive` 和全部未授权状态；不新增数据库、journal、operation ID、reservation、outbox 或 fence，也不联网、提交、部署、补偿或回滚。命令环境必须完全不含 `WX_APPSECRET`；检测键存在时会在 recovery 前拒绝且不读取值。退出码 0 只表示阻断报告成功生成，不表示 readiness 通过。操作手册见 [外部 saga 阻断报告](docs/runbooks/受控-synthetic-外部saga阻断报告.md)。
 
+S19a 不新增操作命令。`server/test-support/synthetic-external-saga-reference-model.js` 只接受与 S19-readiness test seam 固定输出一致的 blocked report shape、摘要化 test operation、七个彼此隔离的 test participant/fault-domain 和 exact-key trace；它绑定 shape 和摘要，但不能认证 caller 对象的真实来源。reservation/outbox 只是一条不可拆分的 reference event；target admission、平台事件、独立 read 和 health 缺一都不能形成完整 test shape，queued/2xx/ACK 永不推进。输出即使为 `no_modeled_safety_violation_detected`，也固定 `referenceModelNormative=false`、`externalProtocolConformanceVerified=false`、`readyForExternalIntegration=false` 和三项未授权；完整边界见 [ADR-0009](docs/adr/0009-test-only-external-saga-reference-model.md)。
+
 服务端公开法律证据还要求显式配置精确 HTTPS 源 `LEGAL_PUBLIC_ORIGIN`。四类文本和监护关系声明的 URL 必须严格等于 `/legal/<固定文本类型>/<版本>/<小写 SHA-256>.html`；配置缺失、跨域、类型/版本/摘要路径不匹配时统一视为 `LEGAL_TEXTS_UNAVAILABLE`。正式文本、重定向、CSP、微信业务域名及真机加载验证仍属于生产硬门。
 
 HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harmonyos/build-profile.json5` 含本机签名信息并被强制忽略；开发者必须在本机独立配置，严禁提交密码、证书、Profile 或绝对路径。
@@ -90,7 +92,7 @@ HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 
 ## 文档入口
 
 - [仓库工作规范](AGENTS.md)
-- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S19-readiness外部saga阻断报告交接-20260829.md)
+- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S19a测试专用saga安全参考机交接-20260829.md)
 - [S13 数据根操作手册](docs/runbooks/受控-synthetic-数据根准备与核验.md)
 - [S14 初始引导操作手册](docs/runbooks/受控-synthetic-初始管理员与法律证据引导.md)
 - [S15 候选证据操作手册](docs/runbooks/受控-synthetic-候选机器证据与未认证声明信封.md)
