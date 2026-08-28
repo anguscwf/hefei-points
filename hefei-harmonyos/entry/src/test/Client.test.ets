@@ -118,8 +118,23 @@ export default function clientTests(): void {
         20,
         'C'.repeat(120)
       )));
+      const pointRequestId: string = `point_request_${'1'.repeat(32)}`;
+      errors.push(await captureProtocolError(client.getPointRequest(
+        session.accessToken,
+        pointRequestId
+      )));
+      errors.push(await captureProtocolError(client.reconcilePointRequestOperation(
+        session.accessToken,
+        'resubmit',
+        JSON.stringify({
+          pointRequestId,
+          expectedRevision: 1,
+          description: '已补充合成说明'
+        }),
+        'point-resubmit-idempotency-0001'
+      )));
 
-      expect(transport.requests.length).assertEqual(9);
+      expect(transport.requests.length).assertEqual(11);
       expect(transport.requests[0].method).assertEqual('POST');
       expect(transport.requests[0].path).assertEqual('/api/v2/device-pairings/claim-by-code');
       expect(transport.requests[0].body).assertContain('"shortCode":"123456"');
@@ -189,6 +204,25 @@ export default function clientTests(): void {
       expect(transport.requests[8].idempotencyKey).assertEqual('');
       expect(transport.requests[8].mutating).assertFalse();
 
+      expect(transport.requests[9].method).assertEqual('GET');
+      expect(transport.requests[9].path).assertEqual(
+        `/api/v2/me/point-requests/${pointRequestId}`
+      );
+      expect(transport.requests[9].body).assertEqual('');
+      expect(transport.requests[9].bearer).assertEqual(session.accessToken);
+      expect(transport.requests[9].idempotencyKey).assertEqual('');
+      expect(transport.requests[9].mutating).assertFalse();
+
+      expect(transport.requests[10].method).assertEqual('POST');
+      expect(transport.requests[10].path).assertEqual(
+        '/api/v2/me/point-request-operations/resubmit/reconcile'
+      );
+      expect(transport.requests[10].body).assertContain('"expectedRevision":1');
+      expect(transport.requests[10].bearer).assertEqual(session.accessToken);
+      expect(transport.requests[10].idempotencyKey)
+        .assertEqual('point-resubmit-idempotency-0001');
+      expect(transport.requests[10].mutating).assertFalse();
+
       expect(errors[0].outcomeUnknown).assertTrue();
       expect(errors[1].outcomeUnknown).assertTrue();
       expect(errors[2].outcomeUnknown).assertTrue();
@@ -198,6 +232,8 @@ export default function clientTests(): void {
       expect(errors[6].outcomeUnknown).assertFalse();
       expect(errors[7].outcomeUnknown).assertTrue();
       expect(errors[8].outcomeUnknown).assertFalse();
+      expect(errors[9].outcomeUnknown).assertFalse();
+      expect(errors[10].outcomeUnknown).assertFalse();
       expect(errors[0].code).assertEqual('PROTOCOL_ERROR');
     });
 
@@ -259,6 +295,66 @@ export default function clientTests(): void {
         bearer: session.accessToken,
         idempotencyKey: 'refresh-idempotency-0001',
         mutating: true
+      })).assertFalse();
+    });
+
+    it('allows point detail and reconciliation only through exact read-only matrices', 0, () => {
+      const session: SessionDto = syntheticSession();
+      const pointRequestId: string = `point_request_${'2'.repeat(32)}`;
+      const detail: TransportRequest = {
+        method: 'GET',
+        path: `/api/v2/me/point-requests/${pointRequestId}`,
+        body: '',
+        bearer: session.accessToken,
+        idempotencyKey: '',
+        mutating: false
+      };
+      expect(isAllowedTransportRequest(detail)).assertTrue();
+      expect(isAllowedTransportRequest({
+        method: 'POST', path: detail.path, body: '{}', bearer: session.accessToken,
+        idempotencyKey: 'point-detail-idempotency-0001', mutating: false
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: 'GET', path: `${detail.path}?familyId=synthetic`, body: '',
+        bearer: session.accessToken, idempotencyKey: '', mutating: false
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: 'GET', path: detail.path, body: '', bearer: session.refreshToken,
+        idempotencyKey: '', mutating: false
+      })).assertFalse();
+
+      const reconcile: TransportRequest = {
+        method: 'POST',
+        path: '/api/v2/me/point-request-operations/cancel/reconcile',
+        body: JSON.stringify({ pointRequestId, expectedRevision: 0 }),
+        bearer: session.accessToken,
+        idempotencyKey: 'point-cancel-idempotency-0001',
+        mutating: false
+      };
+      expect(isAllowedTransportRequest(reconcile)).assertTrue();
+      expect(isAllowedTransportRequest({
+        method: reconcile.method, path: reconcile.path, body: reconcile.body,
+        bearer: reconcile.bearer, idempotencyKey: reconcile.idempotencyKey, mutating: true
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: reconcile.method, path: reconcile.path, body: reconcile.body,
+        bearer: reconcile.bearer, idempotencyKey: '', mutating: false
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: reconcile.method, path: reconcile.path, body: reconcile.body,
+        bearer: session.refreshToken, idempotencyKey: reconcile.idempotencyKey,
+        mutating: false
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: reconcile.method,
+        path: '/api/v2/me/point-request-operations/approve/reconcile',
+        body: reconcile.body, bearer: reconcile.bearer,
+        idempotencyKey: reconcile.idempotencyKey, mutating: false
+      })).assertFalse();
+      expect(isAllowedTransportRequest({
+        method: reconcile.method, path: `${reconcile.path}?childId=synthetic`,
+        body: reconcile.body, bearer: reconcile.bearer,
+        idempotencyKey: reconcile.idempotencyKey, mutating: false
       })).assertFalse();
     });
 

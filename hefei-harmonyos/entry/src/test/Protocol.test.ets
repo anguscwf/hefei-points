@@ -3,10 +3,15 @@ import { isCanonicalHttpsOrigin } from '../main/ets/config/ApiEnvironment';
 import { normalizeEcdsaSignature, utf8Encode } from '../main/ets/security/Encoding';
 import {
   parsePointRequestCreateRequest,
+  parsePointRequestDetailResponse,
+  parsePointRequestOperationReconcileRequest,
+  parsePointRequestOperationResponse,
   parsePointRequestResponse,
   parseRewardRulesResponse,
   PointRequestCreateRequest,
   PointRequestDto,
+  PointRequestOperationReconcileRequest,
+  PointRequestOperationResponse,
   PointRequestResponse,
   PointRequestRuleDto,
   RewardRuleDto,
@@ -270,6 +275,10 @@ export default function protocolTests(): void {
         JSON.stringify(input), clientRequestId
       );
       expect(response.pointRequest.clientRequestId).assertEqual(clientRequestId);
+      const detail: PointRequestResponse = parsePointRequestDetailResponse(
+        JSON.stringify(input), pointRequest.id
+      );
+      expect(detail.pointRequest.id).assertEqual(pointRequest.id);
 
       let rejectedWrongClient: boolean = false;
       try {
@@ -278,6 +287,16 @@ export default function protocolTests(): void {
         rejectedWrongClient = true;
       }
       expect(rejectedWrongClient).assertTrue();
+
+      let rejectedWrongDetail: boolean = false;
+      try {
+        parsePointRequestDetailResponse(
+          JSON.stringify(input), `point_request_${'2'.repeat(32)}`
+        );
+      } catch (_) {
+        rejectedWrongDetail = true;
+      }
+      expect(rejectedWrongDetail).assertTrue();
 
       let rejectedIdentityLeak: boolean = false;
       try {
@@ -289,6 +308,133 @@ export default function protocolTests(): void {
         rejectedIdentityLeak = true;
       }
       expect(rejectedIdentityLeak).assertTrue();
+    });
+
+    it('requires canonical exact bodies for point request operation reconciliation', 0, () => {
+      const pointRequestId: string = `point_request_${'3'.repeat(32)}`;
+      const resubmitInput: PointRequestOperationReconcileRequest = {
+        pointRequestId,
+        expectedRevision: 1,
+        description: '已补充合成说明'
+      };
+      const resubmit: PointRequestOperationReconcileRequest =
+        parsePointRequestOperationReconcileRequest(JSON.stringify(resubmitInput), 'resubmit');
+      expect(resubmit.pointRequestId).assertEqual(pointRequestId);
+      expect(resubmit.expectedRevision).assertEqual(1);
+
+      const cancel: PointRequestOperationReconcileRequest =
+        parsePointRequestOperationReconcileRequest(JSON.stringify({
+          pointRequestId,
+          expectedRevision: 0
+        }), 'cancel');
+      expect(cancel.expectedRevision).assertEqual(0);
+
+      const invalidBodies: Array<string> = [
+        JSON.stringify({ pointRequestId, expectedRevision: 1 }),
+        JSON.stringify({ pointRequestId, expectedRevision: 1, description: ' 前后空格 ' }),
+        JSON.stringify({ pointRequestId, expectedRevision: 1, description: 'cafe\u0301' }),
+        JSON.stringify({
+          pointRequestId, expectedRevision: 1, description: '合成说明', familyId: 'synthetic'
+        }),
+        JSON.stringify({
+          pointRequestId, expectedRevision: Number.MAX_SAFE_INTEGER,
+          description: '合成说明'
+        })
+      ];
+      let rejectedCount: number = 0;
+      for (const body of invalidBodies) {
+        try {
+          parsePointRequestOperationReconcileRequest(body, 'resubmit');
+        } catch (_) {
+          rejectedCount += 1;
+        }
+      }
+      try {
+        parsePointRequestOperationReconcileRequest(JSON.stringify(resubmitInput), 'unknown');
+      } catch (_) {
+        rejectedCount += 1;
+      }
+      expect(rejectedCount).assertEqual(6);
+    });
+
+    it('strictly binds point operation receipts to the original action, id and revision', 0, () => {
+      const pointRequestId: string = `point_request_${'4'.repeat(32)}`;
+      const requestInput: PointRequestOperationReconcileRequest = {
+        pointRequestId,
+        expectedRevision: 1,
+        description: '已补充合成说明'
+      };
+      const completed: PointRequestOperationResponse = {
+        success: true,
+        pointRequestOperation: {
+          action: 'resubmit',
+          pointRequestId,
+          status: 'completed',
+          observation: {
+            completionEventObserved: true,
+            noEffectProven: false,
+            currentResourceStateIncluded: false,
+            safeToClearLocalIntent: true,
+            sameLogicalOperationMayUseNewIdempotencyKey: false,
+            retryDisposition: 'read_current_detail_do_not_repeat'
+          },
+          result: {
+            fromStatus: 'needs_info',
+            toStatus: 'pending',
+            resultRevision: 2,
+            recordedAt: '2026-08-29T00:00:00.000Z'
+          }
+        }
+      };
+      const parsedCompleted: PointRequestOperationResponse =
+        parsePointRequestOperationResponse(
+          JSON.stringify(completed), 'resubmit', requestInput
+        );
+      expect(parsedCompleted.pointRequestOperation.status).assertEqual('completed');
+
+      const notObserved: PointRequestOperationResponse = {
+        success: true,
+        pointRequestOperation: {
+          action: 'resubmit',
+          pointRequestId,
+          status: 'not_observed',
+          observation: {
+            completionEventObserved: false,
+            noEffectProven: false,
+            currentResourceStateIncluded: false,
+            safeToClearLocalIntent: false,
+            sameLogicalOperationMayUseNewIdempotencyKey: false,
+            retryDisposition: 'retry_exact_original_only'
+          },
+          result: null
+        }
+      };
+      const parsedAbsent: PointRequestOperationResponse = parsePointRequestOperationResponse(
+        JSON.stringify(notObserved), 'resubmit', requestInput
+      );
+      expect(parsedAbsent.pointRequestOperation.status).assertEqual('not_observed');
+
+      const completedText: string = JSON.stringify(completed);
+      const resultText: string = JSON.stringify(completed.pointRequestOperation.result);
+      const invalidResponses: Array<string> = [
+        completedText.replace('"action":"resubmit"', '"action":"cancel"'),
+        completedText.replace(pointRequestId, `point_request_${'5'.repeat(32)}`),
+        completedText.replace('"fromStatus":"needs_info"', '"fromStatus":"pending"'),
+        completedText.replace('"resultRevision":2', '"resultRevision":3'),
+        completedText.replace('"success":true', '"success":true,"familyId":"synthetic"'),
+        completedText.replace(resultText, 'null'),
+        completedText.replace('"safeToClearLocalIntent":true',
+          '"safeToClearLocalIntent":false')
+      ];
+      let rejectedCount: number = 0;
+      for (const responseText of invalidResponses) {
+        try {
+          parsePointRequestOperationResponse(responseText, 'resubmit', requestInput);
+        } catch (_) {
+          rejectedCount += 1;
+        }
+      }
+      expect(rejectedCount).assertEqual(7);
     });
   });
 }

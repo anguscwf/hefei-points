@@ -26,6 +26,8 @@ process.env.GUARDIAN_RELATION_DECLARATION_PUBLIC_URL =
 const { getDb, closeDb } = require('../db/connection');
 const repositories = require('../db/repositories');
 const token = require('../lib/token');
+const sessionConfig = require('../config/device-sessions');
+const deviceService = require('../services/device-pairing-sessions');
 
 const TEST_PASSWORD = 'synthetic-point-request-password';
 const legalTexts = Object.freeze({
@@ -142,6 +144,41 @@ function assertMinimalResponse(body) {
   ]) {
     assert.equal(serialized.includes(`\"${forbidden}\"`), false, `response leaked ${forbidden}`);
   }
+}
+
+function operationObservation(completed) {
+  return {
+    completionEventObserved: completed,
+    noEffectProven: false,
+    currentResourceStateIncluded: false,
+    safeToClearLocalIntent: completed,
+    sameLogicalOperationMayUseNewIdempotencyKey: false,
+    retryDisposition: completed
+      ? 'read_current_detail_do_not_repeat'
+      : 'retry_exact_original_only'
+  };
+}
+
+function totalChanges() {
+  return Number(getDb().prepare('SELECT total_changes() AS count').get().count);
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableValue(value[key])]));
+  }
+  return value;
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+function deviceMutationFingerprint(action, pointRequestId, input) {
+  return sha256(JSON.stringify(stableValue({
+    operation: `point_request_${action}`, requestId: pointRequestId, ...input
+  })));
 }
 
 function consentBody(reauthAssertion, { alias, expectedRevision } = {}) {
@@ -280,6 +317,12 @@ function signProof(proof, privateKey) {
   return crypto.sign(
     'sha256', Buffer.from(proof.signingPayload, 'base64url'), privateKey
   ).toString('base64url');
+}
+
+function refreshEligibleAt(session) {
+  return new Date(
+    Date.parse(session.accessExpiresAt) - sessionConfig.refreshEligibilityWindowMs
+  );
 }
 
 async function fullDeviceFlow(fixture, child = fixture.children[0], label = fixture.suffix) {
@@ -954,6 +997,17 @@ test('家庭、兄弟姐妹和监护授权隔离，授权撤回阻断审批并�
   const foreign = await fullDeviceFlow(other, other.children[0], 'isolation-foreign');
   const created = await createPointRequest(family, first, 'client-isolation-000001');
   const id = created.body.pointRequest.id;
+  const recoveryCreated = await createPointRequest(
+    family, first, 'client-isolation-recovery-0001'
+  );
+  const recoveryId = recoveryCreated.body.pointRequest.id;
+  const recoveryKey = idempotencyKey('isolation-cancel-recovery');
+  const recoveryBody = { pointRequestId: recoveryId, expectedRevision: 0 };
+  const recoveryCancelled = await request(`/api/v2/point-requests/${recoveryId}/cancel`, {
+    method: 'POST', bearer: first.completed.session.accessToken,
+    idempotency: recoveryKey, body: { expectedRevision: 0 }
+  });
+  assert.equal(recoveryCancelled.response.status, 200);
 
   const siblingMine = await request('/api/v2/me/point-requests', {
     bearer: sibling.completed.session.accessToken
@@ -999,6 +1053,19 @@ test('家庭、兄弟姐妹和监护授权隔离，授权撤回阻断审批并�
     bearer: first.completed.session.accessToken
   });
   assertApiError(revokedDevice, 401, 'SESSION_REVOKED');
+  const revokedDetail = await request(`/api/v2/me/point-requests/${id}`, {
+    bearer: first.completed.session.accessToken
+  });
+  assertApiError(revokedDetail, 401, 'SESSION_REVOKED');
+  const revokedReconcile = await request(
+    '/api/v2/me/point-request-operations/cancel/reconcile',
+    {
+      method: 'POST', bearer: first.completed.session.accessToken,
+      idempotency: recoveryKey,
+      body: recoveryBody
+    }
+  );
+  assertApiError(revokedReconcile, 401, 'SESSION_REVOKED');
   const revokedRuleRead = await request('/api/v2/me/reward-rules', {
     bearer: first.completed.session.accessToken
   });
@@ -1147,6 +1214,530 @@ test('同一孩子的有效设备共享申请视图与处理权，但客户端�
   assert.equal(crossDeviceCancel.response.status, 200);
   assert.equal(crossDeviceCancel.body.pointRequest.status, 'cancelled');
   assert.equal('clientRequestId' in crossDeviceCancel.body.pointRequest, false);
+});
+
+test('设备单条详情按当前会话儿童隔离，并只向来源设备返回客户端请求号', async () => {
+  const fixture = await createAuthorizedFamily({ childCount: 2 });
+  const other = await createAuthorizedFamily();
+  const source = await fullDeviceFlow(fixture, fixture.children[0], 'detail-source');
+  const sameChild = await fullDeviceFlow(fixture, fixture.children[0], 'detail-same-child');
+  const sibling = await fullDeviceFlow(fixture, fixture.children[1], 'detail-sibling');
+  const foreign = await fullDeviceFlow(other, other.children[0], 'detail-foreign');
+  const clientRequestId = 'client-device-detail-0001';
+  const created = await createPointRequest(fixture, source, clientRequestId);
+  const id = created.body.pointRequest.id;
+
+  const sourceDetail = await request(`/api/v2/me/point-requests/${id}`, {
+    bearer: source.completed.session.accessToken
+  });
+  assert.equal(sourceDetail.response.status, 200);
+  assert.equal(sourceDetail.body.pointRequest.id, id);
+  assert.equal(sourceDetail.body.pointRequest.clientRequestId, clientRequestId);
+  assertMinimalResponse(sourceDetail.body);
+
+  const sharedDetail = await request(`/api/v2/me/point-requests/${id}`, {
+    bearer: sameChild.completed.session.accessToken
+  });
+  assert.equal(sharedDetail.response.status, 200);
+  assert.equal(sharedDetail.body.pointRequest.id, id);
+  assert.equal('clientRequestId' in sharedDetail.body.pointRequest, false);
+  assertMinimalResponse(sharedDetail.body);
+
+  const siblingDetail = await request(`/api/v2/me/point-requests/${id}`, {
+    bearer: sibling.completed.session.accessToken
+  });
+  assertApiError(siblingDetail, 404, 'POINT_REQUEST_NOT_FOUND');
+  const foreignDetail = await request(`/api/v2/me/point-requests/${id}`, {
+    bearer: foreign.completed.session.accessToken
+  });
+  assertApiError(foreignDetail, 404, 'POINT_REQUEST_NOT_FOUND');
+  const scopedQueryRejected = await request(
+    `/api/v2/me/point-requests/${id}?childId=${fixture.children[0].id}`,
+    { bearer: source.completed.session.accessToken }
+  );
+  assertApiError(scopedQueryRejected, 400, 'VALIDATION_ERROR');
+  const invalidId = await request('/api/v2/me/point-requests/not-a-request', {
+    bearer: source.completed.session.accessToken
+  });
+  assertApiError(invalidId, 404, 'POINT_REQUEST_NOT_FOUND');
+});
+
+test('设备写操作对账以原键原体恢复历史结果且不把当前资源冒充操作回执', async () => {
+  const fixture = await createAuthorizedFamily();
+  const source = await fullDeviceFlow(fixture, fixture.children[0], 'operation-source');
+  const peer = await fullDeviceFlow(fixture, fixture.children[0], 'operation-peer');
+  const created = await createPointRequest(
+    fixture, source, 'client-operation-resubmit-01'
+  );
+  const id = created.body.pointRequest.id;
+  const requestInfo = await request(`/api/v2/point-requests/${id}/request-info`, {
+    method: 'POST', userId: fixture.adminId,
+    idempotency: idempotencyKey('operation-request-info'),
+    body: { expectedRevision: 0, note: '请补充合成任务完成细节' }
+  });
+  assert.equal(requestInfo.response.status, 200);
+  const resubmitKey = idempotencyKey('operation-resubmit');
+  const rawDescription = '  已补充 cafe\u0301 合成任务完成细节  ';
+  const normalizedDescription = rawDescription.trim().normalize('NFC');
+  const resubmitBody = {
+    pointRequestId: id,
+    expectedRevision: 1,
+    description: normalizedDescription
+  };
+  const reconcilePath = '/api/v2/me/point-request-operations/resubmit/reconcile';
+  const beforeEventCount = getDb().prepare(`
+    SELECT COUNT(*) AS count FROM point_request_events WHERE point_request_id = ?
+  `).get(id).count;
+  const beforeAbsentChanges = totalChanges();
+  const absent = await request(reconcilePath, {
+    method: 'POST', bearer: source.completed.session.accessToken,
+    idempotency: resubmitKey, body: resubmitBody
+  });
+  assert.equal(absent.response.status, 200);
+  assert.deepEqual(absent.body, {
+    success: true,
+    pointRequestOperation: {
+      action: 'resubmit', pointRequestId: id, status: 'not_observed',
+      observation: operationObservation(false), result: null
+    }
+  });
+  assert.equal(totalChanges(), beforeAbsentChanges);
+  assert.equal(getDb().prepare(`
+    SELECT COUNT(*) AS count FROM point_request_events WHERE point_request_id = ?
+  `).get(id).count, beforeEventCount);
+
+  const resubmitted = await request(`/api/v2/point-requests/${id}`, {
+    method: 'PATCH', bearer: source.completed.session.accessToken,
+    idempotency: resubmitKey,
+    body: {
+      expectedRevision: resubmitBody.expectedRevision,
+      description: rawDescription
+    }
+  });
+  assert.equal(resubmitted.response.status, 200);
+  assert.equal(resubmitted.body.pointRequest.revision, 2);
+  assert.equal(resubmitted.body.pointRequest.description, normalizedDescription);
+  const beforeCompletedChanges = totalChanges();
+  const completed = await request(reconcilePath, {
+    method: 'POST', bearer: source.completed.session.accessToken,
+    idempotency: resubmitKey, body: resubmitBody
+  });
+  assert.equal(completed.response.status, 200);
+  assert.equal(totalChanges(), beforeCompletedChanges);
+  assert.deepEqual(Object.keys(completed.body).sort(), ['pointRequestOperation', 'success']);
+  assert.deepEqual(Object.keys(completed.body.pointRequestOperation).sort(), [
+    'action', 'observation', 'pointRequestId', 'result', 'status'
+  ]);
+  assert.deepEqual(completed.body.pointRequestOperation, {
+    action: 'resubmit',
+    pointRequestId: id,
+    status: 'completed',
+    observation: operationObservation(true),
+    result: {
+      fromStatus: 'needs_info',
+      toStatus: 'pending',
+      resultRevision: 2,
+      recordedAt: resubmitted.body.pointRequest.updatedAt
+    }
+  });
+  assertMinimalResponse(completed.body);
+  assert.equal(JSON.stringify(completed.body).includes(resubmitBody.description), false);
+
+  const peerCannotRecover = await request(reconcilePath, {
+    method: 'POST', bearer: peer.completed.session.accessToken,
+    idempotency: resubmitKey, body: resubmitBody
+  });
+  assert.equal(peerCannotRecover.response.status, 200);
+  assert.deepEqual(peerCannotRecover.body.pointRequestOperation, {
+    action: 'resubmit', pointRequestId: id, status: 'not_observed',
+    observation: operationObservation(false), result: null
+  });
+  const beforeConflictChanges = totalChanges();
+  const changedBody = await request(reconcilePath, {
+    method: 'POST', bearer: source.completed.session.accessToken,
+    idempotency: resubmitKey,
+    body: { ...resubmitBody, description: '不同的补充正文' }
+  });
+  assertApiError(changedBody, 409, 'IDEMPOTENCY_CONFLICT');
+  const changedRequest = await request(reconcilePath, {
+    method: 'POST', bearer: source.completed.session.accessToken,
+    idempotency: resubmitKey,
+    body: { ...resubmitBody, pointRequestId: `point_request_${'f'.repeat(32)}` }
+  });
+  assertApiError(changedRequest, 409, 'IDEMPOTENCY_CONFLICT');
+  assert.equal(totalChanges(), beforeConflictChanges);
+
+  const crossActionCreated = await createPointRequest(
+    fixture, source, 'client-operation-cross-action-01'
+  );
+  const crossActionId = crossActionCreated.body.pointRequest.id;
+  const crossActionBody = { pointRequestId: crossActionId, expectedRevision: 0 };
+  const crossActionCancelled = await request(
+    `/api/v2/point-requests/${crossActionId}/cancel`, {
+      method: 'POST', bearer: source.completed.session.accessToken,
+      idempotency: resubmitKey, body: { expectedRevision: 0 }
+    }
+  );
+  assert.equal(crossActionCancelled.response.status, 200);
+  const crossActionRecovered = await request(
+    '/api/v2/me/point-request-operations/cancel/reconcile', {
+      method: 'POST', bearer: source.completed.session.accessToken,
+      idempotency: resubmitKey, body: crossActionBody
+    }
+  );
+  assert.deepEqual(crossActionRecovered.body, {
+    success: true,
+    pointRequestOperation: {
+      action: 'cancel', pointRequestId: crossActionId, status: 'completed',
+      observation: operationObservation(true),
+      result: {
+        fromStatus: 'pending', toStatus: 'cancelled', resultRevision: 1,
+        recordedAt: crossActionCancelled.body.pointRequest.updatedAt
+      }
+    }
+  });
+
+  const approved = await request(`/api/v2/point-requests/${id}/approve`, {
+    method: 'POST', userId: fixture.adminId,
+    idempotency: idempotencyKey('operation-approve-after-resubmit'),
+    body: { expectedRevision: 2, approvedPoints: 8 }
+  });
+  assert.equal(approved.response.status, 200);
+  assert.equal(approved.body.pointRequest.status, 'approved');
+  const historical = await request(reconcilePath, {
+    method: 'POST', bearer: source.completed.session.accessToken,
+    idempotency: resubmitKey, body: resubmitBody
+  });
+  assert.deepEqual(historical.body.pointRequestOperation, completed.body.pointRequestOperation);
+  assert.equal('pointRequest' in historical.body, false);
+});
+
+test('取消操作只读对账支持并发精确恢复且不产生额外事件或状态变化', async () => {
+  const fixture = await createAuthorizedFamily();
+  const flow = await fullDeviceFlow(fixture, fixture.children[0], 'operation-cancel');
+  const created = await createPointRequest(fixture, flow, 'client-operation-cancel-001');
+  const id = created.body.pointRequest.id;
+  const cancelKey = idempotencyKey('operation-cancel');
+  const cancelBody = { pointRequestId: id, expectedRevision: 0 };
+  const cancelled = await request(`/api/v2/point-requests/${id}/cancel`, {
+    method: 'POST', bearer: flow.completed.session.accessToken,
+    idempotency: cancelKey, body: { expectedRevision: 0 }
+  });
+  assert.equal(cancelled.response.status, 200);
+  const before = getDb().prepare(`
+    SELECT status, revision, updated_at FROM point_requests WHERE id = ?
+  `).get(id);
+  const eventCount = getDb().prepare(`
+    SELECT COUNT(*) AS count FROM point_request_events
+    WHERE point_request_id = ? AND action = 'cancel'
+  `).get(id).count;
+  const beforeRecoveryChanges = totalChanges();
+  const recoveries = await Promise.all(Array.from({ length: 100 }, () => request(
+    '/api/v2/me/point-request-operations/cancel/reconcile',
+    {
+      method: 'POST', bearer: flow.completed.session.accessToken,
+      idempotency: cancelKey, body: cancelBody
+    }
+  )));
+  assert.equal(recoveries.every(item => item.response.status === 200), true);
+  const documents = new Set(recoveries.map(item => JSON.stringify(item.body)));
+  assert.equal(documents.size, 1);
+  assert.deepEqual(recoveries[0].body, {
+    success: true,
+    pointRequestOperation: {
+      action: 'cancel', pointRequestId: id, status: 'completed',
+      observation: operationObservation(true),
+      result: {
+        fromStatus: 'pending', toStatus: 'cancelled', resultRevision: 1,
+        recordedAt: cancelled.body.pointRequest.updatedAt
+      }
+    }
+  });
+  assert.equal(totalChanges(), beforeRecoveryChanges);
+  assert.deepEqual(getDb().prepare(`
+    SELECT status, revision, updated_at FROM point_requests WHERE id = ?
+  `).get(id), before);
+  assert.equal(getDb().prepare(`
+    SELECT COUNT(*) AS count FROM point_request_events
+    WHERE point_request_id = ? AND action = 'cancel'
+  `).get(id).count, eventCount);
+
+  const missingKey = await request(
+    '/api/v2/me/point-request-operations/cancel/reconcile',
+    { method: 'POST', bearer: flow.completed.session.accessToken, body: cancelBody }
+  );
+  assertApiError(missingKey, 400, 'IDEMPOTENCY_REQUIRED');
+  const extraField = await request(
+    '/api/v2/me/point-request-operations/cancel/reconcile',
+    {
+      method: 'POST', bearer: flow.completed.session.accessToken,
+      idempotency: idempotencyKey('operation-cancel-extra'),
+      body: { ...cancelBody, familyId: fixture.familyId }
+    }
+  );
+  assertApiError(extraField, 400, 'VALIDATION_ERROR');
+  const querySelector = await request(
+    `/api/v2/me/point-request-operations/cancel/reconcile?familyId=${fixture.familyId}`,
+    {
+      method: 'POST', bearer: flow.completed.session.accessToken,
+      idempotency: cancelKey, body: cancelBody
+    }
+  );
+  assertApiError(querySelector, 400, 'VALIDATION_ERROR');
+});
+
+test('写功能门关闭后仍可恢复既有回执，设备总门继续阻断对账', async () => {
+  const fixture = await createAuthorizedFamily();
+  const flow = await fullDeviceFlow(fixture, fixture.children[0], 'operation-gates');
+  const created = await createPointRequest(fixture, flow, 'client-operation-gates-001');
+  const id = created.body.pointRequest.id;
+  const cancelKey = idempotencyKey('operation-gates-cancel');
+  const cancelBody = { pointRequestId: id, expectedRevision: 0 };
+  const cancelled = await request(`/api/v2/point-requests/${id}/cancel`, {
+    method: 'POST', bearer: flow.completed.session.accessToken,
+    idempotency: cancelKey, body: { expectedRevision: 0 }
+  });
+  assert.equal(cancelled.response.status, 200);
+  const reconcilePath = '/api/v2/me/point-request-operations/cancel/reconcile';
+
+  try {
+    process.env.POINT_REQUESTS_ENABLED = 'false';
+    const gatedDetail = await request(`/api/v2/me/point-requests/${id}`, {
+      bearer: flow.completed.session.accessToken
+    });
+    assertApiError(gatedDetail, 403, 'FEATURE_DISABLED');
+    const gatedWrite = await request(`/api/v2/point-requests/${id}/cancel`, {
+      method: 'POST', bearer: flow.completed.session.accessToken,
+      idempotency: idempotencyKey('operation-gates-write'),
+      body: { expectedRevision: 0 }
+    });
+    assertApiError(gatedWrite, 403, 'FEATURE_DISABLED');
+    const beforeRecoveryChanges = totalChanges();
+    const recovered = await request(reconcilePath, {
+      method: 'POST', bearer: flow.completed.session.accessToken,
+      idempotency: cancelKey, body: cancelBody
+    });
+    assert.deepEqual(recovered.body, {
+      success: true,
+      pointRequestOperation: {
+        action: 'cancel', pointRequestId: id, status: 'completed',
+        observation: operationObservation(true),
+        result: {
+          fromStatus: 'pending', toStatus: 'cancelled', resultRevision: 1,
+          recordedAt: cancelled.body.pointRequest.updatedAt
+        }
+      }
+    });
+    assert.equal(totalChanges(), beforeRecoveryChanges);
+
+    process.env.HARMONY_CHILD_ENABLED = 'false';
+    const harmonyGated = await request(reconcilePath, {
+      method: 'POST', bearer: flow.completed.session.accessToken,
+      idempotency: cancelKey, body: cancelBody
+    });
+    assertApiError(harmonyGated, 403, 'FEATURE_DISABLED');
+
+    process.env.HARMONY_CHILD_ENABLED = 'true';
+    process.env.DEVICE_PAIRING_ENABLED = 'false';
+    const pairingGated = await request(reconcilePath, {
+      method: 'POST', bearer: flow.completed.session.accessToken,
+      idempotency: cancelKey, body: cancelBody
+    });
+    assertApiError(pairingGated, 403, 'FEATURE_DISABLED');
+  } finally {
+    enableAllGates();
+  }
+});
+
+test('同一设备绑定轮换会话后新 Access 可恢复旧回执且旧 Access 被拒绝', async () => {
+  const fixture = await createAuthorizedFamily();
+  const flow = await fullDeviceFlow(fixture, fixture.children[0], 'operation-refresh');
+  const created = await createPointRequest(fixture, flow, 'client-operation-refresh-001');
+  const id = created.body.pointRequest.id;
+  const cancelKey = idempotencyKey('operation-refresh-cancel');
+  const cancelBody = { pointRequestId: id, expectedRevision: 0 };
+  const cancelled = await request(`/api/v2/point-requests/${id}/cancel`, {
+    method: 'POST', bearer: flow.completed.session.accessToken,
+    idempotency: cancelKey, body: { expectedRevision: 0 }
+  });
+  assert.equal(cancelled.response.status, 200);
+
+  const refreshNow = refreshEligibleAt(flow.completed.session);
+  const challenge = deviceService.issueSessionChallenge({
+    refreshToken: flow.completed.session.refreshToken,
+    bindingId: flow.completed.device.id,
+    idempotencyKey: idempotencyKey('operation-refresh-challenge'),
+    now: refreshNow
+  });
+  const rotated = deviceService.refreshSession({
+    refreshToken: flow.completed.session.refreshToken,
+    idempotencyKey: idempotencyKey('operation-refresh-complete'),
+    body: {
+      challengeId: challenge.body.proof.challengeId,
+      signatureBase64url: signProof(challenge.body.proof, flow.device.privateKey)
+    },
+    now: new Date(refreshNow.getTime() + 1)
+  });
+  assert.equal(rotated.body.session.rotationCounter, 1);
+
+  const reconcilePath = '/api/v2/me/point-request-operations/cancel/reconcile';
+  const oldAccess = await request(reconcilePath, {
+    method: 'POST', bearer: flow.completed.session.accessToken,
+    idempotency: cancelKey, body: cancelBody
+  });
+  assertApiError(oldAccess, 401, 'SESSION_REVOKED');
+  const newAccess = await request(reconcilePath, {
+    method: 'POST', bearer: rotated.body.session.accessToken,
+    idempotency: cancelKey, body: cancelBody
+  });
+  assert.deepEqual(newAccess.body, {
+    success: true,
+    pointRequestOperation: {
+      action: 'cancel', pointRequestId: id, status: 'completed',
+      observation: operationObservation(true),
+      result: {
+        fromStatus: 'pending', toStatus: 'cancelled', resultRevision: 1,
+        recordedAt: cancelled.body.pointRequest.updatedAt
+      }
+    }
+  });
+});
+
+test('同一结果版本出现多条设备事件时对账 fail-closed 且不写库', async () => {
+  const fixture = await createAuthorizedFamily();
+  const flow = await fullDeviceFlow(fixture, fixture.children[0], 'operation-ambiguous');
+  const created = await createPointRequest(
+    fixture, flow, 'client-operation-ambiguous-01'
+  );
+  const id = created.body.pointRequest.id;
+  const requestInfo = await request(`/api/v2/point-requests/${id}/request-info`, {
+    method: 'POST', userId: fixture.adminId,
+    idempotency: idempotencyKey('operation-ambiguous-info'),
+    body: { expectedRevision: 0, note: '请补充合成歧义测试说明' }
+  });
+  assert.equal(requestInfo.response.status, 200);
+
+  const firstKey = idempotencyKey('operation-ambiguous-first');
+  const secondKey = idempotencyKey('operation-ambiguous-second');
+  const firstDescription = '合成事件甲的补充说明';
+  const secondDescription = '合成事件乙的补充说明';
+  const current = repositories.pointRequests.findById({
+    id, familyId: fixture.familyId
+  });
+  const recordedAt = new Date(Date.parse(current.updatedAt) + 1).toISOString();
+  const db = getDb();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const [key, description] of [
+      [firstKey, firstDescription],
+      [secondKey, secondDescription]
+    ]) {
+      repositories.pointRequests.insertEvent({
+        id: crypto.randomUUID(),
+        familyId: fixture.familyId,
+        childId: fixture.children[0].id,
+        pointRequestId: id,
+        actorDeviceBindingId: flow.completed.device.id,
+        action: 'resubmit',
+        idempotencyKeyHash: sha256(key),
+        requestFingerprint: deviceMutationFingerprint('resubmit', id, {
+          expectedRevision: 1, description
+        }),
+        fromStatus: 'needs_info',
+        toStatus: 'pending',
+        resultRevision: 2,
+        responseStatus: 200,
+        eventData: { description },
+        createdAt: recordedAt
+      }, db);
+    }
+    const updated = repositories.pointRequests.updateRequest({
+      action: 'resubmit', id,
+      familyId: fixture.familyId,
+      childId: fixture.children[0].id,
+      expectedRevision: 1,
+      description: firstDescription,
+      updatedAt: recordedAt
+    }, db);
+    assert.equal(updated.status, 'pending');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  const beforeReconcileChanges = totalChanges();
+  for (const [key, description] of [
+    [firstKey, firstDescription],
+    [secondKey, secondDescription]
+  ]) {
+    const reconciled = await request(
+      '/api/v2/me/point-request-operations/resubmit/reconcile', {
+        method: 'POST', bearer: flow.completed.session.accessToken,
+        idempotency: key,
+        body: { pointRequestId: id, expectedRevision: 1, description }
+      }
+    );
+    assertApiError(reconciled, 409, 'IDEMPOTENCY_RESULT_UNAVAILABLE');
+  }
+  assert.equal(totalChanges(), beforeReconcileChanges);
+});
+
+test('约束外损坏的取消事件正文不能被空对象回退洗成完成回执', async () => {
+  const fixture = await createAuthorizedFamily();
+  const flow = await fullDeviceFlow(fixture, fixture.children[0], 'operation-corrupt-json');
+  const created = await createPointRequest(
+    fixture, flow, 'client-operation-corrupt-json-01'
+  );
+  const id = created.body.pointRequest.id;
+  const cancelKey = idempotencyKey('operation-corrupt-json-cancel');
+  const current = repositories.pointRequests.findById({ id, familyId: fixture.familyId });
+  const recordedAt = new Date(Date.parse(current.updatedAt) + 1).toISOString();
+  const db = getDb();
+  db.exec('PRAGMA ignore_check_constraints = ON');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`
+      INSERT INTO point_request_events(
+        id, family_id, child_id, point_request_id,
+        actor_user_id, actor_device_binding_id, action,
+        idempotency_key_hash, request_fingerprint,
+        from_status, to_status, result_revision, response_status,
+        transaction_id, event_data_json, created_at
+      ) VALUES (?, ?, ?, ?, NULL, ?, 'cancel', ?, ?, 'pending', 'cancelled', 1, 200,
+        NULL, ?, ?)
+    `).run(
+      crypto.randomUUID(), fixture.familyId, fixture.children[0].id, id,
+      flow.completed.device.id, sha256(cancelKey),
+      deviceMutationFingerprint('cancel', id, { expectedRevision: 0 }),
+      '{synthetic-invalid-json', recordedAt
+    );
+    const updated = repositories.pointRequests.updateRequest({
+      action: 'cancel', id,
+      familyId: fixture.familyId,
+      childId: fixture.children[0].id,
+      expectedRevision: 0,
+      updatedAt: recordedAt
+    }, db);
+    assert.equal(updated.status, 'cancelled');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec('PRAGMA ignore_check_constraints = OFF');
+  }
+
+  const beforeReconcileChanges = totalChanges();
+  const reconciled = await request(
+    '/api/v2/me/point-request-operations/cancel/reconcile', {
+      method: 'POST', bearer: flow.completed.session.accessToken,
+      idempotency: cancelKey,
+      body: { pointRequestId: id, expectedRevision: 0 }
+    }
+  );
+  assertApiError(reconciled, 409, 'IDEMPOTENCY_RESULT_UNAVAILABLE');
+  assert.equal(totalChanges(), beforeReconcileChanges);
 });
 
 test('设备与监护列表使用作用域绑定游标分页且状态变化不会越权回显', async () => {
