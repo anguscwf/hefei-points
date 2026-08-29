@@ -2,16 +2,18 @@
 
 糖罐积分是面向家庭的任务与积分管理系统：家长创建家庭与孩子档案、审批任务和管理积分，孩子通过受控终端查看积分并申报任务。
 
-本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S18 的受控 synthetic 本地准备、候选证据封装、外部签名束离线验证、本地授权账本与未提交协调意图能力。S19-readiness 仅新增本地只读外部 saga 阻断报告；S19a 只在测试目录增加非规范性、纯内存的 saga 负向安全参考机。S20a 与真实 S19 正交，只补齐设备作用域积分申请单条详情和既有补充/取消操作的历史结果只读对账协议基座；S20b 只把单条详情接入 HarmonyOS 内存态只读界面；S20c 又为“我的申请”完整刷新和分页增加单调快照、身份、唯一性、排序及游标历史围栏，协议失败后冻结继续分页和旧规则写入口。S20a～S20c 均未把对账或既有 mutation 接入界面。真实 S19 外部接入尚未开始。
+本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S18 的受控 synthetic 本地准备、候选证据封装、外部签名束离线验证、本地授权账本与未提交协调意图能力。S19-readiness 仅新增本地只读外部 saga 阻断报告；S19a 只在测试目录增加非规范性、纯内存的 saga 负向安全参考机。S20a 与真实 S19 正交，只补齐设备作用域积分申请单条详情和既有补充/取消操作的历史结果只读对账协议基座；S20b 只把单条详情接入 HarmonyOS 内存态只读界面；S20c 又为“我的申请”完整刷新和分页增加单调快照、身份、唯一性、排序及游标历史围栏，协议失败后冻结继续分页和旧规则写入口；S20d 只形成积分申请文字留存与监护安全放弃的提议态决策包。S20a～S20d 均未把对账或既有 mutation 接入界面，ADR-0011 尚未接受且不授权实现。真实 S19 外部接入尚未开始。
 
 ## 当前状态
 
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
 - HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；S20a 又新增设备单条详情及 resubmit/cancel 历史结果对账的严格 DTO、解析与 client 方法。S20b 只允许用户对当前已经加载且 ID 唯一、格式 canonical 的申请手动执行单条 GET，把返回详情保存在内存并原位单调推进同一列表项；S20c 再要求完整刷新和每一页都保持精确 `(submittedAt, id) DESC` 顺序、canonical 且跨页唯一的申请 ID、可见 `clientRequestId` 唯一映射、游标严格前进且不得循环，并拒绝 revision/时间回退、同 revision 漂移、终态演进和身份替换。协议异常会保留已验证的只读申请快照，但清空规则与分页能力，阻断继续加载或沿用旧规则创建；Access 过期仍只允许既有安全轮换一次，明确撤权/授权错误仍清理会话和未决意图。界面不显示 `clientRequestId` 或内部申请 ID，不新增路由、存储、自动轮询、mutation UI、持久 mutation intent/coordinator 或写路径。S9 新增受控临时 synthetic profile 生成器和 loopback 全链验证，S10 又加入纯本地“设置与数据安全”说明。该说明明确不是正式隐私政策、儿童规则、用户协议或同意页面，不读取动态儿童/设备/会话信息，也不提供假解绑或删除按钮。跟踪配置仍固定禁用网络并使用 `.invalid` 源，尚未连接任何外部业务服务，也不代表完整薄 MVP。
+- S20d 新增 [ADR-0011（提议中）](docs/adr/0011-point-request-text-retention-safe-abandonment-boundary.md)，盘点当前/历史申报文字、监护留言、不可变事件与幂等证据、设备恢复材料、数据行权导出和备份；继续继承 `not_observed` 非 no-effect、不得清意图/换键的既有边界，并把 peer 与监护端竞争写识别为未来 consumer/coordinator 的阻断项。逐类期限、起算、处置、备份、授权主体、重新认证、多监护人和丢失设备仍全部待产品、合规/法务和安全负责人决定；本提议不新增 mutation、reconcile 消费、持久 coordinator、API、迁移、删除或功能门。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
 - 阶段 1 已完成 S0～S18 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执；S15 把 S12/S13/S14、当前已提交 43 文件/10 迁移、配置、物理根和只读 pristine SQLite/receipt 绑定成短时 machine subject，再把 19 项外部声明包装成未认证信封。S16 只用环境摘要钉住的独立公开策略验证 Ed25519 gate/checkpoint/approval/grant 签名束；S17 只在一个独立本地 ledger 内约束已观察 checkpoint 并记录一次本地 grant 使用。S18 又增加只读历史 receipt 恢复和独立摘要 journal，只能形成 `locally_prepared_unsubmitted` 的本地协调意图。S19-readiness 可以精确只读恢复该历史 intent 并生成固定 `external_integration_blocked` 报告；17 项 blocker 和 14 项能力要求只是非穷尽的最小已知集合，不能证明完整 readiness。S19a 只把该 test-only blocked report 作为纯函数 reference trace 的输入，检查 ACK 假成功、观察缺项、参与方混域、冲突 replay、sticky UNKNOWN 与补偿协议缺失等负向不变量；它没有 CLI、文件、SQLite、网络或 production export。S20a 只增加设备作用域单条只读详情、来源设备专属的既有写操作历史回执对账，以及 HarmonyOS 严格协议/client 基座；S20b 只将单条当前详情接入协调器和同页只读界面；S20c 只加固申请列表完整刷新、分页和迟到响应的单调/身份/游标围栏，并在协议失败时冻结旧规则交互面。三者都没有 migration、mutation UI、持久 mutation intent/coordinator 或新写操作。所有命令和测试结果始终不授予部署或儿童使用。S20c 最终 committed 实现的验证结果见最新交接与 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
+- S20d 是纯文档决策准备；实现代码、迁移、测试、两端客户端和功能门相对 S20c 保持不变。它只把待决问题收敛进 ADR-0011（提议中），并暴露不可变历史事件正文未进入当前行权导出的披露缺口。下一步是等待有权责任人填实并接受政策，不是直接进入 coordinator/UI 开发。
 - 生产迁移已增加“旧库一致性快照 + 清单校验 + 无清单拒绝迁移”门禁；但正式法律文本、PIPIA、存量数据整改和 AppGallery 正式上架均未完成，所有儿童生产功能继续默认关闭。
-- S0～S20c 远端主题分支均已建立并显式推送到专用远端；远端落盘不代表已经部署、联网、上架、完成真实 S19 或开放儿童功能。
+- S0～S20d 远端主题分支均已建立并显式推送到专用远端；远端落盘不代表已经部署、联网、上架、完成真实 S19、接受 ADR-0011 或开放儿童功能。
 
 ## 目录
 
@@ -98,7 +100,7 @@ HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 
 ## 文档入口
 
 - [仓库工作规范](AGENTS.md)
-- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S20c设备积分申请列表单调分页边界交接-20260829.md)
+- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S20d积分申请文字留存与监护安全放弃决策准备交接-20260829.md)
 - [S13 数据根操作手册](docs/runbooks/受控-synthetic-数据根准备与核验.md)
 - [S14 初始引导操作手册](docs/runbooks/受控-synthetic-初始管理员与法律证据引导.md)
 - [S15 候选证据操作手册](docs/runbooks/受控-synthetic-候选机器证据与未认证声明信封.md)
@@ -109,6 +111,7 @@ HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 
 - [HarmonyOS MVP 方案与推进计划](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)
 - [阶段 1 现有能力审计与首批实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)
 - [架构决策记录](docs/adr/README.md)
+- [ADR-0011（提议中）：积分申请文字留存与监护安全放弃决策边界](docs/adr/0011-point-request-text-retention-safe-abandonment-boundary.md)
 - [2026-08-20 canonical 仓库基线记录](docs/baseline/2026-08-20-repository-baseline.md)
 - [历史规则界面优化方案](docs/product/规则界面优化方案-历史.md)
 
