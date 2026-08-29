@@ -1,6 +1,6 @@
 # 糖罐积分鸿蒙版 MVP 方案与推进计划
 
-> 文档版本：v2.0（S20c 设备积分申请列表单调分页边界）
+> 文档版本：v2.1（S20d 积分申请文字留存与监护安全放弃决策准备）
 > 初版日期：2026-08-09；修订日期：2026-08-29
 > 适用项目：糖罐积分微信小程序 / Web 管理端 / HarmonyOS 孩子端
 > 当前决策：采用“无 Screen Time Guard ACL”路线；华为远程守护中的用机时长由家长手动发放。未成年人账号不再走 AppGallery 邀请测试或 AppTest；儿童真机安装改为正式上架后验收。
@@ -17,7 +17,7 @@ HarmonyOS 版本采用双轨验证与分发：
 
 1. **成人预发布验证轨：** 邀请测试、模拟器、自动化测试、Mate 80 真机和必要的云测试只用于成人账号与受控设备，验证安装、启动、网络、业务、权限和回归。
 2. **儿童正式使用轨：** 儿童账号只安装已通过 AppGallery 正式审核、内容分级适龄的公开版本；孩子设备保持未成年人模式和远程守护，不切换成人账号，不开启开发者模式。
-3. **首发先核心后增强：** 历史 `0.1.0 (10000)` 仅为阶段 0 诊断包；当前跟踪的 `0.2.0 (20000)` 仍只是未连接外部服务、未发布且不完整的 S10 本地安全壳，S11～S18 也只补齐临时 synthetic 客户端工作区、服务端配置/预检、离线数据根、一次性初始引导、候选证据封装、签名束离线验证、独立本地授权账本和未提交协调意图；S19-readiness 仅生成本地只读阻断报告，S19a 也只增加测试目录中的非规范性、纯内存负向安全参考机。与真实 S19 正交的 S20a 只增加设备作用域积分申请单条详情、来源设备既有 resubmit/cancel 历史结果只读对账，以及 HarmonyOS 严格协议/client 基座；S20b 只把当前单条详情接入 HarmonyOS 内存态手动只读界面；S20c 只为申请列表完整刷新和分页增加单调快照、身份、唯一性、排序与游标历史围栏，并在协议失败时冻结旧规则交互面。三者都没有 mutation UI、持久 mutation intent/coordinator 或新写路径。这些能力均不能直接公开上架。完成“监护人授权与配对 → 查看积分 → 申报任务 → 家长审批 → 查看结果 → 解绑/删除”的薄 MVP 及全部发布硬门后，才能生成正式首发候选版。
+3. **首发先核心后增强：** 历史 `0.1.0 (10000)` 仅为阶段 0 诊断包；当前跟踪的 `0.2.0 (20000)` 仍只是未连接外部服务、未发布且不完整的 S10 本地安全壳，S11～S18 也只补齐临时 synthetic 客户端工作区、服务端配置/预检、离线数据根、一次性初始引导、候选证据封装、签名束离线验证、独立本地授权账本和未提交协调意图；S19-readiness 仅生成本地只读阻断报告，S19a 也只增加测试目录中的非规范性、纯内存负向安全参考机。与真实 S19 正交的 S20a 只增加设备作用域积分申请单条详情、来源设备既有 resubmit/cancel 历史结果只读对账，以及 HarmonyOS 严格协议/client 基座；S20b 只把当前单条详情接入 HarmonyOS 内存态手动只读界面；S20c 只为申请列表完整刷新和分页增加单调快照、身份、唯一性、排序与游标历史围栏，并在协议失败时冻结旧规则交互面；S20d 只形成 [ADR-0011（提议中）](../adr/0011-point-request-text-retention-safe-abandonment-boundary.md) 的文字留存与监护安全放弃评审包。S20a～S20d 都没有 mutation UI、持久 mutation intent/coordinator 或新写路径；ADR-0011 尚未接受，也不授权实现。这些能力均不能直接公开上架。完成“监护人授权与配对 → 查看积分 → 申报任务 → 家长审批 → 查看结果 → 解绑/删除”的薄 MVP 及全部发布硬门后，才能生成正式首发候选版。
 4. **渠道公开、功能克制：** AppGallery 首次正式发布不能使用分阶段发布。首发可以零推广，但必须对普通家庭具备真实、完整的基本价值，不能仅对白名单家庭或开发者自家设备可用。
 
 范围口径：`0.2.0` 是用于取得正式儿童安装渠道的“正式首发基础版”，完成监护人授权、配对、积分查询、申报审批和数据权利闭环；阶段 6 完成人工用机兑换后，才达到本文定义的完整 MVP。照片、Push 等仍属于后续增强。
@@ -746,6 +746,8 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 
 2026-08-29 实施记录：S20c 只加固 HarmonyOS “我的申请”完整刷新与继续分页。每页必须保持服务端精确 `(submittedAt, id) DESC` 顺序，申请 ID canonical 且本页/跨页唯一，来源设备可见的 `clientRequestId` 不得在不同申请之间复用；完整刷新还拒绝既有可见键改绑新 ID，并对仍可见旧项逐项执行 revision、状态、身份和真实时间单调检查。空页不得携带下一游标，游标不得自环、倒退或形成 A→B→A 多页循环。重复、乱序、跨页冲突、revision/时间回退、同 revision 漂移、终态演进或身份替换都在应用前 `PROTOCOL_ERROR`。列表协议污染后保留已验证的列表和 selected detail，详情协议错误会清除 selected detail；两类错误都会清空 reward rules、规则/申请游标及历史，阻断继续分页和沿用旧规则创建。未决申请 intent 时协调器与 UI 双层禁用加载更多。generation 变化后的普通迟到成功/错误被忽略，确定性 `SESSION_REVOKED` / `CONSENT_REQUIRED` 仍执行既有会话与意图清理；Access 过期只允许既有一次安全轮换。S20c 新增/变更的列表、详情与分页范围保持只读，既有 S8 创建路径不变；本轮没有 operation reconcile 消费、resubmit/cancel/PATCH、mutation UI、持久 mutation intent/coordinator、server、migration、新路由、存储、联网或部署。最终 committed 实现通过 point-request 23/23、根回归 362/362、synthetic generator 7/7、HarmonyOS static security 12/12；从 `24be3aeb69b09ddf3cf1409baad92fa8931826c7` 生成的全新临时 unsigned 工程 BUILD SUCCESSFUL、Hypium 66/66，受审计源码摘要 `d93a64445ade2f51fc42ec271715eac6acd78a4acf905818dab54e8290eee304`，CodeLinter 0 error/0 warning、仅 1 条既有图标尺寸建议，最终安全复核无剩余 P0/P1。下一本地产品步骤只能准备 description 保留和 guardian-authorized safe abandonment 决策材料；政策获批并形成新 ADR 前继续阻断 mutation/reconcile coordinator。真实 S19 仍未开始。
 
+2026-08-29 实施记录：S20d 是纯文档决策准备。新增 [ADR-0011（提议中）](../adr/0011-point-request-text-retention-safe-abandonment-boundary.md)，统一盘点当前/历史申报正文、监护留言、不可变事件与幂等证据、批准来源流水、设备本地未决创建意图、内存快照、数据权利导出、客服/日志和备份副本；记录初始正文与历次 resubmit 正文留存不对称，以及历史事件正文尚未进入当前行权导出的披露缺口。状态矩阵继续固定 `not_observed` 非 no-effect、原键原载荷恢复、`completed` 后二读详情、来源设备回执不跨设备转移；来源 intent 未取得 completed、权威 no-effect、fence 或 ownership transfer 前，peer 的重叠补充/取消与监护端的竞争 request_info/approve/reject 都不能包装成新动作。文档同时把业务取消、本地意图清理、监护安全放弃、授权撤回和数据删除严格分开。逐类期限/起算/处置/备份、授权主体/reauth/多监护人/丢失设备/审计回执全部保持“待定（阻断）”；客户端确认、撤权或 TTL 都不能单独清结果未知意图。ADR-0011 状态为“提议中（未接受，不授权实施）”，只有产品、合规/法务和安全负责人填实并接受后，才能另切 coordinator/UI 设计。本轮不修改代码、迁移、API、HarmonyOS 存储、测试或功能门，不联网、不部署、不处理生产数据；真实 S19 仍未开始。
+
 ### 阶段 4：合规门、正式首发与儿童设备安装（5～10 个工作日 + 外部审核时间）
 
 交付物：
@@ -937,13 +939,13 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 
 ## 15. 立即执行的下一步
 
-1. 保持 HarmonyOS `NETWORK_ENABLED=false`、跟踪小程序 develop/trial 零联网配置、`.invalid` 源和全部儿童生产功能门关闭；S9 loopback 全链、S10 工程安全壳、S11 临时小程序生成器、S12 配置/预检、S13 数据根、S14 bootstrap、S15 未认证证据封装、S16 签名束离线 verifier、S17 本地授权账本、S18 本地未提交协调意图、S19-readiness blocker report、S19a test-only 参考机、S20a 详情/历史对账协议、S20b 内存态只读详情界面与 S20c 列表单调分页围栏都只作为本地基线，不连接外部业务服务或生产，不把测试签名包、本地 receipt、intent、blocker 摘要或历史积分操作回执解释为部署许可或当前资源状态。
+1. 保持 HarmonyOS `NETWORK_ENABLED=false`、跟踪小程序 develop/trial 零联网配置、`.invalid` 源和全部儿童生产功能门关闭；S9 loopback 全链、S10 工程安全壳、S11 临时小程序生成器、S12 配置/预检、S13 数据根、S14 bootstrap、S15 未认证证据封装、S16 签名束离线 verifier、S17 本地授权账本、S18 本地未提交协调意图、S19-readiness blocker report、S19a test-only 参考机、S20a 详情/历史对账协议、S20b 内存态只读详情界面、S20c 列表单调分页围栏与 S20d 提议态政策决策包都只作为本地基线，不连接外部业务服务或生产，不把测试签名包、本地 receipt、intent、blocker 摘要、历史积分操作回执或 ADR-0011 候选项解释为部署许可、当前资源状态或已接受政策。
 2. S19-readiness 前置已完成；推进真实 S19“获批外部权威、全局消费与部署 saga 接入”前，先取得并批准 authority/coordinator/deployer 协议。随后由获批外部系统认证策略发布者和各角色真实身份，取回并核验权威证据/审计正文，引入可信时间和权威最新 checkpoint，通过线性一致 reservation、同事务 durable outbox、operation ID/fence 和目标幂等 admission 协调最终撤销、全局 compare-and-consume、真实部署及可核验观察/补偿。S16 `unconsumed`、S17 receipt、S18 `locally_prepared_unsubmitted` intent 和 S19-readiness 报告都只表示本地边界，不证明全局状态、外部受理或部署。
 3. 由受权操作员在批准的外部非生产主机按 S13 建立全新专用根，再按 S14 通过不落盘 stdin 引导；在任何状态演进前按 S15 capture，并在 30 分钟内真实核验专用 OS 账号、ACL/所有权、磁盘/备份边界、独立密钥和数据库内容/生产隔离。残根、既有 SQLite、未知锁或跨环境数据库一律隔离，不自动接管。
 4. 外部验证独立 synthetic AppID provisioning、开发者权限、AppSecret 独立性、request/business domain、DNS/TLS、基础设施、法律记录和数据库内容隔离，并确认 DevTools 私有设置未关闭域名/TLS 校验。候选先运行 `npm run verify:synthetic-api-preflight` 自检，再以同一配置运行 `npm run preflight:synthetic-api -- --output <系统临时目录下全新绝对目录>` 保存 schema 4、43 文件/10 迁移的实际 artifact；S15 finalize 只封装 19 项未认证声明，S16 只离线验证签名束，S17 只在独立本地账本记录单次使用，S18 只形成未提交本地 intent，S19-readiness 只生成非穷尽 blocked report。只有真实 S19 的权威身份/事实/审计/时间/全局吊销/消费和部署执行硬门真实关闭，才可另行审批一次受控 synthetic 部署。客户端只使用 S9/S11 受控系统临时配置，禁止运行时改源或访问生产 host。
 5. 在 HarmonyOS 模拟器或成人受控 API 20+ 设备完成“授权 → 配对 → 查积分/规则 → 申报 → 家长审批 → 查看结果 → Refresh → 撤销”端到端 smoke，并验证 HUKS、AssetStore、前后台、重启、结果未知恢复和清数据行为。
 6. 在微信开发者工具和成人受控设备完成家长端同链路 smoke，交付安全文件导出/披露回执；全部证据只使用合成家庭且不记录凭据或儿童个人信息。
-7. 以 S10 工程安全壳为边界，由合规工作流定稿儿童易懂版正式摘要、完整法律文本、处理者联系方式、客服/投诉和真实行权入口；不得把工程说明当作同意或法律页面。S20a 已完成设备作用域单条详情和来源设备历史操作对账技术前置，S20b 完成该详情的手动只读界面，S20c 完成列表完整刷新/分页的单调与身份围栏；三者都没有把既有写操作或对账基座接入 UI。下一本地切片 S20d 只准备未决申报文字的生产保留期限和监护人授权安全放弃决策材料；政策获批并形成新 ADR 前，不得接入补充、取消或重新提交 UI、持久 mutation intent/coordinator，也不得在 `not_observed` 时清意图或换键。
+7. 以 S10 工程安全壳为边界，由合规工作流定稿儿童易懂版正式摘要、完整法律文本、处理者联系方式、客服/投诉和真实行权入口；不得把工程说明当作同意或法律页面。S20a 已完成设备作用域单条详情和来源设备历史操作对账技术前置，S20b 完成该详情的手动只读界面，S20c 完成列表完整刷新/分页的单调与身份围栏，S20d 已形成 [ADR-0011（提议中）](../adr/0011-point-request-text-retention-safe-abandonment-boundary.md) 的逐类留存与安全放弃评审包。下一步由产品、合规/法务和安全负责人逐项填实期限、起算、到期处置、备份、数据权利披露、授权主体、专用 reauth、多监护人冲突、来源设备丢失和权威结果证据，并显式接受 ADR-0011；在此之前不得接入补充、取消或重新提交 UI、operation reconcile 消费、持久 mutation intent/coordinator、server fence 或删除 executor，也不得在 `not_observed` 时清意图或换键。
 8. 完成正式《隐私政策》《儿童个人信息保护规则》《儿童用户协议》、PIPIA、存量儿童数据逐类整改、留存/删除规则、受托方约束、儿童信息保护负责人和安全事件流程。
 9. 完成生产密钥托管与轮换、加密备份/恢复演练、迁移清单门、监控、回滚、正式法律页面及其重定向/CSP/业务域名验证。
 10. 准备 APP 备案、内容分级、隐私标签、发布素材、客服、审核测试家庭和可复现操作说明；使用全新成人测试账号和合成孩子完成从零成人预验收。
@@ -1021,3 +1023,4 @@ Push Kit 属于普通开放能力，可在通知模块进入开发时再启用�
 | v1.8 | 2026-08-29 | 记录 S20a 设备积分申请单条详情、来源设备 resubmit/cancel 历史结果只读对账及 HarmonyOS 严格协议基座；明确历史回执与当前资源分离、not_observed 不是 no-effect，以及保留/安全放弃策略未批前不开放 mutation UI |
 | v1.9 | 2026-08-29 | 记录 S20b 将当前已加载唯一 canonical 申请的单条 GET 接入 HarmonyOS 内存态只读界面，固定 revision 单调更新、后台/明确撤权响应清视图和 UI 对 reconcile/mutation 的静态隔离；保留/安全放弃策略与真实 S19 阻断均不变 |
 | v2.0 | 2026-08-29 | 记录 S20c 对申请列表完整刷新/分页的精确排序、跨页身份唯一、快照单调与游标历史围栏，以及协议污染后保留已验证只读快照但冻结分页/旧规则交互面；下一步仅准备保留与 guardian safe-abandonment 决策材料 |
+| v2.1 | 2026-08-29 | 记录 S20d 纯文档决策准备：ADR-0011 仅处于提议中，统一列出申请文字/证据/设备意图/导出/备份分类、结果未知矩阵、监护授权与逐类留存待决项；策略未接受前不授权 mutation、reconcile 消费、持久 coordinator、API、迁移、删除或生产开放 |

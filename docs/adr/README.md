@@ -4,7 +4,9 @@
 
 命名规则：`NNNN-简短主题.md`。每条 ADR 至少包含状态、日期、背景、决定、影响和后续动作。已经接受的 ADR 不直接改写结论；需要推翻时新增 ADR 并标明替代关系。
 
-当前记录：
+只有状态为“已接受”且列在“已接受”区的条目才是规范性决定。“提议中”条目只是评审载体，不得被引用为功能门开放、代码实现、迁移、部署、发布或儿童使用授权。
+
+## 已接受
 
 - [ADR-0001：以 hefei-points 独立仓库作为唯一真源](0001-canonical-standalone-repository.md)
 - [ADR-0002：敏感数据与本地构建材料边界](0002-sensitive-data-and-build-boundaries.md)
@@ -16,3 +18,7 @@
 - [ADR-0008：儿童数据权利、撤回与留存阻断边界](0008-child-data-rights-retention-boundary.md)
 - [ADR-0009：外部部署 saga 仅允许测试专用、非规范性安全参考机](0009-test-only-external-saga-reference-model.md)
 - [ADR-0010：设备积分申请详情与操作回执对账边界](0010-device-point-request-detail-operation-reconciliation-boundary.md)
+
+## 提议中（未接受，不授权实施）
+
+- [ADR-0011：积分申请文字留存与监护安全放弃决策边界](0011-point-request-text-retention-safe-abandonment-boundary.md)
