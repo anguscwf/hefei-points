@@ -177,10 +177,17 @@ test('HarmonyOS 主源码通过儿童设备静态安全门', () => {
   assert.deepEqual(errors, [], errors.join('\n'));
 });
 
-test('S20b HarmonyOS 详情 UI 与 coordinator 保持只读且拒绝写操作契约消费', () => {
+test('S20b/S20c HarmonyOS 详情与列表 coordinator 保持只读及单调 fence', () => {
   const realHarmonyRoot = path.resolve(__dirname, '..', '..', 'hefei-harmonyos');
   const realIndex = fs.readFileSync(
     path.join(realHarmonyRoot, 'entry', 'src', 'main', 'ets', 'pages', 'Index.ets'),
+    'utf8'
+  );
+  const realCoordinator = fs.readFileSync(
+    path.join(
+      realHarmonyRoot, 'entry', 'src', 'main', 'ets', 'session',
+      'ChildSessionCoordinator.ets'
+    ),
     'utf8'
   );
   assert.deepEqual(
@@ -192,6 +199,16 @@ test('S20b HarmonyOS 详情 UI 与 coordinator 保持只读且拒绝写操作契
   );
   assert.match(realIndex, /pointRequestDetailBody\(this\.pointRequestDetail\)/);
   assert.doesNotMatch(realIndex, /pointRequestDetailBody\(item\)/);
+  assert.match(realCoordinator, /validatePointRequestRefresh\(pointRequests\.pointRequests\)/);
+  assert.match(
+    realCoordinator,
+    /validatePointRequestAppend\(response\.pointRequests, cursor, response\.nextCursor\)/
+  );
+  assert.match(
+    realCoordinator,
+    /this\.busyValue \|\| this\.lockedValue \|\| this\.pointRequestPending[\s\S]{0,120}nextPointRequestCursorValue/
+  );
+  assert.match(realCoordinator, /preserveVerifiedPointSnapshot/);
 
   withFixture(root => {
     const unsafeIndex = safePrivacyIndex().replace(

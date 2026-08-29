@@ -738,7 +738,7 @@ export class ChildSessionCoordinator {
       && current.clientRequestId === latest.clientRequestId;
   }
 
-  private assertPointRequestDetailAdvance(current: PointRequestDto,
+  private assertPointRequestSnapshotAdvance(current: PointRequestDto,
     latest: PointRequestDto): void {
     if (!this.samePointRequestIdentity(current, latest)
         || latest.revision < current.revision) {
@@ -762,6 +762,58 @@ export class ChildSessionCoordinator {
         || !Number.isFinite(currentUpdatedAt) || !Number.isFinite(latestUpdatedAt)
         || latestUpdatedAt <= currentUpdatedAt) {
       throw new Error('PROTOCOL_ERROR');
+    }
+  }
+
+  private assertUniquePointRequestPage(values: Array<PointRequestDto>): void {
+    const ids: Array<string> = [];
+    for (let index: number = 0; index < values.length; index += 1) {
+      const id: string = values[index].id;
+      if (!/^point_request_[a-f0-9]{32}$/.test(id) || ids.indexOf(id) >= 0) {
+        throw new Error('PROTOCOL_ERROR');
+      }
+      ids.push(id);
+    }
+  }
+
+  private validatePointRequestRefresh(latest: Array<PointRequestDto>): PointRequestDto | null {
+    this.assertUniquePointRequestPage(this.pointRequestValues);
+    this.assertUniquePointRequestPage(latest);
+    for (let index: number = 0; index < latest.length; index += 1) {
+      const current: PointRequestDto | undefined = this.pointRequestValues.find(
+        (value: PointRequestDto) => value.id === latest[index].id
+      );
+      if (current !== undefined) {
+        this.assertPointRequestSnapshotAdvance(current, latest[index]);
+      }
+    }
+    const currentDetail: PointRequestDto | null = this.pointRequestDetailValue;
+    if (currentDetail === null) {
+      return null;
+    }
+    const selected: PointRequestDto | undefined = latest.find(
+      (value: PointRequestDto) => value.id === currentDetail.id
+    );
+    if (selected === undefined) {
+      return null;
+    }
+    this.assertPointRequestSnapshotAdvance(currentDetail, selected);
+    return selected;
+  }
+
+  private validatePointRequestAppend(latest: Array<PointRequestDto>, cursor: string,
+    nextCursor: string | null): void {
+    this.assertUniquePointRequestPage(this.pointRequestValues);
+    this.assertUniquePointRequestPage(latest);
+    if (nextCursor !== null && nextCursor === cursor) {
+      throw new Error('PROTOCOL_ERROR');
+    }
+    for (let index: number = 0; index < latest.length; index += 1) {
+      if (this.pointRequestValues.find(
+        (value: PointRequestDto) => value.id === latest[index].id
+      ) !== undefined) {
+        throw new Error('PROTOCOL_ERROR');
+      }
     }
   }
 
@@ -922,8 +974,8 @@ export class ChildSessionCoordinator {
     }
     this.busyValue = true;
     this.pointRequestDetailGeneration += 1;
-    this.pointRequestDetailValue = null;
     const generation: number = this.operationGeneration;
+    let preserveVerifiedPointSnapshot: boolean = false;
     try {
       const current: SessionEnvelope = this.requireEnvelope();
       if (current.phase !== EnvelopePhase.ACTIVE
@@ -937,9 +989,22 @@ export class ChildSessionCoordinator {
       const summary: SummaryResponse = await this.summaryWithOneRefresh();
       const transactions: TransactionsResponse = await this.transactionsWithOneRefresh('');
       const rewardRules: RewardRulesResponse = await this.rewardRulesWithOneRefresh('');
-      const pointRequests: PointRequestsResponse = await this.pointRequestsWithOneRefresh('');
+      let pointRequests: PointRequestsResponse;
+      try {
+        pointRequests = await this.pointRequestsWithOneRefresh('');
+      } catch (error) {
+        preserveVerifiedPointSnapshot = stableErrorCode(error as Object) === 'PROTOCOL_ERROR';
+        throw throwableError(error as Object);
+      }
       if (generation !== this.operationGeneration) {
         return;
+      }
+      let selectedDetail: PointRequestDto | null;
+      try {
+        selectedDetail = this.validatePointRequestRefresh(pointRequests.pointRequests);
+      } catch (error) {
+        preserveVerifiedPointSnapshot = true;
+        throw throwableError(error as Object);
       }
       this.summaryValue = summary;
       this.transactionValues = transactions.transactions;
@@ -952,9 +1017,12 @@ export class ChildSessionCoordinator {
       this.pointRequestValues = pointRequests.pointRequests;
       this.nextPointRequestCursorValue = pointRequests.nextCursor === null
         ? '' : pointRequests.nextCursor;
+      this.pointRequestDetailValue = selectedDetail;
       this.statusCodeValue = 'READY';
     } catch (error) {
-      this.clearBusinessView();
+      if (!preserveVerifiedPointSnapshot) {
+        this.clearBusinessView();
+      }
       await this.handleFailure(error as Object);
     } finally {
       this.busyValue = false;
@@ -1023,7 +1091,8 @@ export class ChildSessionCoordinator {
   }
 
   async loadMorePointRequests(): Promise<void> {
-    if (this.busyValue || this.lockedValue || this.nextPointRequestCursorValue.length === 0) {
+    if (this.busyValue || this.lockedValue || this.pointRequestPending
+        || this.nextPointRequestCursorValue.length === 0) {
       return;
     }
     this.busyValue = true;
@@ -1034,6 +1103,7 @@ export class ChildSessionCoordinator {
       if (generation !== this.operationGeneration) {
         return;
       }
+      this.validatePointRequestAppend(response.pointRequests, cursor, response.nextCursor);
       this.pointRequestValues = this.pointRequestValues.concat(response.pointRequests);
       this.nextPointRequestCursorValue = response.nextCursor === null
         ? '' : response.nextCursor;
@@ -1075,7 +1145,7 @@ export class ChildSessionCoordinator {
       if (currentVisible.length !== 1) {
         throw new Error('LOCAL_REQUEST_INVALID');
       }
-      this.assertPointRequestDetailAdvance(currentVisible[0], response.pointRequest);
+      this.assertPointRequestSnapshotAdvance(currentVisible[0], response.pointRequest);
       this.pointRequestValues = this.pointRequestValues.map((value: PointRequestDto) =>
         value.id === pointRequestId ? response.pointRequest : value
       );
