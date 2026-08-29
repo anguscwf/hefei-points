@@ -208,6 +208,16 @@ test('S20b/S20c HarmonyOS 详情与列表 coordinator 保持只读及单调 fenc
     realCoordinator,
     /this\.busyValue \|\| this\.lockedValue \|\| this\.pointRequestPending[\s\S]{0,120}nextPointRequestCursorValue/
   );
+  assert.match(
+    realIndex,
+    /Button\('加载更多申请'\)[\s\S]{0,220}\.enabled\(this\.networkReady\(\) && !this\.busy && !this\.pointRequestPending\)/
+  );
+  assert.match(realCoordinator, /pointRequestCursorHistoryValues/);
+  assert.match(realCoordinator, /pointRequestPrecedes/);
+  assert.match(
+    realCoordinator,
+    /stableErrorCode\(error as Object\) === 'PROTOCOL_ERROR'[\s\S]{0,120}freezePointRequestInteractiveView\(\)/
+  );
   assert.match(realCoordinator, /preserveVerifiedPointSnapshot/);
 
   withFixture(root => {

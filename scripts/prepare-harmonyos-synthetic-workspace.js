@@ -9,7 +9,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const realpathSync = fs.realpathSync.native || fs.realpathSync;
 const harmonyPrefix = 'hefei-harmonyos/';
 const auditedHarmonySourceTreeSha256 =
-  'fbdf184eb094c70936a607eb31bd82ef6edf172a8f6a8066b1356feebaac7986';
+  '77d7d14dd15b4e875af41430427bab02283d72b3ee977b69d490a7dfcc06109c';
 const implementationFiles = Object.freeze([
   'scripts/prepare-harmonyos-synthetic-workspace.js'
 ]);

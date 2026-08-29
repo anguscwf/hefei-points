@@ -59,8 +59,10 @@ const PROOF_EXPIRES: string = '2098-11-01T00:00:00.000Z';
 const FIRST_POINT_REQUEST_ID: string = `point_request_${'1'.repeat(32)}`;
 const SECOND_POINT_REQUEST_ID: string = `point_request_${'2'.repeat(32)}`;
 const THIRD_POINT_REQUEST_ID: string = `point_request_${'3'.repeat(32)}`;
+const FOURTH_POINT_REQUEST_ID: string = `point_request_${'4'.repeat(32)}`;
 const UNKNOWN_POINT_REQUEST_ID: string = `point_request_${'9'.repeat(32)}`;
 const FIRST_POINT_REQUEST_CURSOR: string = 'C'.repeat(120);
+const SECOND_POINT_REQUEST_CURSOR: string = 'D'.repeat(120);
 
 class FailingTransport implements ApiTransport {
   readonly requests: Array<TransportRequest> = [];
@@ -303,6 +305,14 @@ function pointRequestSnapshot(id: string, revision: number,
   return value;
 }
 
+function pointRequestPageSnapshot(id: string, revision: number,
+  description: string, submittedAt: string, updatedAt: string): PointRequestDto {
+  const value: PointRequestDto = pointRequestSnapshot(id, revision, description, updatedAt);
+  value.occurredAt = submittedAt;
+  value.submittedAt = submittedAt;
+  return value;
+}
+
 function currentPointRequestDetail(id: string): PointRequestDto {
   const value: PointRequestDto = pointRequestSnapshot(
     id, 1, '合成详情规范说明', '2026-08-25T00:01:00.000Z'
@@ -449,8 +459,9 @@ class PointDetailApi extends SuccessfulApi {
   firstValue: PointRequestDto = pointRequestSnapshot(
     FIRST_POINT_REQUEST_ID, 0, '合成详情规范说明', '2026-08-25T00:00:00.000Z'
   );
-  secondValue: PointRequestDto = pointRequestSnapshot(
-    SECOND_POINT_REQUEST_ID, 0, '合成第二项说明', '2026-08-25T00:00:00.000Z'
+  secondValue: PointRequestDto = pointRequestPageSnapshot(
+    SECOND_POINT_REQUEST_ID, 0, '合成第二项说明',
+    '2026-08-24T00:00:00.000Z', '2026-08-25T00:00:00.000Z'
   );
   detailValue: PointRequestDto = currentPointRequestDetail(FIRST_POINT_REQUEST_ID);
   duplicateFirstId: boolean = false;
@@ -476,11 +487,17 @@ class PointDetailApi extends SuccessfulApi {
 
 class PointRequestPagingApi extends PointDetailApi {
   firstPage: Array<PointRequestDto> = [this.firstValue, this.secondValue];
-  nextPage: Array<PointRequestDto> = [pointRequestSnapshot(
-    THIRD_POINT_REQUEST_ID, 0, '合成第三项说明', '2026-08-24T00:00:00.000Z'
+  nextPage: Array<PointRequestDto> = [pointRequestPageSnapshot(
+    THIRD_POINT_REQUEST_ID, 0, '合成第三项说明',
+    '2026-08-23T00:00:00.000Z', '2026-08-24T00:00:00.000Z'
+  )];
+  followingPage: Array<PointRequestDto> = [pointRequestPageSnapshot(
+    FOURTH_POINT_REQUEST_ID, 0, '合成第四项说明',
+    '2026-08-22T00:00:00.000Z', '2026-08-23T00:00:00.000Z'
   )];
   firstNextCursor: string | null = FIRST_POINT_REQUEST_CURSOR;
   nextNextCursor: string | null = null;
+  followingNextCursor: string | null = null;
   nextPageExpiryCount: number = 0;
   nextPageError: ChildApiError | null = null;
 
@@ -494,21 +511,28 @@ class PointRequestPagingApi extends PointDetailApi {
         nextCursor: this.firstNextCursor
       };
     }
-    if (cursor !== FIRST_POINT_REQUEST_CURSOR) {
-      throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
+    if (cursor === FIRST_POINT_REQUEST_CURSOR) {
+      if (this.nextPageExpiryCount > 0) {
+        this.nextPageExpiryCount -= 1;
+        throw new ChildApiError('ACCESS_TOKEN_EXPIRED', 401, false, false);
+      }
+      if (this.nextPageError !== null) {
+        throw this.nextPageError;
+      }
+      return {
+        success: true,
+        pointRequests: this.nextPage,
+        nextCursor: this.nextNextCursor
+      };
     }
-    if (this.nextPageExpiryCount > 0) {
-      this.nextPageExpiryCount -= 1;
-      throw new ChildApiError('ACCESS_TOKEN_EXPIRED', 401, false, false);
+    if (cursor === SECOND_POINT_REQUEST_CURSOR) {
+      return {
+        success: true,
+        pointRequests: this.followingPage,
+        nextCursor: this.followingNextCursor
+      };
     }
-    if (this.nextPageError !== null) {
-      throw this.nextPageError;
-    }
-    return {
-      success: true,
-      pointRequests: this.nextPage,
-      nextCursor: this.nextNextCursor
-    };
+    throw new ChildApiError('LOCAL_REQUEST_INVALID', 0, false, false);
   }
 }
 
@@ -1423,23 +1447,43 @@ export default function recoveryTests(): void {
         expect(pointVault.value.revision).assertEqual(pointIntentRevision);
       });
 
-    it('rejects duplicate pages or a non-advancing cursor before any list change', 0,
+    it('poisons duplicate unordered empty or non-advancing point request pages', 0,
       async () => {
-        for (let index: number = 0; index < 3; index += 1) {
+        for (let index: number = 0; index < 6; index += 1) {
           const api: PointRequestPagingApi = new PointRequestPagingApi();
           if (index === 0) {
-            const duplicate: PointRequestDto = pointRequestSnapshot(
-              THIRD_POINT_REQUEST_ID, 0, '合成重复项说明', '2026-08-24T00:00:00.000Z'
+            const duplicate: PointRequestDto = pointRequestPageSnapshot(
+              THIRD_POINT_REQUEST_ID, 0, '合成重复项说明',
+              '2026-08-23T00:00:00.000Z', '2026-08-24T00:00:00.000Z'
             );
             api.nextPage = [duplicate, duplicate];
           } else if (index === 1) {
-            api.nextPage = [pointRequestSnapshot(
-              SECOND_POINT_REQUEST_ID, 1, '合成跨页重复说明', '2026-08-25T00:01:00.000Z'
-            ), pointRequestSnapshot(
-              THIRD_POINT_REQUEST_ID, 0, '合成第三项说明', '2026-08-24T00:00:00.000Z'
+            const crossPageDuplicate: PointRequestDto = pointRequestPageSnapshot(
+              SECOND_POINT_REQUEST_ID, 1, '合成跨页重复说明',
+              '2026-08-23T00:00:00.000Z', '2026-08-25T00:01:00.000Z'
+            );
+            crossPageDuplicate.clientRequestId = undefined;
+            api.nextPage = [crossPageDuplicate, pointRequestPageSnapshot(
+              THIRD_POINT_REQUEST_ID, 0, '合成第三项说明',
+              '2026-08-22T00:00:00.000Z', '2026-08-24T00:00:00.000Z'
             )];
-          } else {
+          } else if (index === 2) {
             api.nextNextCursor = FIRST_POINT_REQUEST_CURSOR;
+          } else if (index === 3) {
+            api.nextPage = [pointRequestPageSnapshot(
+              THIRD_POINT_REQUEST_ID, 0, '合成逆序项说明',
+              '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z'
+            )];
+          } else if (index === 4) {
+            const clientRequestCollision: PointRequestDto = pointRequestPageSnapshot(
+              THIRD_POINT_REQUEST_ID, 0, '合成客户端请求号冲突说明',
+              '2026-08-23T00:00:00.000Z', '2026-08-24T00:00:00.000Z'
+            );
+            clientRequestCollision.clientRequestId = api.firstValue.clientRequestId;
+            api.nextPage = [clientRequestCollision];
+          } else {
+            api.nextPage = [];
+            api.nextNextCursor = SECOND_POINT_REQUEST_CURSOR;
           }
           const vault: FakeVault = new FakeVault(activeEnvelope(
             DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
@@ -1460,16 +1504,71 @@ export default function recoveryTests(): void {
           expect(coordinator.pointRequests[0].id).assertEqual(FIRST_POINT_REQUEST_ID);
           expect(coordinator.pointRequests[0].revision).assertEqual(1);
           expect(coordinator.pointRequests[1].id).assertEqual(SECOND_POINT_REQUEST_ID);
-          expect(coordinator.hasMorePointRequests).assertTrue();
+          expect(coordinator.hasMorePointRequests).assertFalse();
+          expect(coordinator.rewardRules.length).assertEqual(0);
           const selected: PointRequestDto | null = coordinator.pointRequestDetail;
           expect(selected === null).assertFalse();
           if (selected !== null) {
             expect(selected.id).assertEqual(FIRST_POINT_REQUEST_ID);
             expect(selected.revision).assertEqual(1);
           }
+          const pageCalls: number = api.calls.filter(
+            (value: string) => value.endsWith(`|20|${FIRST_POINT_REQUEST_CURSOR}`)
+          ).length;
+          expect(pageCalls).assertEqual(1);
+          await coordinator.loadMorePointRequests();
+          expect(api.calls.filter(
+            (value: string) => value.endsWith(`|20|${FIRST_POINT_REQUEST_CURSOR}`)
+          ).length).assertEqual(pageCalls);
+          const createCalls: number = api.calls.filter(
+            (value: string) => value.startsWith('point-create|')
+          ).length;
+          await coordinator.submitPointRequest(
+            'reward_synthetic', 4, '坏分页后不得沿用旧规则申报'
+          );
+          expect(api.calls.filter(
+            (value: string) => value.startsWith('point-create|')
+          ).length).assertEqual(createCalls);
           expect(vault.value.revision).assertEqual(sessionRevision);
           expect(pointVault.value.revision).assertEqual(pointIntentRevision);
         }
+      });
+
+    it('rejects a multi-page cursor cycle before applying the replayed edge', 0,
+      async () => {
+        const api: PointRequestPagingApi = new PointRequestPagingApi();
+        api.nextNextCursor = SECOND_POINT_REQUEST_CURSOR;
+        api.followingNextCursor = FIRST_POINT_REQUEST_CURSOR;
+        const vault: FakeVault = new FakeVault(activeEnvelope(
+          DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
+        ));
+        const pointVault: FakePointVault = new FakePointVault();
+        const coordinator: ChildSessionCoordinator = await initializedCoordinator(
+          api, vault, pointVault
+        );
+        await coordinator.refreshSelf();
+        await coordinator.loadMorePointRequests();
+        expect(coordinator.pointRequests.length).assertEqual(3);
+        expect(coordinator.hasMorePointRequests).assertTrue();
+        const sessionRevision: number = vault.value.revision;
+        const pointIntentRevision: number = pointVault.value.revision;
+
+        await coordinator.loadMorePointRequests();
+
+        expect(coordinator.statusCode).assertEqual('PROTOCOL_ERROR');
+        expect(coordinator.pointRequests.length).assertEqual(3);
+        expect(coordinator.pointRequests[2].id).assertEqual(THIRD_POINT_REQUEST_ID);
+        expect(coordinator.hasMorePointRequests).assertFalse();
+        expect(coordinator.rewardRules.length).assertEqual(0);
+        expect(api.calls.filter(
+          (value: string) => value.endsWith(`|20|${SECOND_POINT_REQUEST_CURSOR}`)
+        ).length).assertEqual(1);
+        await coordinator.loadMorePointRequests();
+        expect(api.calls.filter(
+          (value: string) => value.endsWith(`|20|${SECOND_POINT_REQUEST_CURSOR}`)
+        ).length).assertEqual(1);
+        expect(vault.value.revision).assertEqual(sessionRevision);
+        expect(pointVault.value.revision).assertEqual(pointIntentRevision);
       });
 
     it('keeps a verified newer detail across a rollback refresh then accepts a valid advance', 0,
@@ -1498,7 +1597,18 @@ export default function recoveryTests(): void {
         if (coordinator.pointRequestDetail !== null) {
           expect(coordinator.pointRequestDetail.revision).assertEqual(1);
         }
-        expect(coordinator.hasMorePointRequests).assertTrue();
+        expect(coordinator.hasMorePointRequests).assertFalse();
+        expect(coordinator.rewardRules.length).assertEqual(0);
+        expect(coordinator.hasMoreRewardRules).assertFalse();
+        const createCallsBefore: number = api.calls.filter(
+          (value: string) => value.startsWith('point-create|')
+        ).length;
+        await coordinator.submitPointRequest(
+          'reward_synthetic', 4, '协议失败后不得使用旧规则申报'
+        );
+        expect(api.calls.filter(
+          (value: string) => value.startsWith('point-create|')
+        ).length).assertEqual(createCallsBefore);
         expect(vault.value.revision).assertEqual(sessionRevision);
         expect(pointVault.value.revision).assertEqual(pointIntentRevision);
 
@@ -1524,16 +1634,22 @@ export default function recoveryTests(): void {
 
     it('rejects rollback drift identity change terminal evolution and time reversal on refresh', 0,
       async () => {
-        for (let index: number = 0; index < 5; index += 1) {
+        for (let index: number = 0; index < 6; index += 1) {
           const api: PointRequestPagingApi = new PointRequestPagingApi();
           const current: PointRequestDto = pointRequestSnapshot(
             FIRST_POINT_REQUEST_ID, 2, '合成当前列表说明', '2026-08-25T00:02:00.000Z'
+          );
+          const currentSecond: PointRequestDto = pointRequestPageSnapshot(
+            SECOND_POINT_REQUEST_ID, index === 5 ? 2 : 0,
+            index === 5 ? '合成第二项当前说明' : '合成第二项说明',
+            '2026-08-24T00:00:00.000Z',
+            index === 5 ? '2026-08-24T00:02:00.000Z' : '2026-08-25T00:00:00.000Z'
           );
           if (index === 3) {
             current.status = 'approved';
             current.approvedPoints = 4;
           }
-          api.firstPage = [current, api.secondValue];
+          api.firstPage = [current, currentSecond];
           const vault: FakeVault = new FakeVault(activeEnvelope(
             DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
           ));
@@ -1546,9 +1662,10 @@ export default function recoveryTests(): void {
           const pointIntentRevision: number = pointVault.value.revision;
           const latest: PointRequestDto = pointRequestSnapshot(
             FIRST_POINT_REQUEST_ID,
-            index === 0 ? 1 : index === 1 ? 2 : 3,
+            index === 0 ? 1 : index === 1 || index === 5 ? 2 : 3,
             index === 1 ? '合成同 revision 漂移' : '合成当前列表说明',
             index === 4 ? '2026-08-25T01:01:00.000+01:00'
+              : index === 5 ? '2026-08-25T00:02:00.000Z'
               : '2026-08-25T00:03:00.000Z'
           );
           if (index === 2) {
@@ -1558,7 +1675,13 @@ export default function recoveryTests(): void {
             latest.status = 'approved';
             latest.approvedPoints = 4;
           }
-          api.firstPage = [latest, api.secondValue];
+          const latestSecond: PointRequestDto = pointRequestPageSnapshot(
+            SECOND_POINT_REQUEST_ID, index === 5 ? 1 : 0,
+            index === 5 ? '合成第二项旧说明' : '合成第二项说明',
+            '2026-08-24T00:00:00.000Z',
+            index === 5 ? '2026-08-24T00:01:00.000Z' : '2026-08-25T00:00:00.000Z'
+          );
+          api.firstPage = [latest, latestSecond];
 
           await coordinator.refreshSelf();
 
@@ -1566,9 +1689,123 @@ export default function recoveryTests(): void {
           expect(coordinator.pointRequests[0].revision).assertEqual(2);
           expect(coordinator.pointRequests[0].description).assertEqual('合成当前列表说明');
           expect(coordinator.pointRequests[0].rule.label).assertEqual('合成任务');
+          expect(coordinator.pointRequests[1].revision).assertEqual(index === 5 ? 2 : 0);
+          expect(coordinator.pointRequests[1].description).assertEqual(
+            index === 5 ? '合成第二项当前说明' : '合成第二项说明'
+          );
+          expect(coordinator.hasMorePointRequests).assertFalse();
+          expect(coordinator.rewardRules.length).assertEqual(0);
           expect(vault.value.revision).assertEqual(sessionRevision);
           expect(pointVault.value.revision).assertEqual(pointIntentRevision);
         }
+      });
+
+    it('rejects client request id remapping across full point request refreshes', 0,
+      async () => {
+        const api: PointRequestPagingApi = new PointRequestPagingApi();
+        const coordinator: ChildSessionCoordinator = await initializedCoordinator(
+          api,
+          new FakeVault(activeEnvelope(
+            DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
+          ))
+        );
+        await coordinator.refreshSelf();
+        const replacement: PointRequestDto = pointRequestPageSnapshot(
+          THIRD_POINT_REQUEST_ID, 0, '合成请求号重映射说明',
+          '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z'
+        );
+        replacement.clientRequestId = api.firstValue.clientRequestId;
+        const independentSecond: PointRequestDto = pointRequestPageSnapshot(
+          SECOND_POINT_REQUEST_ID, 0, '合成第二项说明',
+          '2026-08-24T00:00:00.000Z', '2026-08-25T00:00:00.000Z'
+        );
+        api.firstPage = [replacement, independentSecond];
+
+        await coordinator.refreshSelf();
+
+        expect(coordinator.statusCode).assertEqual('PROTOCOL_ERROR');
+        expect(coordinator.pointRequests.length).assertEqual(2);
+        expect(coordinator.pointRequests[0].id).assertEqual(FIRST_POINT_REQUEST_ID);
+        expect(coordinator.pointRequests[1].id).assertEqual(SECOND_POINT_REQUEST_ID);
+        expect(coordinator.hasMorePointRequests).assertFalse();
+        expect(coordinator.rewardRules.length).assertEqual(0);
+      });
+
+    it('accepts equal same-revision nested fields independent of object key order', 0,
+      async () => {
+        const api: PointRequestPagingApi = new PointRequestPagingApi();
+        const current: PointRequestDto = pointRequestSnapshot(
+          FIRST_POINT_REQUEST_ID, 2, '合成等值嵌套字段说明', '2026-08-25T00:02:00.000Z'
+        );
+        current.status = 'needs_info';
+        current.requestInfo = {
+          note: '合成补充提示',
+          requestedAt: '2026-08-25T00:01:00.000Z',
+          resubmittedAt: null
+        };
+        const currentSecond: PointRequestDto = pointRequestPageSnapshot(
+          SECOND_POINT_REQUEST_ID, 0, '合成第二项说明',
+          '2026-08-24T00:00:00.000Z', '2026-08-25T00:00:00.000Z'
+        );
+        api.firstPage = [current, currentSecond];
+        const coordinator: ChildSessionCoordinator = await initializedCoordinator(
+          api,
+          new FakeVault(activeEnvelope(
+            DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
+          ))
+        );
+        await coordinator.refreshSelf();
+        const latest: PointRequestDto = pointRequestSnapshot(
+          FIRST_POINT_REQUEST_ID, 2, '合成等值嵌套字段说明', '2026-08-25T00:02:00.000Z'
+        );
+        latest.status = 'needs_info';
+        latest.requestInfo = {
+          resubmittedAt: null,
+          requestedAt: '2026-08-25T00:01:00.000Z',
+          note: '合成补充提示'
+        };
+        const latestSecond: PointRequestDto = pointRequestPageSnapshot(
+          SECOND_POINT_REQUEST_ID, 0, '合成第二项说明',
+          '2026-08-24T00:00:00.000Z', '2026-08-25T00:00:00.000Z'
+        );
+        api.firstPage = [latest, latestSecond];
+
+        await coordinator.refreshSelf();
+
+        expect(coordinator.statusCode).assertEqual('READY');
+        expect(coordinator.pointRequests[0].revision).assertEqual(2);
+        expect(coordinator.pointRequests[0].requestInfo === null).assertFalse();
+        expect(coordinator.hasMorePointRequests).assertTrue();
+        expect(coordinator.rewardRules.length).assertEqual(1);
+      });
+
+    it('rejects a continuation cursor on an empty first point request page', 0,
+      async () => {
+        const api: PointRequestPagingApi = new PointRequestPagingApi();
+        api.firstPage = [];
+        api.firstNextCursor = FIRST_POINT_REQUEST_CURSOR;
+        const vault: FakeVault = new FakeVault(activeEnvelope(
+          DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
+        ));
+        const pointVault: FakePointVault = new FakePointVault();
+        const coordinator: ChildSessionCoordinator = await initializedCoordinator(
+          api, vault, pointVault
+        );
+        const sessionRevision: number = vault.value.revision;
+        const pointIntentRevision: number = pointVault.value.revision;
+
+        await coordinator.refreshSelf();
+
+        expect(coordinator.statusCode).assertEqual('PROTOCOL_ERROR');
+        expect(coordinator.hasSummary).assertFalse();
+        expect(coordinator.pointRequests.length).assertEqual(0);
+        expect(coordinator.hasMorePointRequests).assertFalse();
+        expect(coordinator.rewardRules.length).assertEqual(0);
+        expect(api.calls.filter(
+          (value: string) => value === `point-list|${activeSession().accessToken}|20|`
+        ).length).assertEqual(1);
+        expect(vault.value.revision).assertEqual(sessionRevision);
+        expect(pointVault.value.revision).assertEqual(pointIntentRevision);
       });
 
     it('treats a missing refresh item as not visible without inventing a terminal state', 0,
@@ -1717,6 +1954,108 @@ export default function recoveryTests(): void {
         expect(pendingVault.value.idempotencyKey).assertEqual(idempotencyKey);
       });
 
+    it('clears pagination views for disabled child processing without vault writes', 0,
+      async () => {
+        const codes: Array<string> = ['FEATURE_DISABLED', 'CHILD_PROCESSING_BLOCKED'];
+        for (let index: number = 0; index < codes.length; index += 1) {
+          const api: PointRequestPagingApi = new PointRequestPagingApi();
+          api.nextPageError = new ChildApiError(codes[index], 403, false, false);
+          const vault: FakeVault = new FakeVault(activeEnvelope(
+            DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
+          ));
+          const pointVault: FakePointVault = new FakePointVault();
+          const coordinator: ChildSessionCoordinator = await initializedCoordinator(
+            api, vault, pointVault
+          );
+          await coordinator.refreshSelf();
+          await coordinator.loadPointRequestDetail(FIRST_POINT_REQUEST_ID);
+          const sessionRevision: number = vault.value.revision;
+          const pointIntentRevision: number = pointVault.value.revision;
+          const accessToken: string = vault.value.accessToken;
+          const refreshToken: string = vault.value.refreshToken;
+
+          await coordinator.loadMorePointRequests();
+
+          expect(coordinator.statusCode).assertEqual(codes[index]);
+          expect(coordinator.phase).assertEqual(EnvelopePhase.ACTIVE);
+          expect(coordinator.hasSummary).assertFalse();
+          expect(coordinator.pointRequests.length).assertEqual(0);
+          expect(coordinator.pointRequestDetail === null).assertTrue();
+          expect(coordinator.hasMorePointRequests).assertFalse();
+          expect(vault.value.accessToken).assertEqual(accessToken);
+          expect(vault.value.refreshToken).assertEqual(refreshToken);
+          expect(vault.value.revision).assertEqual(sessionRevision);
+          expect(pointVault.value.revision).assertEqual(pointIntentRevision);
+          const pageCalls: number = api.calls.filter(
+            (value: string) => value.endsWith(`|20|${FIRST_POINT_REQUEST_CURSOR}`)
+          ).length;
+          expect(pageCalls).assertEqual(1);
+          await coordinator.loadMorePointRequests();
+          expect(api.calls.filter(
+            (value: string) => value.endsWith(`|20|${FIRST_POINT_REQUEST_CURSOR}`)
+          ).length).assertEqual(pageCalls);
+        }
+      });
+
+    it('ignores late ordinary page errors after background but still commits late revocation', 0,
+      async () => {
+        const ordinaryApi: PointRequestPagingApi = new PointRequestPagingApi();
+        ordinaryApi.nextPageError = new ChildApiError(
+          'NETWORK_UNAVAILABLE', 0, false, false
+        );
+        const ordinaryVault: FakeVault = new FakeVault(activeEnvelope(
+          DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
+        ));
+        const ordinaryPointVault: FakePointVault = new FakePointVault();
+        const ordinary: ChildSessionCoordinator = await initializedCoordinator(
+          ordinaryApi, ordinaryVault, ordinaryPointVault
+        );
+        await ordinary.refreshSelf();
+        const ordinarySessionRevision: number = ordinaryVault.value.revision;
+        const ordinaryPointRevision: number = ordinaryPointVault.value.revision;
+        const ordinaryLoading: Promise<void> = ordinary.loadMorePointRequests();
+        ordinary.lockForBackground();
+        await ordinaryLoading;
+        expect(ordinary.statusCode).assertEqual('BACKGROUND_LOCKED');
+        expect(ordinary.phase).assertEqual(EnvelopePhase.ACTIVE);
+        expect(ordinary.pointRequests.length).assertEqual(0);
+        expect(ordinary.hasMorePointRequests).assertFalse();
+        expect(ordinaryVault.value.revision).assertEqual(ordinarySessionRevision);
+        expect(ordinaryPointVault.value.revision).assertEqual(ordinaryPointRevision);
+        expect(ordinaryApi.calls.filter(
+          (value: string) => value.endsWith(`|20|${FIRST_POINT_REQUEST_CURSOR}`)
+        ).length).assertEqual(1);
+
+        const authorityCodes: Array<string> = ['SESSION_REVOKED', 'CONSENT_REQUIRED'];
+        for (let index: number = 0; index < authorityCodes.length; index += 1) {
+          const api: PointRequestPagingApi = new PointRequestPagingApi();
+          api.nextPageError = new ChildApiError(authorityCodes[index], 401, false, false);
+          const vault: FakeVault = new FakeVault(activeEnvelope(
+            DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
+          ));
+          const pointVault: FakePointVault = new FakePointVault();
+          const coordinator: ChildSessionCoordinator = await initializedCoordinator(
+            api, vault, pointVault
+          );
+          await coordinator.refreshSelf();
+          const sessionRevision: number = vault.value.revision;
+          const pointIntentRevision: number = pointVault.value.revision;
+          const loading: Promise<void> = coordinator.loadMorePointRequests();
+          coordinator.lockForBackground();
+          await loading;
+          expect(coordinator.statusCode).assertEqual(authorityCodes[index]);
+          expect(coordinator.phase).assertEqual(EnvelopePhase.UNPAIRED);
+          expect(coordinator.pointRequests.length).assertEqual(0);
+          expect(vault.value.accessToken).assertEqual('');
+          expect(vault.value.refreshToken).assertEqual('');
+          expect(vault.value.revision).assertEqual(sessionRevision + 1);
+          expect(pointVault.value.revision).assertEqual(pointIntentRevision);
+          expect(api.calls.filter(
+            (value: string) => value.endsWith(`|20|${FIRST_POINT_REQUEST_CURSOR}`)
+          ).length).assertEqual(1);
+        }
+      });
+
     it('loads one canonical visible point request and updates only that list position', 0,
       async () => {
         const api: PointDetailApi = new PointDetailApi();
@@ -1765,7 +2104,7 @@ export default function recoveryTests(): void {
         expect(coordinator.pointRequests.length).assertEqual(2);
       });
 
-    it('does no detail network work for malformed, unloaded or duplicate ids', 0,
+    it('does no detail network work for malformed or unloaded ids and rejects duplicate pages', 0,
       async () => {
         const api: PointDetailApi = new PointDetailApi();
         const coordinator: ChildSessionCoordinator = await initializedCoordinator(
@@ -1792,12 +2131,12 @@ export default function recoveryTests(): void {
           ))
         );
         await duplicateCoordinator.refreshSelf();
-        await duplicateCoordinator.loadPointRequestDetail(FIRST_POINT_REQUEST_ID);
         expect(duplicateApi.calls.filter(
           (value: string) => value.startsWith('point-detail|')
         ).length).assertEqual(0);
         expect(duplicateCoordinator.pointRequestDetail === null).assertTrue();
-        expect(duplicateCoordinator.statusCode).assertEqual('LOCAL_REQUEST_INVALID');
+        expect(duplicateCoordinator.pointRequests.length).assertEqual(0);
+        expect(duplicateCoordinator.statusCode).assertEqual('PROTOCOL_ERROR');
       });
 
     it('refreshes once and retries the exact point request id after access expiry', 0,
@@ -1946,22 +2285,37 @@ export default function recoveryTests(): void {
         const apis: Array<PointDetailApi> = [rollbackApi, driftApi, offsetRollbackApi];
 
         for (let index: number = 0; index < apis.length; index += 1) {
+          const pointVault: FakePointVault = new FakePointVault();
           const coordinator: ChildSessionCoordinator = await initializedCoordinator(
             apis[index],
             new FakeVault(activeEnvelope(
               DEVICE_PUBLIC_ID, `device_${'d'.repeat(32)}`, activeSession()
-            ))
+            )),
+            pointVault
           );
           await coordinator.refreshSelf();
+          const pointIntentRevision: number = pointVault.value.revision;
           await coordinator.loadPointRequestDetail(FIRST_POINT_REQUEST_ID);
           expect(coordinator.statusCode).assertEqual('PROTOCOL_ERROR');
           expect(coordinator.pointRequestDetail === null).assertTrue();
           expect(coordinator.pointRequests.length).assertEqual(2);
           expect(coordinator.pointRequests[0].revision).assertEqual(2);
           expect(coordinator.pointRequests[0].description).assertEqual('合成当前说明');
+          expect(coordinator.hasMorePointRequests).assertFalse();
+          expect(coordinator.rewardRules.length).assertEqual(0);
           expect(apis[index].calls.filter(
             (value: string) => value.startsWith('point-detail|')
           ).length).assertEqual(1);
+          const createCalls: number = apis[index].calls.filter(
+            (value: string) => value.startsWith('point-create|')
+          ).length;
+          await coordinator.submitPointRequest(
+            'reward_synthetic', 4, '详情协议失败后不得沿用旧规则申报'
+          );
+          expect(apis[index].calls.filter(
+            (value: string) => value.startsWith('point-create|')
+          ).length).assertEqual(createCalls);
+          expect(pointVault.value.revision).assertEqual(pointIntentRevision);
         }
       });
 

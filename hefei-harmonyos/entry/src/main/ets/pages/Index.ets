@@ -739,7 +739,7 @@ struct Index {
           Button('加载更多申请')
             .width('100%')
             .height(44)
-            .enabled(this.networkReady() && !this.busy)
+            .enabled(this.networkReady() && !this.busy && !this.pointRequestPending)
             .backgroundColor('#EADFD7')
             .fontColor('#5B463A')
             .onClick(() => this.loadMoreRequests())
