@@ -2,16 +2,16 @@
 
 糖罐积分是面向家庭的任务与积分管理系统：家长创建家庭与孩子档案、审批任务和管理积分，孩子通过受控终端查看积分并申报任务。
 
-本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S18 的受控 synthetic 本地准备、候选证据封装、外部签名束离线验证、本地授权账本与未提交协调意图能力。S19-readiness 仅新增本地只读外部 saga 阻断报告；S19a 只在测试目录增加非规范性、纯内存的 saga 负向安全参考机。S20a 与真实 S19 正交，只补齐设备作用域积分申请单条详情和既有补充/取消操作的历史结果只读对账协议基座；S20b 只把单条详情接入 HarmonyOS 内存态只读界面，没有消费对账协议或新增写路径。真实 S19 外部接入尚未开始。
+本仓库是项目源码与核心工程文档的唯一真源。当前基线包含 Node.js 后端、微信小程序家长端、HarmonyOS 孩子端安全纵向切片，以及 S9～S18 的受控 synthetic 本地准备、候选证据封装、外部签名束离线验证、本地授权账本与未提交协调意图能力。S19-readiness 仅新增本地只读外部 saga 阻断报告；S19a 只在测试目录增加非规范性、纯内存的 saga 负向安全参考机。S20a 与真实 S19 正交，只补齐设备作用域积分申请单条详情和既有补充/取消操作的历史结果只读对账协议基座；S20b 只把单条详情接入 HarmonyOS 内存态只读界面；S20c 又为“我的申请”完整刷新和分页增加单调快照、身份、唯一性、排序及游标历史围栏，协议失败后冻结继续分页和旧规则写入口。S20a～S20c 均未把对账或既有 mutation 接入界面。真实 S19 外部接入尚未开始。
 
 ## 当前状态
 
 - 后端与微信小程序已有历史功能和正在整理的 SQLite/统一服务端改造。
-- HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；S20a 又新增设备单条详情及 resubmit/cancel 历史结果对账的严格 DTO、解析与 client 方法。S20b 只允许用户对当前已经加载且 ID 唯一、格式 canonical 的申请手动执行单条 GET，把返回详情保存在内存并原位单调推进同一列表项；revision 回退、同 revision 内容漂移或响应身份变化全部 fail closed，Access 过期最多安全轮换一次。界面只提供“查看最新详情/收起详情”，不显示 `clientRequestId` 或内部申请 ID，不新增路由、存储、自动轮询、mutation UI、持久 mutation intent/coordinator 或写路径。S9 新增受控临时 synthetic profile 生成器和 loopback 全链验证，S10 又加入纯本地“设置与数据安全”说明。该说明明确不是正式隐私政策、儿童规则、用户协议或同意页面，不读取动态儿童/设备/会话信息，也不提供假解绑或删除按钮。跟踪配置仍固定禁用网络并使用 `.invalid` 源，尚未连接任何外部业务服务，也不代表完整薄 MVP。
+- HarmonyOS `0.2.0 (20000)` 已实现设备安全配对、Access/Refresh 会话轮换、本人摘要/流水、当前可申报规则、文字积分申报和“我的申请”；S20a 又新增设备单条详情及 resubmit/cancel 历史结果对账的严格 DTO、解析与 client 方法。S20b 只允许用户对当前已经加载且 ID 唯一、格式 canonical 的申请手动执行单条 GET，把返回详情保存在内存并原位单调推进同一列表项；S20c 再要求完整刷新和每一页都保持精确 `(submittedAt, id) DESC` 顺序、canonical 且跨页唯一的申请 ID、可见 `clientRequestId` 唯一映射、游标严格前进且不得循环，并拒绝 revision/时间回退、同 revision 漂移、终态演进和身份替换。协议异常会保留已验证的只读申请快照，但清空规则与分页能力，阻断继续加载或沿用旧规则创建；Access 过期仍只允许既有安全轮换一次，明确撤权/授权错误仍清理会话和未决意图。界面不显示 `clientRequestId` 或内部申请 ID，不新增路由、存储、自动轮询、mutation UI、持久 mutation intent/coordinator 或写路径。S9 新增受控临时 synthetic profile 生成器和 loopback 全链验证，S10 又加入纯本地“设置与数据安全”说明。该说明明确不是正式隐私政策、儿童规则、用户协议或同意页面，不读取动态儿童/设备/会话信息，也不提供假解绑或删除按钮。跟踪配置仍固定禁用网络并使用 `.invalid` 源，尚未连接任何外部业务服务，也不代表完整薄 MVP。
 - 首个面向实名未成年人账号的版本必须走 AppGallery 正式上架；当前目标与门禁见 [HarmonyOS MVP 方案](docs/plans/糖罐积分鸿蒙版-MVP方案与推进计划.md)。
-- 阶段 1 已完成 S0～S18 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执；S15 把 S12/S13/S14、当前已提交 43 文件/10 迁移、配置、物理根和只读 pristine SQLite/receipt 绑定成短时 machine subject，再把 19 项外部声明包装成未认证信封。S16 只用环境摘要钉住的独立公开策略验证 Ed25519 gate/checkpoint/approval/grant 签名束；S17 只在一个独立本地 ledger 内约束已观察 checkpoint 并记录一次本地 grant 使用。S18 又增加只读历史 receipt 恢复和独立摘要 journal，只能形成 `locally_prepared_unsubmitted` 的本地协调意图。S19-readiness 可以精确只读恢复该历史 intent 并生成固定 `external_integration_blocked` 报告；17 项 blocker 和 14 项能力要求只是非穷尽的最小已知集合，不能证明完整 readiness。S19a 只把该 test-only blocked report 作为纯函数 reference trace 的输入，检查 ACK 假成功、观察缺项、参与方混域、冲突 replay、sticky UNKNOWN 与补偿协议缺失等负向不变量；它没有 CLI、文件、SQLite、网络或 production export。S20a 只增加设备作用域单条只读详情、来源设备专属的既有写操作历史回执对账，以及 HarmonyOS 严格协议/client 基座；S20b 只将单条当前详情接入协调器和同页只读界面，并在进入后台、处理阻断或下一次请求收到明确撤权/授权错误时清除视图。两者都没有 migration、mutation UI、持久 mutation intent/coordinator 或新写操作。所有命令和测试结果始终不授予部署或儿童使用。S20b 最终 committed 实现的验证结果见最新交接与 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
+- 阶段 1 已完成 S0～S18 的安全、授权、配对、本人视图、积分申报、数据行权、两端客户端和 synthetic 运行前置切片。S13 只从完整显式 synthetic 配置创建全新空 `root/data/marker`，或对既有候选根做双轮只读、脱敏核验；S14 为精确空库提供一次性成人管理员、四类获批合成法律元数据和不可变完成回执；S15 把 S12/S13/S14、当前已提交 43 文件/10 迁移、配置、物理根和只读 pristine SQLite/receipt 绑定成短时 machine subject，再把 19 项外部声明包装成未认证信封。S16 只用环境摘要钉住的独立公开策略验证 Ed25519 gate/checkpoint/approval/grant 签名束；S17 只在一个独立本地 ledger 内约束已观察 checkpoint 并记录一次本地 grant 使用。S18 又增加只读历史 receipt 恢复和独立摘要 journal，只能形成 `locally_prepared_unsubmitted` 的本地协调意图。S19-readiness 可以精确只读恢复该历史 intent 并生成固定 `external_integration_blocked` 报告；17 项 blocker 和 14 项能力要求只是非穷尽的最小已知集合，不能证明完整 readiness。S19a 只把该 test-only blocked report 作为纯函数 reference trace 的输入，检查 ACK 假成功、观察缺项、参与方混域、冲突 replay、sticky UNKNOWN 与补偿协议缺失等负向不变量；它没有 CLI、文件、SQLite、网络或 production export。S20a 只增加设备作用域单条只读详情、来源设备专属的既有写操作历史回执对账，以及 HarmonyOS 严格协议/client 基座；S20b 只将单条当前详情接入协调器和同页只读界面；S20c 只加固申请列表完整刷新、分页和迟到响应的单调/身份/游标围栏，并在协议失败时冻结旧规则交互面。三者都没有 migration、mutation UI、持久 mutation intent/coordinator 或新写操作。所有命令和测试结果始终不授予部署或儿童使用。S20c 最终 committed 实现的验证结果见最新交接与 [阶段 1 实施清单](docs/plans/阶段1-现有能力审计与首批实施清单-20260823.md)。
 - 生产迁移已增加“旧库一致性快照 + 清单校验 + 无清单拒绝迁移”门禁；但正式法律文本、PIPIA、存量数据整改和 AppGallery 正式上架均未完成，所有儿童生产功能继续默认关闭。
-- S0～S20b 远端主题分支均已建立并显式推送到专用远端；远端落盘不代表已经部署、联网、上架、完成真实 S19 或开放儿童功能。
+- S0～S20c 远端主题分支均已建立并显式推送到专用远端；远端落盘不代表已经部署、联网、上架、完成真实 S19 或开放儿童功能。
 
 ## 目录
 
@@ -63,6 +63,8 @@ S20a 新增 `GET /api/v2/me/point-requests/:id`，同一孩子的任一当前有
 
 S20b 将上述单条详情接入 HarmonyOS 的现有“我的申请”单页。协调器只接受当前内存列表中恰好一条匹配的 canonical 申请 ID，用户点击后才发起 GET；成功响应必须保持申请与规则快照身份不变、revision 不回退，同 revision 的状态或正文等可变字段也不得漂移。更高 revision 还要求 `updatedAt` 表示的真实时间点严格前进，随后只会原位替换同一列表项并作为内存 selected detail 展示；页面退到后台、收到明确撤权/授权错误、儿童处理阻断或本地 generation 变化后，迟到响应不能重新暴露旧详情。界面不显示 `clientRequestId` 或内部 ID，不自动轮询、不持久化详情，也不调用 S20a 的 operation reconcile。静态词法门扫描 HarmonyOS 消费层源码（协议/client 基座除外），并明确要求 `Index` 和 `ChildSessionCoordinator` 纳入检查，拒绝 `PointRequestOperation`、resubmit/cancel、PATCH 或两个 reconcile 入口的直接符号与字面路径；它是 defense-in-depth，不替代 import/call graph 人工复核。
 
+S20c 将同样的单调与身份约束扩展到申请列表完整刷新和继续分页。每页必须按 `(submittedAt, id) DESC` 严格降序，申请 ID 必须 canonical 且在本页/历史页唯一，可见 `clientRequestId` 也不得在不同申请间重用；完整刷新还拒绝旧 `clientRequestId` 映射到新 ID。空页不能携带下一游标，游标必须严格前进且不得自环或形成多页循环。列表协议违例以 `PROTOCOL_ERROR` 保留此前已验证的列表和 selected detail；详情协议违例会清除 selected detail。两类错误都会清空 reward rules、规则/申请游标与游标历史，从而禁止继续分页和使用旧规则创建申请。未决申请意图存在时加载更多在协调器与 UI 双层禁用。普通迟到成功/错误在 generation 变化后被忽略，但明确 `SESSION_REVOKED` / `CONSENT_REQUIRED` 仍执行既有会话与意图清理。本切片新增/变更的列表、详情与分页范围保持只读，既有 S8 创建路径不变；既有 Access 轮换和撤权安全清理也不属于 S20c 申请 mutation。
+
 儿童数据权利创建入口固定为 `POST /api/v2/children/:id/data-rights-requests`。查阅、导出和别名更正由 `CHILD_DATA_RIGHTS_ENABLED` 独立控制；撤回授权、删除、终止服务、既有请求详情和已授权的短时动态导出不依赖 Harmony 总门，以免止损开关反而封死安全或法定入口。每种动作使用独立重新认证 purpose；别名更正不改写历史账本或审批快照。撤回、删除与终止都会同步推进旧儿童 Token 失效下限；删除与终止只会原子进入 `deletion_pending`、撤销目标儿童设备并生成 `blocked_policy` 作业。逐类留存政策未获批前绝不执行、去标识化或宣称完成删除。
 
 小程序会在普通数据行权写入前持久化并回读一个不含密码、重新认证断言、正文或别名的恢复句柄；结果未知时只能用原 `Idempotency-Key` 重试或调用 `GET /api/v2/data-rights-operations/request-create` 对账。对账按当前成人、家庭、操作和键隔离，完成后还必须读取本人请求详情并核对儿童与请求类型，才能清理本地阻断状态。
@@ -91,12 +93,12 @@ S19a 不新增操作命令。`server/test-support/synthetic-external-saga-refere
 
 HarmonyOS 工程使用 DevEco Studio 打开 `hefei-harmonyos/`。根 `hefei-harmonyos/build-profile.json5` 含本机签名信息并被强制忽略；开发者必须在本机独立配置，严禁提交密码、证书、Profile 或绝对路径。
 
-HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 HUKS ECE，设备会话与未决积分申请使用相互独立、不可同步的 AssetStore 记录；S20b 的单条详情只在内存中存在，进入后台或业务视图被阻断时清除，不新增任何存储槽位。`npm run prepare:harmonyos-synthetic` 只会把 Git 跟踪的 HarmonyOS 普通文件复制到本机系统临时目录，生成明确 unsigned、来源可追踪的临时 profile；它要求显式确认获批的非生产 canonical HTTPS 源，拒绝生产域、UNC、仓库内/非临时目录、符号链接和签名类输入，并且命令本身不联网。S10 的本地安全壳还由封闭入口、固定导出面和对抗夹具约束，切换或退到后台会清短码与积分草稿。当前只完成 unsigned ArkTS 单测、静态检查、loopback HTTP 全链和临时 profile 编译；独立合成非生产 API、HUKS/AssetStore 成人受控设备验证、联网端到端 smoke 和签名包验证仍是硬门。
+HarmonyOS 主源码关闭备份恢复和动态敏感日志，设备私钥使用 HUKS ECE，设备会话与未决积分申请使用相互独立、不可同步的 AssetStore 记录；S20b 的单条详情及 S20c 的列表/分页围栏都只在内存中存在，进入后台或业务视图被阻断时清除，不新增任何存储槽位。`npm run prepare:harmonyos-synthetic` 只会把 Git 跟踪的 HarmonyOS 普通文件复制到本机系统临时目录，生成明确 unsigned、来源可追踪的临时 profile；它要求显式确认获批的非生产 canonical HTTPS 源，拒绝生产域、UNC、仓库内/非临时目录、符号链接和签名类输入，并且命令本身不联网。S10 的本地安全壳还由封闭入口、固定导出面和对抗夹具约束，切换或退到后台会清短码与积分草稿。当前只完成 unsigned ArkTS 单测、静态检查、loopback HTTP 全链和临时 profile 编译；独立合成非生产 API、HUKS/AssetStore 成人受控设备验证、联网端到端 smoke 和签名包验证仍是硬门。
 
 ## 文档入口
 
 - [仓库工作规范](AGENTS.md)
-- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S20b设备积分申请只读详情界面交接-20260829.md)
+- [最新开发交接](docs/handoff/Codex-糖罐积分阶段1-S20c设备积分申请列表单调分页边界交接-20260829.md)
 - [S13 数据根操作手册](docs/runbooks/受控-synthetic-数据根准备与核验.md)
 - [S14 初始引导操作手册](docs/runbooks/受控-synthetic-初始管理员与法律证据引导.md)
 - [S15 候选证据操作手册](docs/runbooks/受控-synthetic-候选机器证据与未认证声明信封.md)
